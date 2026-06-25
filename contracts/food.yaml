@@ -1,0 +1,429 @@
+openapi: "3.0.3"
+info:
+  title: GoZone Food Service — GoBite
+  version: "1.0.0"
+  description: |
+    Restaurants, menus, orders in three modes (DELIVERY / PICKUP / WALKIN),
+    virtual queue engine, and delivery courier tracking reusing the ride primitive.
+servers:
+  - url: http://localhost:8080/food
+    description: Via gateway (dev)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: restaurants
+  - name: orders
+  - name: delivery
+  - name: queue
+  - name: ratings
+
+paths:
+  /restaurants:
+    get:
+      tags: [restaurants]
+      summary: List available restaurants
+      operationId: listRestaurants
+      responses:
+        '200':
+          description: Restaurant list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RestaurantResponse'
+
+  /restaurants/{id}/menu:
+    get:
+      tags: [restaurants]
+      summary: Get restaurant menu (available items only)
+      operationId: getMenu
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Menu items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MenuItemResponse'
+    post:
+      tags: [restaurants]
+      summary: Add/update menu item (restaurant owner)
+      operationId: upsertMenuItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuItemRequest'
+      responses:
+        '200':
+          description: Menu item saved
+
+  /restaurants/{id}/orders:
+    get:
+      tags: [restaurants]
+      summary: Restaurant order board (dashboard)
+      operationId: getRestaurantOrders
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Active orders for this restaurant
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderResponse'
+
+  /orders:
+    post:
+      tags: [orders]
+      summary: Place an order (DELIVERY / PICKUP / WALKIN)
+      operationId: placeOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceOrderRequest'
+      responses:
+        '201':
+          description: Order placed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+
+  /orders/{id}/status:
+    patch:
+      tags: [orders]
+      summary: Restaurant advances order status
+      operationId: updateOrderStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderStatusUpdate'
+      responses:
+        '200':
+          description: Status updated; READY triggers push + SMS within 10s
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+
+  /orders/{id}/rate:
+    post:
+      tags: [ratings]
+      summary: Post-order rating
+      operationId: rateOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingRequest'
+      responses:
+        '200':
+          description: Rating recorded
+
+  /deliveries/{orderId}/assign:
+    post:
+      tags: [delivery]
+      summary: Assign nearest available courier to a delivery order
+      operationId: assignCourier
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Courier assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryResponse'
+
+  /deliveries/{id}/status:
+    patch:
+      tags: [delivery]
+      summary: Courier advances delivery state
+      operationId: updateDeliveryStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryStatusUpdate'
+      responses:
+        '200':
+          description: Delivery status updated; OUT_FOR_DELIVERY → push; DELIVERED → push
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryResponse'
+
+  /queue/join:
+    post:
+      tags: [queue]
+      summary: Join walk-in queue remotely
+      operationId: joinQueue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueJoinRequest'
+      responses:
+        '201':
+          description: Joined; returns live position
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueEntryResponse'
+
+  /queue/{restaurantId}/position:
+    get:
+      tags: [queue]
+      summary: Live queue position and estimated wait
+      operationId: getQueuePosition
+      parameters:
+        - name: restaurantId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Position info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuePositionResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RestaurantResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        lat:
+          type: number
+        lng:
+          type: number
+        status:
+          type: string
+          enum: [OPEN, CLOSED, PAUSED]
+        prepMinutes:
+          type: integer
+
+    MenuItemRequest:
+      type: object
+      required: [name, price]
+      properties:
+        name:
+          type: string
+        price:
+          type: number
+        available:
+          type: boolean
+          default: true
+
+    MenuItemResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        price:
+          type: number
+        available:
+          type: boolean
+
+    PlaceOrderRequest:
+      type: object
+      required: [restaurantId, items, mode]
+      properties:
+        restaurantId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              menuItemId:
+                type: string
+                format: uuid
+              qty:
+                type: integer
+        mode:
+          type: string
+          enum: [DELIVERY, PICKUP, WALKIN]
+        deliveryAddr:
+          type: string
+          description: Required when mode=DELIVERY
+
+    OrderResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+          format: uuid
+        restaurantId:
+          type: string
+          format: uuid
+        mode:
+          type: string
+        status:
+          type: string
+        total:
+          type: number
+        deliveryFee:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+
+    OrderStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [CONFIRMED, PREPARING, READY, COMPLETED, CANCELLED]
+
+    DeliveryResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        courierId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ASSIGNED, PICKED_UP, ENROUTE, DELIVERED]
+
+    DeliveryStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [PICKED_UP, ENROUTE, DELIVERED]
+
+    QueueJoinRequest:
+      type: object
+      required: [restaurantId]
+      properties:
+        restaurantId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+
+    QueueEntryResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        status:
+          type: string
+          enum: [WAITING, CALLED, SERVED]
+
+    QueuePositionResponse:
+      type: object
+      properties:
+        position:
+          type: integer
+        totalAhead:
+          type: integer
+        estimatedWaitMinutes:
+          type: integer
+        status:
+          type: string
+
+    RatingRequest:
+      type: object
+      required: [score]
+      properties:
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string

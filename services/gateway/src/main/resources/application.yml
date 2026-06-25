@@ -1,0 +1,68 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+  cloud:
+    gateway:
+      routes:
+        - id: auth
+          uri: ${AUTH_SERVICE_URL:http://localhost:8081}
+          predicates:
+            - Path=/auth/**
+
+        - id: rides
+          uri: ${RIDE_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/rides/**
+
+        - id: food
+          uri: ${FOOD_SERVICE_URL:http://localhost:8083}
+          predicates:
+            - Path=/food/**
+
+        - id: wallet
+          uri: ${WALLET_SERVICE_URL:http://localhost:8084}
+          predicates:
+            - Path=/wallet/**
+
+        - id: notify
+          uri: ${WALLET_SERVICE_URL:http://localhost:8084}
+          predicates:
+            - Path=/notify
+          filters:
+            - RewritePath=/notify, /wallet/notify
+
+      # Forward WebSocket upgrades transparently
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"]
+            allowedHeaders: "*"
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+  gateway:
+    # Paths that bypass JWT check at the gateway edge
+    public-paths:
+      - /auth/register
+      - /auth/verify-otp
+      - /auth/refresh
+      - /actuator
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO

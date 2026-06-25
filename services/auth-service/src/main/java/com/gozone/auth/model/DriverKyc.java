@@ -1,0 +1,65 @@
+package com.gozone.auth.model;
+
+import jakarta.persistence.*;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = "driver_kyc")
+public class DriverKyc {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @Column(name = "licence_no", length = 50)
+    private String licenceNo;
+
+    @Column(name = "vehicle_reg", length = 50)
+    private String vehicleReg;
+
+    @Column(name = "roadworthy_url")
+    private String roadworthyUrl;
+
+    @Column(name = "id_selfie_url")
+    private String idSelfieUrl;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private KycStatus status = KycStatus.PENDING;
+
+    @Column(name = "reviewed_by")
+    private UUID reviewedBy;
+
+    @Column(name = "expiry_date")
+    private LocalDate expiryDate;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private OffsetDateTime createdAt = OffsetDateTime.now();
+
+    public enum KycStatus { PENDING, VERIFIED, REJECTED }
+
+    public UUID getId() { return id; }
+    public User getUser() { return user; }
+    public void setUser(User user) { this.user = user; }
+    public String getLicenceNo() { return licenceNo; }
+    public void setLicenceNo(String licenceNo) { this.licenceNo = licenceNo; }
+    public String getVehicleReg() { return vehicleReg; }
+    public void setVehicleReg(String vehicleReg) { this.vehicleReg = vehicleReg; }
+    public String getRoadworthyUrl() { return roadworthyUrl; }
+    public void setRoadworthyUrl(String roadworthyUrl) { this.roadworthyUrl = roadworthyUrl; }
+    public String getIdSelfieUrl() { return idSelfieUrl; }
+    public void setIdSelfieUrl(String idSelfieUrl) { this.idSelfieUrl = idSelfieUrl; }
+    public KycStatus getStatus() { return status; }
+    public void setStatus(KycStatus status) { this.status = status; }
+    public UUID getReviewedBy() { return reviewedBy; }
+    public void setReviewedBy(UUID reviewedBy) { this.reviewedBy = reviewedBy; }
+    public LocalDate getExpiryDate() { return expiryDate; }
+    public void setExpiryDate(LocalDate expiryDate) { this.expiryDate = expiryDate; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+}

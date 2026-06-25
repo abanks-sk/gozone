@@ -1,0 +1,40 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+!**/src/main/**
+!**/src/test/**
+.mvn/wrapper/maven-wrapper.jar
+.idea/
+*.iml
+.settings/
+.classpath
+.project
+*.log
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+.expo-shared/
+.metro/
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+docker-volumes/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+*.swo

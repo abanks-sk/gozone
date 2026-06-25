@@ -1,0 +1,373 @@
+openapi: "3.0.3"
+info:
+  title: GoZone Ride Service — GoRide
+  version: "1.0.0"
+  description: |
+    inDrive-style fare bidding × trotro-style sharing.
+    Simplified pooling: corridor + haversine fair-share (no real route geometry).
+servers:
+  - url: http://localhost:8080/rides
+    description: Via gateway (dev)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: requests
+  - name: trips
+  - name: tracking
+  - name: pooling
+  - name: ratings
+
+paths:
+  /requests:
+    post:
+      tags: [requests]
+      summary: Rider posts a ride request with proposed fare
+      operationId: createRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRideRequest'
+      responses:
+        '201':
+          description: Request created; broadcasted to nearby drivers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RideRequestResponse'
+
+  /requests/nearby:
+    get:
+      tags: [requests]
+      summary: Driver feed — open requests within radius (PostGIS)
+      operationId: getNearbyRequests
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: radiusKm
+          in: query
+          schema:
+            type: number
+            default: 5
+      responses:
+        '200':
+          description: List of open requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RideRequestResponse'
+
+  /requests/{id}/bid:
+    post:
+      tags: [requests]
+      summary: Driver places ACCEPT or COUNTER bid
+      operationId: placeBid
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BidRequest'
+      responses:
+        '200':
+          description: Bid placed; if ACCEPT → trip matched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BidResponse'
+
+  /trips/{id}/status:
+    patch:
+      tags: [trips]
+      summary: Advance trip state machine
+      operationId: updateTripStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TripStatusUpdate'
+      responses:
+        '200':
+          description: Trip status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripResponse'
+
+  /trips/{id}/pool-candidates:
+    post:
+      tags: [pooling]
+      summary: Find route-compatible riders for en-route pooling
+      operationId: getPoolCandidates
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Compatible open requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RideRequestResponse'
+
+  /trips/{id}/pool-join:
+    post:
+      tags: [pooling]
+      summary: Rider joins an en-route trip at a fixed fair-share quote
+      operationId: poolJoin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PoolJoinRequest'
+      responses:
+        '200':
+          description: Joined; locked_fare set (never recomputed); rule_version stamped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolJoinResponse'
+
+  /locations:
+    post:
+      tags: [tracking]
+      summary: Driver pushes GPS location
+      operationId: pushLocation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationUpdate'
+      responses:
+        '204':
+          description: Location stored
+
+  /trips/{id}/rate:
+    post:
+      tags: [ratings]
+      summary: Two-way rating after trip completion
+      operationId: rateTrip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingRequest'
+      responses:
+        '200':
+          description: Rating recorded; aggregates updated
+
+  /trips/{id}/sos:
+    post:
+      tags: [trips]
+      summary: SOS stub — logs event, shows toast
+      operationId: sos
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: SOS logged
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CreateRideRequest:
+      type: object
+      required: [originLat, originLng, destLat, destLng, proposedFare]
+      properties:
+        originLat:
+          type: number
+        originLng:
+          type: number
+        destLat:
+          type: number
+        destLng:
+          type: number
+        seats:
+          type: integer
+          default: 1
+        proposedFare:
+          type: number
+
+    RideRequestResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        riderId:
+          type: string
+          format: uuid
+        originLat:
+          type: number
+        originLng:
+          type: number
+        destLat:
+          type: number
+        destLng:
+          type: number
+        seats:
+          type: integer
+        proposedFare:
+          type: number
+        status:
+          type: string
+          enum: [OPEN, MATCHED, CANCELLED]
+        createdAt:
+          type: string
+          format: date-time
+
+    BidRequest:
+      type: object
+      required: [type, amount]
+      properties:
+        type:
+          type: string
+          enum: [ACCEPT, COUNTER]
+        amount:
+          type: number
+
+    BidResponse:
+      type: object
+      properties:
+        bidId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        tripId:
+          type: string
+          format: uuid
+          description: Set when bid results in a match
+
+    TripStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ENROUTE, STARTED, COMPLETED, CANCELLED]
+
+    TripResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+        agreedFare:
+          type: number
+        status:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    PoolJoinRequest:
+      type: object
+      required: [requestId]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+
+    PoolJoinResponse:
+      type: object
+      properties:
+        tripId:
+          type: string
+          format: uuid
+        lockedFare:
+          type: number
+          description: Fixed fair-share fare; never changed after this
+        ruleVersion:
+          type: string
+          example: v1
+
+    LocationUpdate:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat:
+          type: number
+        lng:
+          type: number
+
+    RatingRequest:
+      type: object
+      required: [rateeId, score]
+      properties:
+        rateeId:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string

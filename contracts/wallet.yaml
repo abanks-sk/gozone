@@ -1,0 +1,276 @@
+openapi: "3.0.3"
+info:
+  title: GoZone Wallet + Notification Service
+  version: "1.0.0"
+  description: |
+    Mock ledger, commission splits, payouts, and notifications.
+    All money operations record ledger entries only — no real PSP.
+    Push notifications are REAL via Expo Push; SMS is a logged stub.
+servers:
+  - url: http://localhost:8080/wallet
+    description: Via gateway (dev)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: wallet
+  - name: notify
+
+paths:
+  /transactions:
+    post:
+      tags: [wallet]
+      summary: Record a charge (mock — always succeeds, records CREDIT ledger entry)
+      operationId: recordTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+      responses:
+        '200':
+          description: Transaction recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+
+  /commission:
+    post:
+      tags: [wallet]
+      summary: Compute and record commission split (pillar rate applied)
+      operationId: recordCommission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommissionRequest'
+      responses:
+        '200':
+          description: Commission split recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommissionResponse'
+
+  /cash-trip:
+    post:
+      tags: [wallet]
+      summary: Debit driver commission for a cash ride
+      operationId: cashTrip
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CashTripRequest'
+      responses:
+        '200':
+          description: Driver wallet debited; ledger entry created
+
+  /{ownerId}:
+    get:
+      tags: [wallet]
+      summary: Get balance and ledger for a wallet owner
+      operationId: getWallet
+      parameters:
+        - name: ownerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Wallet balance and recent ledger
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletResponse'
+
+  /settle/{orderId}:
+    post:
+      tags: [wallet]
+      summary: Settle completed order — net payout to restaurant after commission
+      operationId: settleOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Settlement recorded
+
+  /notify:
+    post:
+      tags: [notify]
+      summary: Send push notification (real Expo) and/or SMS stub
+      operationId: notify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotifyRequest'
+      responses:
+        '200':
+          description: Push sent (or fallback to SMS stub on failure); channel logged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotifyResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    TransactionRequest:
+      type: object
+      required: [ownerId, ownerType, amount, refType, refId]
+      properties:
+        ownerId:
+          type: string
+          format: uuid
+        ownerType:
+          type: string
+          enum: [DRIVER, RESTAURANT, CUSTOMER, COURIER]
+        amount:
+          type: number
+        refType:
+          type: string
+          enum: [TRIP, ORDER]
+        refId:
+          type: string
+          format: uuid
+
+    TransactionResponse:
+      type: object
+      properties:
+        ledgerEntryId:
+          type: string
+          format: uuid
+        newBalance:
+          type: number
+
+    CommissionRequest:
+      type: object
+      required: [pillar, grossAmount, ownerId, ownerType, refType, refId]
+      properties:
+        pillar:
+          type: string
+          enum: [RIDE, FOOD]
+        grossAmount:
+          type: number
+        ownerId:
+          type: string
+          format: uuid
+        ownerType:
+          type: string
+          enum: [DRIVER, RESTAURANT, COURIER]
+        refType:
+          type: string
+          enum: [TRIP, ORDER]
+        refId:
+          type: string
+          format: uuid
+
+    CommissionResponse:
+      type: object
+      properties:
+        grossAmount:
+          type: number
+        commissionAmount:
+          type: number
+        netAmount:
+          type: number
+        rate:
+          type: number
+
+    CashTripRequest:
+      type: object
+      required: [driverId, tripId, grossFare]
+      properties:
+        driverId:
+          type: string
+          format: uuid
+        tripId:
+          type: string
+          format: uuid
+        grossFare:
+          type: number
+
+    WalletResponse:
+      type: object
+      properties:
+        ownerId:
+          type: string
+          format: uuid
+        ownerType:
+          type: string
+        balance:
+          type: number
+        ledger:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerEntry'
+
+    LedgerEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        type:
+          type: string
+          enum: [CREDIT, DEBIT, COMMISSION, PAYOUT]
+        refType:
+          type: string
+        refId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    NotifyRequest:
+      type: object
+      required: [userId, event]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        event:
+          type: string
+          example: ORDER_READY
+        title:
+          type: string
+        body:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+
+    NotifyResponse:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [PUSH, SMS]
+        status:
+          type: string
+          enum: [SENT, FAILED]
+        notificationId:
+          type: string
+          format: uuid

@@ -1,0 +1,45 @@
+server:
+  port: 8084
+  servlet:
+    context-path: /wallet
+
+spring:
+  application:
+    name: wallet-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:wallet_db}
+    username: ${DB_USER:gozone}
+    password: ${DB_PASS:gozone}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+  expo:
+    access-token: ${EXPO_ACCESS_TOKEN:}
+    push-url: https://exp.host/--/api/v2/push/send
+
+logging:
+  level:
+    com.gozone.wallet: DEBUG

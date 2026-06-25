@@ -1,24 +1,31 @@
+version: '3.9'
+
 services:
+
+  # ── Shared Postgres (4 logical DBs) ─────────────────────────────────────────
   postgres:
-    image: postgres:16
+    image: postgis/postgis:16-3.4-alpine
     container_name: gozone-postgres
     environment:
       POSTGRES_USER: gozone
-      POSTGRES_PASSWORD: gozone123
-      POSTGRES_DB: postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: gozone
+      POSTGRES_DB: gozone_main
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gozone"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ── API Gateway (port 8080 — only public entry point) ────────────────────────
   gateway:
-    build: ./services/gateway
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
     container_name: gozone-gateway
     ports:
       - "8080:8080"
@@ -27,77 +34,127 @@ services:
       RIDE_SERVICE_URL: http://ride-service:8082
       FOOD_SERVICE_URL: http://food-service:8083
       WALLET_SERVICE_URL: http://wallet-service:8084
+      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
     depends_on:
-      - auth-service
-      - ride-service
-      - food-service
-      - wallet-service
+      auth-service:
+        condition: service_healthy
+      ride-service:
+        condition: service_healthy
+      food-service:
+        condition: service_healthy
+      wallet-service:
+        condition: service_healthy
+    restart: on-failure
 
+  # ── Auth / Identity Service (port 8081) ─────────────────────────────────────
   auth-service:
-    build: ./services/auth-service
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
     container_name: gozone-auth
     ports:
       - "8081:8081"
     environment:
-      SERVER_PORT: 8081
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth_db
-      SPRING_DATASOURCE_USERNAME: gozone
-      SPRING_DATASOURCE_PASSWORD: gozone123
-      JWT_SECRET: gozone-super-secret-jwt-key-change-in-production
-      JWT_EXPIRY_HOURS: 24
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: auth_db
+      DB_USER: gozone
+      DB_PASS: gozone
+      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/auth/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+    restart: on-failure
 
+  # ── Ride Service — GoRide (port 8082) ────────────────────────────────────────
   ride-service:
-    build: ./services/ride-service
+    build:
+      context: ./services/ride-service
+      dockerfile: Dockerfile
     container_name: gozone-ride
     ports:
       - "8082:8082"
     environment:
-      SERVER_PORT: 8082
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ride_db
-      SPRING_DATASOURCE_USERNAME: gozone
-      SPRING_DATASOURCE_PASSWORD: gozone123
-      JWT_SECRET: gozone-super-secret-jwt-key-change-in-production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ride_db
+      DB_USER: gozone
+      DB_PASS: gozone
+      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+      AUTH_SERVICE_URL: http://auth-service:8081
       WALLET_SERVICE_URL: http://wallet-service:8084
-      NOTIFY_SERVICE_URL: http://wallet-service:8084
+      NOTIFY_URL: http://wallet-service:8084/notify
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/rides/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+    restart: on-failure
 
+  # ── Food Service — GoBite (port 8083) ────────────────────────────────────────
   food-service:
-    build: ./services/food-service
+    build:
+      context: ./services/food-service
+      dockerfile: Dockerfile
     container_name: gozone-food
     ports:
       - "8083:8083"
     environment:
-      SERVER_PORT: 8083
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/food_db
-      SPRING_DATASOURCE_USERNAME: gozone
-      SPRING_DATASOURCE_PASSWORD: gozone123
-      JWT_SECRET: gozone-super-secret-jwt-key-change-in-production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: food_db
+      DB_USER: gozone
+      DB_PASS: gozone
+      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
       WALLET_SERVICE_URL: http://wallet-service:8084
-      NOTIFY_SERVICE_URL: http://wallet-service:8084
+      NOTIFY_URL: http://wallet-service:8084/notify
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/food/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+    restart: on-failure
 
+  # ── Wallet + Notification Service (port 8084) ─────────────────────────────────
   wallet-service:
-    build: ./services/wallet-service
+    build:
+      context: ./services/wallet-service
+      dockerfile: Dockerfile
     container_name: gozone-wallet
     ports:
       - "8084:8084"
     environment:
-      SERVER_PORT: 8084
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/wallet_db
-      SPRING_DATASOURCE_USERNAME: gozone
-      SPRING_DATASOURCE_PASSWORD: gozone123
-      JWT_SECRET: gozone-super-secret-jwt-key-change-in-production
-      EXPO_PUSH_URL: https://exp.host/--/api/v2/push/send
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: wallet_db
+      DB_USER: gozone
+      DB_PASS: gozone
+      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8084/wallet/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+    restart: on-failure
 
 volumes:
   postgres_data:
