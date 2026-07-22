@@ -7,10 +7,14 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Base64;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Sends OTP codes by SMS.
@@ -46,7 +50,31 @@ public class SmsService {
     @Value("${app.sms.twilio.auth-token:}")  private String twilioToken;
     @Value("${app.sms.twilio.from:}")        private String twilioFrom;
 
-    private final RestTemplate rest = new RestTemplate();
+    /**
+     * Bounded HTTP client. A bare {@code new RestTemplate()} has NO connect or read
+     * timeout, so an unresponsive SMS gateway blocks the calling thread forever — the
+     * fail-soft catch below never fires and sign-in hangs instead of falling back to a
+     * logged code. These timeouts are what make the fallback actually reachable.
+     */
+    private final RestTemplate rest = bounded();
+
+    private static RestTemplate bounded() {
+        SimpleClientHttpRequestFactory f = new SimpleClientHttpRequestFactory();
+        f.setConnectTimeout((int) Duration.ofSeconds(4).toMillis());
+        f.setReadTimeout((int) Duration.ofSeconds(8).toMillis());
+        return new RestTemplate(f);
+    }
+
+    /**
+     * Sends happen off the request thread: signing in must never wait on a third-party
+     * SMS gateway. The code is persisted before this runs, so the user can verify as
+     * soon as the message arrives (or, in dev, as soon as it is logged).
+     */
+    private final ExecutorService dispatch = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "sms-dispatch");
+        t.setDaemon(true);
+        return t;
+    });
 
     private boolean isTwilio() { return "twilio".equalsIgnoreCase(provider); }
 
@@ -67,18 +95,25 @@ public class SmsService {
             log.info("[OTP-MOCK] phone={} code={} expires_in={}m (SMS not configured)", phone, code, expiryMinutes);
             return;
         }
-        try {
-            if (isTwilio()) sendViaTwilio(phone, message);
-            else sendViaAfricasTalking(phone, message);
-            log.info("[SMS] verification code sent to {} via {}", phone, provider);
-            if (logCodes) {
-                log.info("[OTP-DEV] phone={} code={} (app.otp.log-codes=true — disable in production)", phone, code);
-            }
-        } catch (Exception e) {
-            // Never block sign-in on an SMS failure — log the code so the user can still proceed.
-            log.error("[SMS] send to {} failed: {}", phone, e.getMessage());
-            log.info("[OTP-MOCK] phone={} code={} expires_in={}m (send failed)", phone, code, expiryMinutes);
+
+        // Surface the code immediately in dev — before any network call — so a slow or
+        // failing provider can neither delay it nor hide it.
+        if (logCodes) {
+            log.info("[OTP-DEV] phone={} code={} (app.otp.log-codes=true — disable in production)", phone, code);
         }
+
+        dispatch.submit(() -> {
+            try {
+                if (isTwilio()) sendViaTwilio(phone, message);
+                else sendViaAfricasTalking(phone, message);
+                log.info("[SMS] verification code sent to {} via {}", phone, provider);
+            } catch (Exception e) {
+                // Never block sign-in on an SMS failure — the code is already issued and
+                // logged above, so the user can still proceed.
+                log.error("[SMS] send to {} failed: {}", phone, e.getMessage());
+                log.info("[OTP-MOCK] phone={} code={} expires_in={}m (send failed)", phone, code, expiryMinutes);
+            }
+        });
     }
 
     private void sendViaAfricasTalking(String phone, String message) {
