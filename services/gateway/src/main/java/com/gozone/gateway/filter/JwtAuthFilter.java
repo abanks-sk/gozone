@@ -24,10 +24,22 @@ import java.util.List;
 @Component
 public class JwtAuthFilter implements GlobalFilter, Ordered {
 
-    private static final List<String> PUBLIC_PATHS = List.of(
-        "/auth/register",
-        "/auth/verify-otp",
-        "/auth/refresh"
+    /** Pre-login paths that bypass the edge JWT check — driven by app.gateway.public-paths. */
+    @Value("${app.gateway.public-paths}")
+    private List<String> publicPaths;
+
+    /**
+     * Internal service-to-service paths (wallet settlement + notify dispatch).
+     * These are guarded by the X-Internal-Key shared secret and are only ever
+     * called service→service on the internal network — never legitimately from
+     * an external client — so the public gateway blocks them outright.
+     */
+    private static final List<String> INTERNAL_ONLY_PATHS = List.of(
+        "/wallet/commission",
+        "/wallet/settle",
+        "/wallet/pay/verify",
+        "/notify",
+        "/auth/delivery-riders"
     );
 
     @Value("${app.jwt.secret}")
@@ -36,6 +48,13 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getPath().toString();
+
+        // Internal-only endpoints must not be reachable through the public edge,
+        // even with a valid user token — reject before anything else.
+        if (isInternalOnly(path)) {
+            exchange.getResponse().setStatusCode(HttpStatus.NOT_FOUND);
+            return exchange.getResponse().setComplete();
+        }
 
         if (isPublicPath(path)) {
             return chain.filter(exchange);
@@ -69,8 +88,12 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
     }
 
     private boolean isPublicPath(String path) {
-        return PUBLIC_PATHS.stream().anyMatch(path::startsWith)
+        return publicPaths.stream().anyMatch(path::startsWith)
             || path.contains("/actuator/");
+    }
+
+    private boolean isInternalOnly(String path) {
+        return INTERNAL_ONLY_PATHS.stream().anyMatch(path::startsWith);
     }
 
     @Override

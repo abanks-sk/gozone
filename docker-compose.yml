@@ -16,7 +16,7 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gozone"]
+      test: ["CMD-SHELL", "pg_isready -U gozone -d gozone_main"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -34,7 +34,8 @@ services:
       RIDE_SERVICE_URL: http://ride-service:8082
       FOOD_SERVICE_URL: http://food-service:8083
       WALLET_SERVICE_URL: http://wallet-service:8084
-      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
     depends_on:
       auth-service:
         condition: service_healthy
@@ -60,7 +61,20 @@ services:
       DB_NAME: auth_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:-}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_APP_PASSWORD: ${MAIL_APP_PASSWORD:-}
+      GOOGLE_CLIENT_IDS: ${GOOGLE_CLIENT_IDS:-}
+      OTP_LOG_CODES: ${OTP_LOG_CODES:-true}
+      SMS_PROVIDER: ${SMS_PROVIDER:-africastalking}
+      AT_USERNAME: ${AT_USERNAME:-}
+      AT_API_KEY: ${AT_API_KEY:-}
+      AT_SENDER_ID: ${AT_SENDER_ID:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM: ${TWILIO_FROM:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,10 +100,12 @@ services:
       DB_NAME: ride_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       AUTH_SERVICE_URL: http://auth-service:8081
       WALLET_SERVICE_URL: http://wallet-service:8084
       NOTIFY_URL: http://wallet-service:8084/notify
+      GOOGLE_MAPS_SERVER_KEY: ${GOOGLE_MAPS_SERVER_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,9 +131,11 @@ services:
       DB_NAME: food_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       WALLET_SERVICE_URL: http://wallet-service:8084
       NOTIFY_URL: http://wallet-service:8084/notify
+      AUTH_SERVICE_URL: http://auth-service:8081
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,8 +161,10 @@ services:
       DB_NAME: wallet_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:-gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-mock}
     depends_on:
       postgres:
         condition: service_healthy

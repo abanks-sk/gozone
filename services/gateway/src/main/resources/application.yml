@@ -36,6 +36,9 @@ spring:
 
       # Forward WebSocket upgrades transparently
       globalcors:
+        # Let the gateway answer CORS preflight (OPTIONS) itself instead of
+        # forwarding it downstream, where Spring Security would reject it.
+        add-to-simple-url-handler-mapping: true
         corsConfigurations:
           '[/**]':
             allowedOrigins: "*"
@@ -54,14 +57,11 @@ management:
 
 app:
   jwt:
-    secret: ${JWT_SECRET:gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+    secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
   gateway:
-    # Paths that bypass JWT check at the gateway edge
-    public-paths:
-      - /auth/register
-      - /auth/verify-otp
-      - /auth/refresh
-      - /actuator
+    # Paths that bypass the JWT check at the gateway edge (pre-login flows).
+    # Comma-separated so it binds cleanly to a List<String> via @Value.
+    public-paths: /auth/google,/auth/register,/auth/register-email,/auth/login,/auth/login-email,/auth/login-email-password,/auth/verify-otp,/auth/refresh,/auth/admin/login,/wallet/mock-checkout,/actuator
 
 logging:
   level:
