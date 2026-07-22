@@ -20,6 +20,29 @@ tags:
   - name: ratings
 
 paths:
+  /quote:
+    post:
+      tags: [pricing]
+      summary: Server-authoritative fare quote for a trip
+      description: >
+        Computes (base + perKm × haversine distance) × ride-type multiplier × surge,
+        floored at a minimum fare. Surge is time-based (peak commute hours). The app
+        shows the returned fare as the anchor; bargainable ride types may still adjust.
+      operationId: quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+      responses:
+        '200':
+          description: Fare quote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+
   /requests:
     post:
       tags: [requests]
@@ -60,6 +83,19 @@ paths:
           schema:
             type: number
             default: 5
+        - name: vehicleClass
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OKADA, STANDARD, LUXE, CARGO]
+          description: Filter to requests this driver class can take (omit = no filtering)
+        - name: serviceMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [RIDES, DELIVERIES, BOTH]
       responses:
         '200':
           description: List of open requests
@@ -70,10 +106,34 @@ paths:
                 items:
                   $ref: '#/components/schemas/RideRequestResponse'
 
+  /requests/{id}/status:
+    get:
+      tags: [requests]
+      summary: Rider polls their own request — status + matched trip (null until accepted)
+      operationId: getRequestStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Combined request status and matched trip
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RideStatusResponse'
+
   /requests/{id}/bid:
     post:
       tags: [requests]
-      summary: Driver places ACCEPT or COUNTER bid
+      summary: >
+        Driver places an offer (ACCEPT pins the rider's fare, COUNTER carries the
+        driver's amount). Both become PENDING — the trip is created only when the
+        rider accepts an offer, so several drivers can accept and the rider picks
+        by distance/driver. Re-offering updates the driver's existing offer.
       operationId: placeBid
       parameters:
         - name: id
@@ -90,11 +150,148 @@ paths:
               $ref: '#/components/schemas/BidRequest'
       responses:
         '200':
-          description: Bid placed; if ACCEPT → trip matched
+          description: Offer placed (PENDING); poll GET /bids/{bidId} for the outcome
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BidResponse'
+
+  /bids/{id}:
+    get:
+      tags: [requests]
+      summary: Driver polls their own offer — ACCEPTED (+tripId) / REJECTED / request dead
+      operationId: bidStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Offer status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BidStatusResponse'
+    delete:
+      tags: [requests]
+      summary: Driver withdraws their pending offer
+      operationId: withdrawBid
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Offer withdrawn (no-op if already decided)
+
+  /trips/mine:
+    get:
+      tags: [trips]
+      summary: Rider's ride history (upcoming/scheduled + active + past)
+      operationId: myRides
+      responses:
+        '200':
+          description: Ride history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RideHistoryItem'
+
+  /requests/{id}/bids:
+    get:
+      tags: [requests]
+      summary: Rider lists pending driver offers on their request
+      operationId: listBids
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Pending offers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BidOffer'
+
+  /requests/{id}/bids/{bidId}/accept:
+    post:
+      tags: [requests]
+      summary: Rider accepts a driver's offer → creates the trip at that fare
+      operationId: acceptBid
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: bidId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Offer accepted; trip created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripResponse'
+
+  /trips/{id}:
+    get:
+      tags: [trips]
+      summary: Get a trip (incl. payment status) — used by the driver to poll for cash
+      operationId: getTrip
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Trip
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripResponse' }
+
+  /trips/{id}/pay:
+    post:
+      tags: [trips]
+      summary: Rider pays for a trip (wallet/card/momo settle now; cash → awaiting driver)
+      operationId: payTrip
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { method: { type: string, enum: [wallet, card, momo, cash] } } }
+      responses:
+        '200':
+          description: Payment recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripResponse' }
+
+  /trips/{id}/confirm-cash:
+    post:
+      tags: [trips]
+      summary: Driver confirms cash received → marks the trip paid
+      operationId: confirmCash
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Marked paid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripResponse' }
 
   /trips/{id}/status:
     patch:
@@ -210,8 +407,52 @@ paths:
   /trips/{id}/sos:
     post:
       tags: [trips]
-      summary: SOS stub — logs event, shows toast
+      summary: SOS — records an incident triaged on the admin web app
       operationId: sos
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        '200':
+          description: Incident recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SosIncident'
+
+  /sos:
+    get:
+      tags: [trips]
+      summary: Admin — all SOS incidents, newest first (ADMIN/SUPER_ADMIN)
+      operationId: listSos
+      responses:
+        '200':
+          description: Incidents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SosIncident'
+
+  /sos/{id}/handle:
+    patch:
+      tags: [trips]
+      summary: Admin — mark an SOS incident handled
+      operationId: handleSos
       parameters:
         - name: id
           in: path
@@ -221,7 +462,11 @@ paths:
             format: uuid
       responses:
         '200':
-          description: SOS logged
+          description: Incident updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SosIncident'
 
 components:
   securitySchemes:
@@ -231,6 +476,49 @@ components:
       bearerFormat: JWT
 
   schemas:
+    QuoteRequest:
+      type: object
+      required: [originLat, originLng, destLat, destLng]
+      properties:
+        originLat:
+          type: number
+        originLng:
+          type: number
+        destLat:
+          type: number
+        destLng:
+          type: number
+        rideType:
+          type: string
+          enum: [STANDARD, PREMIUM, OKADA]
+          default: STANDARD
+
+    QuoteResponse:
+      type: object
+      properties:
+        distanceKm:
+          type: number
+        fare:
+          type: number
+          description: Suggested/anchor fare after type multiplier + surge
+        baseFare:
+          type: number
+          description: Distance fare before type/surge
+        rideType:
+          type: string
+        typeMultiplier:
+          type: number
+        surgeMultiplier:
+          type: number
+        surge:
+          type: boolean
+          description: True when a peak-hour surge is applied
+        currency:
+          type: string
+          example: GHS
+        ruleVersion:
+          type: string
+
     CreateRideRequest:
       type: object
       required: [originLat, originLng, destLat, destLng, proposedFare]
@@ -248,6 +536,31 @@ components:
           default: 1
         proposedFare:
           type: number
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Book for a future time; null/omitted = ride now
+        kind:
+          type: string
+          enum: [RIDE, PARCEL]
+          default: RIDE
+        rideType:
+          type: string
+          enum: [STANDARD, LUXE, OKADA]
+          default: STANDARD
+        parcelSize:
+          type: string
+          enum: [SMALL, MEDIUM, LARGE]
+          nullable: true
+        parcelDesc:
+          type: string
+          nullable: true
+          description: What the parcel is (required by the client for parcels)
+        riderPhone:
+          type: string
+          nullable: true
+          description: Customer's phone — revealed to the matched driver via TripResponse only
 
     RideRequestResponse:
       type: object
@@ -273,9 +586,38 @@ components:
         status:
           type: string
           enum: [OPEN, MATCHED, CANCELLED]
+        kind:
+          type: string
+          enum: [RIDE, PARCEL]
+        rideType:
+          type: string
+          enum: [STANDARD, LUXE, OKADA]
+        parcelSize:
+          type: string
+          enum: [SMALL, MEDIUM, LARGE]
+          nullable: true
+        parcelDesc:
+          type: string
+          nullable: true
         createdAt:
           type: string
           format: date-time
+
+    RideStatusResponse:
+      type: object
+      properties:
+        request:
+          $ref: '#/components/schemas/RideRequestResponse'
+        trip:
+          allOf:
+            - $ref: '#/components/schemas/TripResponse'
+          nullable: true
+          description: Null until the rider accepts a driver's offer
+        driver:
+          allOf:
+            - $ref: '#/components/schemas/BidOffer'
+          nullable: true
+          description: The winning driver's details (from the accepted offer)
 
     BidRequest:
       type: object
@@ -286,6 +628,63 @@ components:
           enum: [ACCEPT, COUNTER]
         amount:
           type: number
+        driverName: { type: string, nullable: true }
+        driverPhone: { type: string, nullable: true }
+        vehicle: { type: string, nullable: true, description: e.g. "Toyota Vitz · Silver" }
+        plate: { type: string, nullable: true }
+        lat: { type: number, nullable: true, description: Driver's position at bid time }
+        lng: { type: number, nullable: true }
+
+    RideHistoryItem:
+      type: object
+      properties:
+        requestId: { type: string, format: uuid }
+        tripId: { type: string, format: uuid, nullable: true }
+        status: { type: string }
+        fare: { type: number }
+        originLat: { type: number }
+        originLng: { type: number }
+        destLat: { type: number }
+        destLng: { type: number }
+        scheduledAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    BidOffer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        driverId: { type: string, format: uuid }
+        amount: { type: number }
+        type: { type: string, enum: [ACCEPT, COUNTER] }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        driverName: { type: string, nullable: true }
+        driverPhone: { type: string, nullable: true }
+        vehicle: { type: string, nullable: true }
+        plate: { type: string, nullable: true }
+        distanceKm:
+          type: number
+          nullable: true
+          description: Driver → pickup straight-line km at bid time
+
+    BidStatusResponse:
+      type: object
+      properties:
+        bidId: { type: string, format: uuid }
+        status: { type: string, enum: [PENDING, ACCEPTED, REJECTED, WITHDRAWN] }
+        requestStatus: { type: string, enum: [OPEN, MATCHED, EXPIRED, CANCELLED] }
+        tripId: { type: string, format: uuid, nullable: true }
+
+    SosIncident:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tripId: { type: string, format: uuid, nullable: true }
+        userId: { type: string, format: uuid }
+        lat: { type: number, nullable: true }
+        lng: { type: number, nullable: true }
+        status: { type: string, enum: [NEW, HANDLED] }
+        createdAt: { type: string, format: date-time }
 
     BidResponse:
       type: object
@@ -327,6 +726,16 @@ components:
         completedAt:
           type: string
           format: date-time
+        paymentStatus:
+          type: string
+          enum: [UNPAID, AWAITING, PAID]
+        paymentMethod:
+          type: string
+          nullable: true
+        riderPhone:
+          type: string
+          nullable: true
+          description: The rider's phone (trip endpoints are participant-guarded)
 
     PoolJoinRequest:
       type: object

@@ -12,7 +12,12 @@ public record TripResponse(
     BigDecimal agreedFare,
     String status,
     OffsetDateTime startedAt,
-    OffsetDateTime completedAt
+    OffsetDateTime completedAt,
+    String paymentStatus,
+    String paymentMethod,
+    // The rider's phone so the matched driver can call them. Trip endpoints are
+    // participant-guarded, so this is only ever revealed after a match.
+    String riderPhone
 ) {
     public static TripResponse from(Trip t) {
         return new TripResponse(
@@ -21,7 +26,10 @@ public record TripResponse(
             t.getAgreedFare(),
             t.getStatus().name(),
             t.getStartedAt(),
-            t.getCompletedAt()
+            t.getCompletedAt(),
+            t.getPaymentStatus().name(),
+            t.getPaymentMethod(),
+            t.getRequest() != null ? t.getRequest().getRiderPhone() : null
         );
     }
 }

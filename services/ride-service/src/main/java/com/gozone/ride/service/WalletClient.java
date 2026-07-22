@@ -22,10 +22,32 @@ public class WalletClient {
     private static final Logger log = LoggerFactory.getLogger(WalletClient.class);
 
     private final WebClient webClient;
+    private final String internalKey;
 
     public WalletClient(WebClient.Builder builder,
-                        @Value("${app.wallet-url:http://localhost:8084}") String walletUrl) {
+                        @Value("${app.services.wallet-url:http://localhost:8084}") String walletUrl,
+                        @Value("${app.internal.key}") String internalKey) {
         this.webClient = builder.baseUrl(walletUrl).build();
+        this.internalKey = internalKey;
+    }
+
+    /** Confirm a Paystack payment (card/momo) covered the fare, before marking a trip paid. */
+    public boolean verifyPayment(BigDecimal amount, String reference) {
+        try {
+            Map<?, ?> res = webClient.post()
+                .uri("/wallet/pay/verify")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Internal-Key", internalKey)
+                .bodyValue(Map.of("amount", amount, "reference", reference))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(5))
+                .block();
+            return res != null && Boolean.TRUE.equals(res.get("verified"));
+        } catch (Exception e) {
+            log.error("[WALLET-CLIENT] verifyPayment failed ref={}: {}", reference, e.getMessage());
+            return false;
+        }
     }
 
     public void settleRide(UUID tripId, UUID driverId, BigDecimal agreedFare) {
@@ -33,6 +55,7 @@ public class WalletClient {
             webClient.post()
                 .uri("/wallet/commission")
                 .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Internal-Key", internalKey)
                 .bodyValue(Map.of(
                     "tripId", tripId.toString(),
                     "driverId", driverId.toString(),

@@ -34,7 +34,15 @@ public class Trip {
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_status", nullable = false, length = 20)
+    private PaymentStatus paymentStatus = PaymentStatus.UNPAID;
+
+    @Column(name = "payment_method", length = 20)
+    private String paymentMethod;
+
     public enum Status { MATCHED, ENROUTE, STARTED, COMPLETED, CANCELLED }
+    public enum PaymentStatus { UNPAID, AWAITING, PAID }
 
     public UUID getId() { return id; }
     public RideRequest getRequest() { return request; }
@@ -49,4 +57,8 @@ public class Trip {
     public void setStartedAt(OffsetDateTime startedAt) { this.startedAt = startedAt; }
     public OffsetDateTime getCompletedAt() { return completedAt; }
     public void setCompletedAt(OffsetDateTime completedAt) { this.completedAt = completedAt; }
+    public PaymentStatus getPaymentStatus() { return paymentStatus; }
+    public void setPaymentStatus(PaymentStatus paymentStatus) { this.paymentStatus = paymentStatus; }
+    public String getPaymentMethod() { return paymentMethod; }
+    public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
 }

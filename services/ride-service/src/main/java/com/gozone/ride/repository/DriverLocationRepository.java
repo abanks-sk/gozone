@@ -15,7 +15,7 @@ public interface DriverLocationRepository extends JpaRepository<DriverLocation, 
     @Query(value = """
         INSERT INTO driver_locations (driver_id, point, updated_at)
         VALUES (:driverId,
-                ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                CAST(ST_SetSRID(ST_MakePoint(:lng, :lat), 4326) AS geography),
                 NOW())
         ON CONFLICT (driver_id)
         DO UPDATE SET

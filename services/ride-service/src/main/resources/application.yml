@@ -2,6 +2,8 @@ server:
   port: 8082
   servlet:
     context-path: /rides
+  error:
+    include-message: always   # surface ResponseStatusException reasons in the JSON body
 
 spring:
   application:
@@ -35,13 +37,22 @@ management:
 
 app:
   jwt:
-    secret: ${JWT_SECRET:gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+    secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
+  internal:
+    key: ${INTERNAL_KEY}   # required — shared secret for wallet settlement calls (no default)
   services:
     wallet-url: ${WALLET_SERVICE_URL:http://localhost:8084}
     notify-url: ${NOTIFY_URL:http://localhost:8084/notify}
   pooling:
     max-distance-km: 3.0       # Reject pool candidates beyond this from the route
     rule-version: v1
+  ride:
+    request-ttl-seconds: 90    # Immediate requests auto-expire after this if no driver takes them
+    expiry-sweep-ms: 30000     # How often the background sweep runs
+  maps:
+    # Google Maps SERVER key (Directions/Places/Geocoding). Blank = proxy returns empty
+    # results and the app falls back (straight-line route, no place search). Never in the app.
+    server-key: ${GOOGLE_MAPS_SERVER_KEY:}
 
 logging:
   level:

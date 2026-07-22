@@ -10,9 +10,12 @@ import org.locationtech.jts.geom.PrecisionModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -36,6 +39,7 @@ public class RideService {
     private final TripPassengerRepository passengerRepo;
     private final DriverLocationRepository locationRepo;
     private final RideRatingRepository ratingRepo;
+    private final SosIncidentRepository sosRepo;
     private final SimpMessagingTemplate messaging;
     private final WalletClient walletClient;
 
@@ -45,12 +49,25 @@ public class RideService {
     @Value("${app.pooling.rule-version:v1}")
     private String ruleVersion;
 
+    /** How long an immediate ("ride now") request stays live before it auto-expires (no drivers found). */
+    @Value("${app.ride.request-ttl-seconds:90}")
+    private int requestTtlSeconds;
+
+    // ── Dynamic pricing config (env-overridable) ────────────────────────────────
+    @Value("${app.pricing.base:5.0}")        private double priceBase;
+    @Value("${app.pricing.per-km:2.2}")      private double pricePerKm;
+    @Value("${app.pricing.min-fare:5.0}")    private double minFare;
+    @Value("${app.pricing.surge:1.0}")       private double baseSurge;      // baseline multiplier
+    @Value("${app.pricing.peak-surge:1.25}") private double peakSurge;      // extra factor at peak hours
+    @Value("${app.pricing.rule-version:p1}") private String pricingRuleVersion;
+
     public RideService(RideRequestRepository requestRepo,
                        BidRepository bidRepo,
                        TripRepository tripRepo,
                        TripPassengerRepository passengerRepo,
                        DriverLocationRepository locationRepo,
                        RideRatingRepository ratingRepo,
+                       SosIncidentRepository sosRepo,
                        SimpMessagingTemplate messaging,
                        WalletClient walletClient) {
         this.requestRepo  = requestRepo;
@@ -59,6 +76,7 @@ public class RideService {
         this.passengerRepo = passengerRepo;
         this.locationRepo = locationRepo;
         this.ratingRepo   = ratingRepo;
+        this.sosRepo      = sosRepo;
         this.messaging    = messaging;
         this.walletClient = walletClient;
     }
@@ -71,22 +89,129 @@ public class RideService {
         req.setDest(point(dto.getDestLng(), dto.getDestLat()));
         req.setSeats(dto.getSeats());
         req.setProposedFare(dto.getProposedFare());
+        req.setScheduledAt(dto.getScheduledAt()); // null = ride now
+        req.setKind(parseEnum(RideRequest.Kind.class, dto.getKind(), RideRequest.Kind.RIDE));
+        req.setRideType(parseEnum(RideRequest.RideType.class, dto.getRideType(), RideRequest.RideType.STANDARD));
+        req.setParcelSize(parseEnum(RideRequest.ParcelSize.class, dto.getParcelSize(), null));
+        req.setParcelDesc(dto.getParcelDesc());
+        req.setRiderPhone(dto.getRiderPhone());
         requestRepo.save(req);
         log.debug("[RIDE] request created id={} rider={}", req.getId(), riderId);
         return RideRequestResponse.from(req);
     }
 
-    /** Driver fetches open requests within radius. */
+    /**
+     * Driver fetches open requests within radius, filtered by their vehicle class +
+     * service mode so each driver only sees requests they can actually take.
+     */
     @Transactional(readOnly = true)
-    public List<RideRequestResponse> nearbyRequests(double lat, double lng, double radiusKm) {
-        return requestRepo.findNearby(lat, lng, radiusKm)
-            .stream().map(RideRequestResponse::from).toList();
+    public List<RideRequestResponse> nearbyRequests(double lat, double lng, double radiusKm,
+                                                    String vehicleClass, String serviceMode) {
+        return requestRepo.findNearby(lat, lng, radiusKm, requestTtlSeconds).stream()
+            .filter(r -> canServe(r, vehicleClass, serviceMode))
+            .map(RideRequestResponse::from).toList();
     }
 
     /**
-     * Driver places a bid (ACCEPT or COUNTER).
-     * ACCEPT → create trip at the bid amount, mark request MATCHED.
-     * COUNTER → save pending bid; rider can call this endpoint with ACCEPT later.
+     * Periodically expire immediate requests nobody accepted in time, so the
+     * request system doesn't run forever. Runs independently of any rider polling.
+     */
+    @Scheduled(fixedDelayString = "${app.ride.expiry-sweep-ms:30000}")
+    public void expireStaleRequests() {
+        int n = requestRepo.expireStale(
+            RideRequest.Status.OPEN,
+            RideRequest.Status.EXPIRED,
+            OffsetDateTime.now().minusSeconds(requestTtlSeconds),
+            Bid.BidStatus.PENDING);
+        if (n > 0) log.info("[RIDE] expired {} stale open request(s)", n);
+    }
+
+    /** Routing rules: which requests a driver of the given class + mode may see. */
+    private boolean canServe(RideRequest r, String vehicleClass, String serviceMode) {
+        if (vehicleClass == null || vehicleClass.isBlank()) return true; // no class → no filtering (e.g. seeded/legacy)
+        String cls = vehicleClass.trim().toUpperCase();
+        String mode = serviceMode == null || serviceMode.isBlank() ? "BOTH" : serviceMode.trim().toUpperCase();
+
+        if (r.getKind() == RideRequest.Kind.RIDE) {
+            if (mode.equals("DELIVERIES")) return false;
+            return switch (cls) {
+                case "OKADA"    -> r.getRideType() == RideRequest.RideType.OKADA;
+                case "STANDARD" -> r.getRideType() == RideRequest.RideType.STANDARD;
+                case "LUXE"     -> r.getRideType() == RideRequest.RideType.STANDARD || r.getRideType() == RideRequest.RideType.LUXE;
+                default          -> false; // CARGO gets no rides
+            };
+        }
+        // PARCEL
+        if (mode.equals("RIDES")) return false;
+        RideRequest.ParcelSize size = r.getParcelSize() != null ? r.getParcelSize() : RideRequest.ParcelSize.MEDIUM;
+        return switch (cls) {
+            case "OKADA"              -> size == RideRequest.ParcelSize.SMALL;
+            case "STANDARD", "LUXE"   -> size == RideRequest.ParcelSize.MEDIUM;
+            case "CARGO"              -> size == RideRequest.ParcelSize.LARGE;
+            default                    -> false;
+        };
+    }
+
+    private static <E extends Enum<E>> E parseEnum(Class<E> type, String raw, E fallback) {
+        if (raw == null || raw.isBlank()) return fallback;
+        try { return Enum.valueOf(type, raw.trim().toUpperCase()); }
+        catch (IllegalArgumentException e) { return fallback; }
+    }
+
+    /**
+     * Rider polls their own request: returns its current status plus the matched
+     * trip (null until a driver accepts). Drives the customer-side lifecycle.
+     */
+    /** Rider's ride history (upcoming/scheduled + active + past). */
+    @Transactional(readOnly = true)
+    public List<RideHistoryItem> myRides(String riderId) {
+        return requestRepo.findByRiderIdOrderByCreatedAtDesc(UUID.fromString(riderId)).stream()
+            .map(r -> {
+                Trip trip = tripRepo.findByRequestId(r.getId()).orElse(null);
+                String status = trip != null ? trip.getStatus().name() : r.getStatus().name();
+                BigDecimal fare = trip != null ? trip.getAgreedFare() : r.getProposedFare();
+                return new RideHistoryItem(
+                    r.getId(), trip != null ? trip.getId() : null, status, fare,
+                    r.getOrigin().getY(), r.getOrigin().getX(), r.getDest().getY(), r.getDest().getX(),
+                    r.getScheduledAt(), r.getCreatedAt());
+            })
+            .toList();
+    }
+
+    public RideStatusResponse getRequestStatus(UUID requestId, String riderId) {
+        RideRequest req = requestRepo.findById(requestId)
+            .orElseThrow(() -> new IllegalStateException("Request not found"));
+        if (!req.getRiderId().equals(UUID.fromString(riderId))) {
+            throw new IllegalStateException("Not your request");
+        }
+        // Lazy expiry: an immediate request nobody accepted within the TTL flips to
+        // EXPIRED here, so the polling rider is told "no drivers available" promptly
+        // (the scheduled sweep is only a backstop for riders who stopped polling).
+        if (req.getStatus() == RideRequest.Status.OPEN
+                && req.getScheduledAt() == null
+                && req.getCreatedAt().isBefore(OffsetDateTime.now().minusSeconds(requestTtlSeconds))
+                && tripRepo.findByRequestId(requestId).isEmpty()
+                && bidRepo.findByRequestIdAndStatus(requestId, Bid.BidStatus.PENDING).isEmpty()) {
+            req.setStatus(RideRequest.Status.EXPIRED);
+            requestRepo.save(req);
+        }
+        TripResponse trip = tripRepo.findByRequestId(requestId)
+            .map(TripResponse::from)
+            .orElse(null);
+        // Winning driver's details (from the accepted bid) for the live-screen driver card.
+        BidOffer driver = trip == null ? null
+            : bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(requestId, Bid.BidStatus.ACCEPTED)
+                .map(b -> BidOffer.from(b, driverDistanceKm(b, req)))
+                .orElse(null);
+        return new RideStatusResponse(RideRequestResponse.from(req), trip, driver);
+    }
+
+    /**
+     * Driver places a bid (ACCEPT or COUNTER). Both become PENDING offers the
+     * rider chooses from — accepting no longer auto-creates the trip, so several
+     * drivers can accept and the rider picks by distance/driver.
+     * ACCEPT is pinned to the RIDER's proposed fare; COUNTER carries the driver's
+     * amount. The trip is created only when the rider accepts a bid (acceptBid).
      */
     public BidResponse placeBid(UUID requestId, String driverId, BidRequestDto dto) {
         RideRequest req = requestRepo.findById(requestId)
@@ -99,46 +224,127 @@ public class RideService {
         Bid.BidType type = Bid.BidType.valueOf(dto.getType().toUpperCase());
         UUID driverUUID = UUID.fromString(driverId);
 
-        Bid bid = new Bid();
-        bid.setRequest(req);
-        bid.setDriverId(driverUUID);
-        bid.setAmount(dto.getAmount());
-        bid.setType(type);
-
-        UUID tripId = null;
-        if (type == Bid.BidType.ACCEPT) {
-            bid.setStatus(Bid.BidStatus.ACCEPTED);
-            bidRepo.save(bid);
-
-            // Create trip at the agreed fare
-            Trip trip = new Trip();
-            trip.setRequest(req);
-            trip.setDriverId(driverUUID);
-            trip.setAgreedFare(dto.getAmount());
-            tripRepo.save(trip);
-
-            // Add rider as first passenger with agreed fare locked
-            TripPassenger passenger = new TripPassenger();
-            passenger.setId(new TripPassenger.TripPassengerId(trip.getId(), req.getRiderId()));
-            passenger.setTrip(trip);
-            passenger.setLockedFare(dto.getAmount());
-            passenger.setPickupSeq((short) 1);
-            passenger.setRuleVersion(ruleVersion);
-            passengerRepo.save(passenger);
-
-            // Mark request matched
-            req.setStatus(RideRequest.Status.MATCHED);
-            requestRepo.save(req);
-
-            tripId = trip.getId();
-            log.info("[RIDE] trip matched id={} driver={} fare={}", tripId, driverId, dto.getAmount());
-        } else {
-            bid.setStatus(Bid.BidStatus.PENDING);
-            bidRepo.save(bid);
-            log.debug("[RIDE] counter bid id={} driver={} amount={}", bid.getId(), driverId, dto.getAmount());
+        // A rider can't bid on / self-accept their own request (blocks the self-payout chain).
+        if (req.getRiderId().equals(driverUUID)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot bid on your own request");
         }
 
-        return new BidResponse(bid.getId(), bid.getStatus().name(), tripId);
+        // One live offer per driver per request: re-offering updates it in place.
+        Bid bid = bidRepo.findByRequestIdAndDriverIdAndStatus(requestId, driverUUID, Bid.BidStatus.PENDING)
+            .orElseGet(Bid::new);
+        bid.setRequest(req);
+        bid.setDriverId(driverUUID);
+        bid.setType(type);
+        bid.setStatus(Bid.BidStatus.PENDING);
+        bid.setAmount(type == Bid.BidType.ACCEPT ? req.getProposedFare() : dto.getAmount());
+        bid.setDriverName(dto.getDriverName());
+        bid.setDriverPhone(dto.getDriverPhone());
+        bid.setVehicle(dto.getVehicle());
+        bid.setPlate(dto.getPlate());
+        bid.setDriverLat(dto.getLat());
+        bid.setDriverLng(dto.getLng());
+        bidRepo.save(bid);
+
+        log.info("[RIDE] offer {} type={} driver={} amount={}", bid.getId(), type, driverId, bid.getAmount());
+        return new BidResponse(bid.getId(), bid.getStatus().name(), null);
+    }
+
+    /** Driver withdraws their pending offer (no-op if the rider already decided). */
+    public void withdrawBid(UUID bidId, String driverId) {
+        Bid bid = bidRepo.findById(bidId)
+            .orElseThrow(() -> new IllegalStateException("Offer not found"));
+        if (!bid.getDriverId().equals(UUID.fromString(driverId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your offer");
+        }
+        if (bid.getStatus() == Bid.BidStatus.PENDING) {
+            bid.setStatus(Bid.BidStatus.WITHDRAWN);
+            bidRepo.save(bid);
+        }
+    }
+
+    /** Driver polls their own offer: PENDING → ACCEPTED (+tripId) / REJECTED. */
+    @Transactional(readOnly = true)
+    public BidStatusResponse getBidStatus(UUID bidId, String driverId) {
+        Bid bid = bidRepo.findById(bidId)
+            .orElseThrow(() -> new IllegalStateException("Offer not found"));
+        if (!bid.getDriverId().equals(UUID.fromString(driverId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your offer");
+        }
+        RideRequest req = bid.getRequest();
+        UUID tripId = bid.getStatus() == Bid.BidStatus.ACCEPTED
+            ? tripRepo.findByRequestId(req.getId()).map(Trip::getId).orElse(null)
+            : null;
+        return new BidStatusResponse(bid.getId(), bid.getStatus().name(), req.getStatus().name(), tripId);
+    }
+
+    /** Rider lists pending driver offers (bids) on their open request. */
+    @Transactional(readOnly = true)
+    public List<BidOffer> listBids(UUID requestId, String riderId) {
+        RideRequest req = requestRepo.findById(requestId)
+            .orElseThrow(() -> new IllegalStateException("Request not found"));
+        if (!req.getRiderId().equals(UUID.fromString(riderId))) {
+            throw new IllegalStateException("Not your request");
+        }
+        return bidRepo.findByRequestIdAndStatus(requestId, Bid.BidStatus.PENDING).stream()
+            .map(b -> BidOffer.from(b, driverDistanceKm(b, req)))
+            .toList();
+    }
+
+    /** Driver's straight-line distance to the pickup at bid time (null if no position sent). */
+    private static Double driverDistanceKm(Bid b, RideRequest req) {
+        if (b.getDriverLat() == null || b.getDriverLng() == null) return null;
+        double km = haversineKm(b.getDriverLat(), b.getDriverLng(),
+            req.getOrigin().getY(), req.getOrigin().getX());
+        return Math.round(km * 10.0) / 10.0;
+    }
+
+    /** Rider accepts a driver's offer → creates the trip at the offered fare. */
+    public TripResponse acceptBid(UUID requestId, UUID bidId, String riderId) {
+        RideRequest req = requestRepo.findById(requestId)
+            .orElseThrow(() -> new IllegalStateException("Request not found"));
+        if (!req.getRiderId().equals(UUID.fromString(riderId))) {
+            throw new IllegalStateException("Not your request");
+        }
+        if (req.getStatus() != RideRequest.Status.OPEN) {
+            throw new IllegalStateException("Request is no longer open");
+        }
+        Bid bid = bidRepo.findById(bidId)
+            .orElseThrow(() -> new IllegalStateException("Offer not found"));
+        if (!bid.getRequest().getId().equals(requestId)) {
+            throw new IllegalStateException("Offer does not belong to this request");
+        }
+
+        bid.setStatus(Bid.BidStatus.ACCEPTED);
+        bidRepo.save(bid);
+
+        // The rider chose this driver — reject every other live offer so those
+        // drivers' apps stop waiting and return to the feed.
+        for (Bid other : bidRepo.findByRequestIdAndStatus(requestId, Bid.BidStatus.PENDING)) {
+            if (!other.getId().equals(bid.getId())) {
+                other.setStatus(Bid.BidStatus.REJECTED);
+                bidRepo.save(other);
+            }
+        }
+
+        Trip trip = new Trip();
+        trip.setRequest(req);
+        trip.setDriverId(bid.getDriverId());
+        trip.setAgreedFare(bid.getAmount());
+        tripRepo.save(trip);
+
+        TripPassenger passenger = new TripPassenger();
+        passenger.setId(new TripPassenger.TripPassengerId(trip.getId(), req.getRiderId()));
+        passenger.setTrip(trip);
+        passenger.setLockedFare(bid.getAmount());
+        passenger.setPickupSeq((short) 1);
+        passenger.setRuleVersion(ruleVersion);
+        passengerRepo.save(passenger);
+
+        req.setStatus(RideRequest.Status.MATCHED);
+        requestRepo.save(req);
+
+        log.info("[RIDE] rider accepted offer {} → trip {} fare {}", bidId, trip.getId(), bid.getAmount());
+        return TripResponse.from(trip);
     }
 
     /** Advance trip status; trigger downstream calls on COMPLETED. */
@@ -147,6 +353,16 @@ public class RideService {
             .orElseThrow(() -> new IllegalStateException("Trip not found"));
 
         Trip.Status newStatus = Trip.Status.valueOf(dto.getStatus().toUpperCase());
+
+        // Only the trip's driver may advance it; the driver or rider may cancel it.
+        UUID actor = UUID.fromString(userId);
+        boolean isDriver = trip.getDriverId() != null && trip.getDriverId().equals(actor);
+        boolean isRider = trip.getRequest() != null && trip.getRequest().getRiderId().equals(actor);
+        boolean allowed = newStatus == Trip.Status.CANCELLED ? (isDriver || isRider) : isDriver;
+        if (!allowed) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
+        }
+
         validateTransition(trip.getStatus(), newStatus);
 
         trip.setStatus(newStatus);
@@ -158,6 +374,63 @@ public class RideService {
             onTripCompleted(trip);
         }
         tripRepo.save(trip);
+        return TripResponse.from(trip);
+    }
+
+    // ── Payment ─────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public TripResponse getTrip(UUID tripId, String userId) {
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        UUID actor = UUID.fromString(userId);
+        boolean isDriver = trip.getDriverId() != null && trip.getDriverId().equals(actor);
+        boolean isRider = trip.getRequest() != null && trip.getRequest().getRiderId().equals(actor);
+        if (!isDriver && !isRider) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
+        }
+        return TripResponse.from(trip);
+    }
+
+    /**
+     * Rider pays. A non-blank {@code reference} means a Paystack (card/mobile-money) payment:
+     * it's verified server-side before the trip is marked paid. Wallet settles immediately;
+     * cash awaits the driver's confirmation.
+     */
+    public TripResponse payTrip(UUID tripId, String riderId, String method, String reference) {
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        if (!trip.getRequest().getRiderId().equals(UUID.fromString(riderId))) {
+            throw new IllegalStateException("Not your trip");
+        }
+
+        boolean viaPaystack = reference != null && !reference.isBlank();
+        if (viaPaystack && !walletClient.verifyPayment(trip.getAgreedFare(), reference)) {
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,
+                "Payment could not be verified. If you completed it, please try again.");
+        }
+
+        trip.setPaymentMethod(method);
+        trip.setPaymentStatus((!viaPaystack && "cash".equalsIgnoreCase(method))
+            ? Trip.PaymentStatus.AWAITING
+            : Trip.PaymentStatus.PAID);
+        tripRepo.save(trip);
+        settleIfPaid(trip); // pays out the driver once the (completed) trip is paid
+        log.info("[PAY] trip={} method={} status={}", tripId, method, trip.getPaymentStatus());
+        return TripResponse.from(trip);
+    }
+
+    /** Driver confirms a cash payment was collected. */
+    public TripResponse confirmCash(UUID tripId, String driverId) {
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        if (!trip.getDriverId().equals(UUID.fromString(driverId))) {
+            throw new IllegalStateException("Not your trip");
+        }
+        trip.setPaymentStatus(Trip.PaymentStatus.PAID);
+        tripRepo.save(trip);
+        settleIfPaid(trip);
+        log.info("[PAY] trip={} cash confirmed by driver {}", tripId, driverId);
         return TripResponse.from(trip);
     }
 
@@ -184,16 +457,19 @@ public class RideService {
 
     /** Find route-compatible open requests for pooling. */
     @Transactional(readOnly = true)
-    public List<RideRequestResponse> poolCandidates(UUID tripId) {
+    public List<RideRequestResponse> poolCandidates(UUID tripId, String userId) {
         Trip trip = tripRepo.findById(tripId)
             .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        if (trip.getDriverId() == null || !trip.getDriverId().equals(UUID.fromString(userId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
+        }
 
         Point dest = trip.getRequest().getDest();
         double destLat = dest.getY();
         double destLng = dest.getX();
 
         // Same-corridor match: open requests within maxPoolDistanceKm of this trip's destination
-        return requestRepo.findNearby(destLat, destLng, maxPoolDistanceKm)
+        return requestRepo.findNearby(destLat, destLng, maxPoolDistanceKm, requestTtlSeconds)
             .stream()
             .filter(r -> r.getStatus() == RideRequest.Status.OPEN)
             .map(RideRequestResponse::from)
@@ -215,6 +491,11 @@ public class RideService {
 
         RideRequest joiningReq = requestRepo.findById(req.getRequestId())
             .orElseThrow(() -> new IllegalStateException("Ride request not found"));
+
+        // The joining request must belong to the caller (can't matchmake others' requests).
+        if (!joiningReq.getRiderId().equals(UUID.fromString(riderId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your ride request");
+        }
 
         long currentOccupancy = passengerRepo.countByIdTripId(tripId);
         double joinDistKm = haversineKm(
@@ -245,7 +526,16 @@ public class RideService {
 
     /** Two-way rating after trip completion. */
     public void rateTrip(UUID tripId, String raterId, RatingRequestDto dto) {
-        if (ratingRepo.existsByTripIdAndRaterId(tripId, UUID.fromString(raterId))) {
+        UUID rater = UUID.fromString(raterId);
+        // Only a participant (the driver or a passenger) may rate the trip.
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        boolean isDriver = trip.getDriverId() != null && trip.getDriverId().equals(rater);
+        boolean isPassenger = passengerRepo.existsById(new TripPassenger.TripPassengerId(tripId, rater));
+        if (!isDriver && !isPassenger) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You were not on this trip");
+        }
+        if (ratingRepo.existsByTripIdAndRaterId(tripId, rater)) {
             throw new IllegalStateException("Already rated this trip");
         }
         RideRating rating = new RideRating();
@@ -257,16 +547,53 @@ public class RideService {
         ratingRepo.save(rating);
     }
 
-    /** SOS stub — logs event, does not trigger real alerting. */
-    public void sos(UUID tripId, String userId) {
-        log.warn("[SOS-STUB] tripId={} userId={} ts={}", tripId, userId, OffsetDateTime.now());
-        // FR-50: real SOS alerting is CUT; toast is handled on the client
+    /**
+     * SOS: recorded as an incident and surfaced on the admin web app, where the
+     * safety team triages it (and decides whether to involve the authorities).
+     */
+    public SosIncidentResponse sos(UUID tripId, String userId, Double lat, Double lng) {
+        SosIncident incident = new SosIncident();
+        incident.setTripId(tripId);
+        incident.setUserId(UUID.fromString(userId));
+        incident.setLat(lat);
+        incident.setLng(lng);
+        sosRepo.save(incident);
+        log.warn("[SOS] incident {} trip={} user={} at {},{}", incident.getId(), tripId, userId, lat, lng);
+        return SosIncidentResponse.from(incident);
+    }
+
+    /** Admin: all SOS incidents, newest first. */
+    @Transactional(readOnly = true)
+    public List<SosIncidentResponse> listSosIncidents() {
+        return sosRepo.findAllByOrderByCreatedAtDesc().stream()
+            .map(SosIncidentResponse::from).toList();
+    }
+
+    /** Admin: mark an incident handled. */
+    public SosIncidentResponse handleSosIncident(UUID id) {
+        SosIncident incident = sosRepo.findById(id)
+            .orElseThrow(() -> new IllegalStateException("Incident not found"));
+        incident.setStatus(SosIncident.Status.HANDLED);
+        sosRepo.save(incident);
+        return SosIncidentResponse.from(incident);
     }
 
     // ── private helpers ─────────────────────────────────────────────────────────
 
     private void onTripCompleted(Trip trip) {
-        walletClient.settleRide(trip.getId(), trip.getDriverId(), trip.getAgreedFare());
+        settleIfPaid(trip);
+    }
+
+    /**
+     * Settle a trip only once it is BOTH completed AND paid — so a driver can't force
+     * a payout by advancing status without the rider having paid. Idempotent in wallet,
+     * so it's safe to call from completion and from payment (whichever lands last wins).
+     */
+    private void settleIfPaid(Trip trip) {
+        if (trip.getStatus() == Trip.Status.COMPLETED
+                && trip.getPaymentStatus() == Trip.PaymentStatus.PAID) {
+            walletClient.settleRide(trip.getId(), trip.getDriverId(), trip.getAgreedFare());
+        }
     }
 
     private void validateTransition(Trip.Status current, Trip.Status next) {
@@ -280,6 +607,62 @@ public class RideService {
             throw new IllegalStateException(
                 "Invalid trip transition: " + current + " → " + next);
         }
+    }
+
+    // ── Dynamic pricing ─────────────────────────────────────────────────────────
+
+    /**
+     * Server-authoritative fare quote: (base + perKm × distance) × type multiplier ×
+     * surge, floored at minFare. Surge is time-based (peak commute hours) so the fare
+     * is computed by the backend, not the client.
+     */
+    @Transactional(readOnly = true)
+    public QuoteResponse quote(QuoteRequestDto req) {
+        double distanceKm = haversineKm(req.getOriginLat(), req.getOriginLng(), req.getDestLat(), req.getDestLng());
+        double typeMult = typeMultiplier(req.getRideType());
+        double surgeMult = currentSurge();
+
+        BigDecimal baseFare = BigDecimal.valueOf(priceBase + pricePerKm * distanceKm)
+            .setScale(2, RoundingMode.HALF_UP);
+        double raw = (priceBase + pricePerKm * distanceKm) * typeMult * surgeMult;
+        BigDecimal fare = BigDecimal.valueOf(Math.max(minFare, Math.round(raw)))
+            .setScale(2, RoundingMode.HALF_UP);
+
+        return new QuoteResponse(
+            Math.round(distanceKm * 100.0) / 100.0,
+            fare,
+            baseFare,
+            normalizeRideType(req.getRideType()),
+            typeMult,
+            surgeMult,
+            surgeMult > 1.0,
+            "GHS",
+            pricingRuleVersion
+        );
+    }
+
+    private double typeMultiplier(String rideType) {
+        return switch (normalizeRideType(rideType)) {
+            case "PREMIUM" -> 1.7;
+            case "OKADA"   -> 0.6;
+            default        -> 1.0; // STANDARD
+        };
+    }
+
+    private String normalizeRideType(String rideType) {
+        if (rideType == null || rideType.isBlank()) return "STANDARD";
+        return switch (rideType.trim().toUpperCase()) {
+            case "PREMIUM" -> "PREMIUM";
+            case "OKADA"   -> "OKADA";
+            default        -> "STANDARD";
+        };
+    }
+
+    /** Peak commute hours (07–09, 17–19 server-local) carry a surge; otherwise baseline. */
+    private double currentSurge() {
+        int hour = OffsetDateTime.now().getHour();
+        boolean peak = (hour >= 7 && hour < 9) || (hour >= 17 && hour < 19);
+        return peak ? baseSurge * peakSurge : baseSurge;
     }
 
     private static Point point(double lng, double lat) {

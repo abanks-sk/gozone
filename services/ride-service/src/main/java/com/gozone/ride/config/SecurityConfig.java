@@ -42,7 +42,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/**").permitAll()
+                .requestMatchers("/actuator/**", "/error").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtFilter(), UsernamePasswordAuthenticationFilter.class)
@@ -52,6 +52,11 @@ public class SecurityConfig {
     @Bean
     public OncePerRequestFilter jwtFilter() {
         return new OncePerRequestFilter() {
+            // Also run on the internal ERROR dispatch so thrown exceptions render with their
+            // real status + message instead of an empty 403 (the SecurityContext is per-request).
+            @Override
+            protected boolean shouldNotFilterErrorDispatch() { return false; }
+
             @Override
             protected void doFilterInternal(HttpServletRequest req,
                                             HttpServletResponse res,
@@ -68,9 +73,12 @@ public class SecurityConfig {
                             .parseSignedClaims(token).getPayload();
 
                         String role = claims.get("role", String.class);
+                        String status = claims.get("status", String.class);
+                        if (status == null) status = "ACTIVE"; // legacy tokens
                         var auth = new UsernamePasswordAuthenticationToken(
                             claims.getSubject(), null,
-                            List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                            List.of(new SimpleGrantedAuthority("ROLE_" + role),
+                                    new SimpleGrantedAuthority("STATUS_" + status))
                         );
                         SecurityContextHolder.getContext().setAuthentication(auth);
                     } catch (Exception ignored) {}

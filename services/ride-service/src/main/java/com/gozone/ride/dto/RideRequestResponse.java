@@ -16,6 +16,10 @@ public record RideRequestResponse(
     short seats,
     BigDecimal proposedFare,
     String status,
+    String kind,
+    String rideType,
+    String parcelSize,
+    String parcelDesc,
     OffsetDateTime createdAt
 ) {
     public static RideRequestResponse from(RideRequest r) {
@@ -29,6 +33,10 @@ public record RideRequestResponse(
             r.getSeats(),
             r.getProposedFare(),
             r.getStatus().name(),
+            r.getKind().name(),
+            r.getRideType().name(),
+            r.getParcelSize() != null ? r.getParcelSize().name() : null,
+            r.getParcelDesc(),
             r.getCreatedAt()
         );
     }

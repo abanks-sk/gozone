@@ -35,6 +35,15 @@ public class Bid {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
+    // Driver identity + vehicle + position at bid time, so the rider can compare
+    // offers (name, car, distance) before choosing one.
+    @Column(name = "driver_name")  private String driverName;
+    @Column(name = "driver_phone") private String driverPhone;
+    @Column(name = "vehicle")      private String vehicle;
+    @Column(name = "plate")        private String plate;
+    @Column(name = "driver_lat")   private Double driverLat;
+    @Column(name = "driver_lng")   private Double driverLng;
+
     public enum BidType { ACCEPT, COUNTER }
     public enum BidStatus { PENDING, ACCEPTED, REJECTED, WITHDRAWN }
 
@@ -50,4 +59,16 @@ public class Bid {
     public BidStatus getStatus() { return status; }
     public void setStatus(BidStatus status) { this.status = status; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public String getDriverName() { return driverName; }
+    public void setDriverName(String driverName) { this.driverName = driverName; }
+    public String getDriverPhone() { return driverPhone; }
+    public void setDriverPhone(String driverPhone) { this.driverPhone = driverPhone; }
+    public String getVehicle() { return vehicle; }
+    public void setVehicle(String vehicle) { this.vehicle = vehicle; }
+    public String getPlate() { return plate; }
+    public void setPlate(String plate) { this.plate = plate; }
+    public Double getDriverLat() { return driverLat; }
+    public void setDriverLat(Double driverLat) { this.driverLat = driverLat; }
+    public Double getDriverLng() { return driverLng; }
+    public void setDriverLng(Double driverLng) { this.driverLng = driverLng; }
 }
