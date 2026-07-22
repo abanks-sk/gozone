@@ -33,7 +33,158 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/RestaurantResponse'
+                  $ref: '#/components/schemas/VendorResponse'
+
+  /vendors:
+    post:
+      tags: [restaurants]
+      summary: Vendor onboarding — create the owner's business record
+      operationId: createVendor
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVendorRequest'
+      responses:
+        '200':
+          description: Vendor created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VendorResponse'
+
+  /vendors/mine:
+    get:
+      tags: [restaurants]
+      summary: The signed-in owner's businesses
+      operationId: myVendors
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Owner's vendors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VendorResponse'
+
+  /promos:
+    get:
+      tags: [restaurants]
+      summary: Active promo cards for the shop carousel
+      operationId: listPromos
+      responses:
+        '200':
+          description: Active promos
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PromoResponse' }
+    post:
+      tags: [restaurants]
+      summary: Admin creates a promo
+      operationId: createPromo
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePromoRequest' }
+      responses:
+        '200':
+          description: Promo created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PromoResponse' }
+
+  /promos/all:
+    get:
+      tags: [restaurants]
+      summary: Admin lists all promos (incl. inactive)
+      operationId: listAllPromos
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: All promos
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PromoResponse' }
+
+  /promos/apply:
+    post:
+      tags: [restaurants]
+      summary: Vendor applies to promote their business (created inactive; admin activates = approves)
+      operationId: applyPromo
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vendorId, title]
+              properties:
+                vendorId: { type: string, format: uuid }
+                title: { type: string }
+                subtitle: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Application recorded (inactive promo)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PromoResponse' }
+
+  /promos/mine:
+    get:
+      tags: [restaurants]
+      summary: Vendor lists their promo applications for one of their businesses
+      operationId: myPromos
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: vendorId, in: query, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: The vendor's promos (active + pending)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PromoResponse' }
+
+  /promos/{id}:
+    patch:
+      tags: [restaurants]
+      summary: Admin toggles a promo active/inactive
+      operationId: setPromoActive
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { active: { type: boolean } } }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PromoResponse' }
+    delete:
+      tags: [restaurants]
+      summary: Admin deletes a promo
+      operationId: deletePromo
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204':
+          description: Deleted
 
   /restaurants/{id}/menu:
     get:
@@ -76,6 +227,66 @@ paths:
       responses:
         '200':
           description: Menu item saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItemResponse'
+
+  /restaurants/{id}/catalogue:
+    get:
+      tags: [restaurants]
+      summary: Vendor's full catalogue incl. sold-out items (owner only)
+      operationId: getCatalogue
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: All menu items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MenuItemResponse'
+
+  /menu-items/{id}:
+    patch:
+      tags: [restaurants]
+      summary: Edit a menu item (owner only)
+      operationId: updateMenuItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuItemRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItemResponse'
+    delete:
+      tags: [restaurants]
+      summary: Delete a menu item (owner only)
+      operationId: deleteMenuItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Deleted
 
   /restaurants/{id}/orders:
     get:
@@ -99,6 +310,38 @@ paths:
                 items:
                   $ref: '#/components/schemas/OrderResponse'
 
+  /platform-fees:
+    get:
+      tags: [fees]
+      summary: Current platform fees (service % + distance-based delivery rates)
+      operationId: getPlatformFees
+      responses:
+        '200':
+          description: Fee config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformFees'
+    patch:
+      tags: [fees]
+      summary: Admin updates platform fees
+      operationId: updatePlatformFees
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformFees'
+      responses:
+        '200':
+          description: Updated fee config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformFees'
+
   /orders:
     post:
       tags: [orders]
@@ -117,6 +360,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OrderResponse'
+
+  /orders/{id}/pay:
+    post:
+      tags: [orders]
+      summary: Customer pays for an order (wallet/card/momo settle now; cash → awaiting)
+      operationId: payOrder
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { method: { type: string, enum: [wallet, card, momo, cash] } } }
+      responses:
+        '200':
+          description: Payment recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+
+  /orders/{id}/confirm-cash:
+    post:
+      tags: [orders]
+      summary: Vendor/courier confirms cash received → marks the order paid
+      operationId: confirmOrderCash
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Marked paid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+
+  /restaurants/{id}/awaiting-cash:
+    get:
+      tags: [orders]
+      summary: Orders awaiting a cash confirmation for a vendor
+      operationId: awaitingCash
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Awaiting-cash orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/OrderResponse' }
 
   /orders/{id}/status:
     patch:
@@ -166,6 +455,56 @@ paths:
         '200':
           description: Rating recorded
 
+  /deliveries/available:
+    get:
+      tags: [delivery]
+      summary: Courier feed — unassigned deliveries to pick up
+      operationId: availableDeliveries
+      responses:
+        '200':
+          description: Unassigned deliveries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeliveryResponse'
+
+  /deliveries/mine:
+    get:
+      tags: [delivery]
+      summary: The signed-in courier's deliveries
+      operationId: myDeliveries
+      responses:
+        '200':
+          description: Courier's deliveries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeliveryResponse'
+
+  /deliveries/{id}/accept:
+    post:
+      tags: [delivery]
+      summary: Courier claims an unassigned delivery
+      operationId: acceptDelivery
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Delivery assigned to the courier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryResponse'
+
   /deliveries/{orderId}/assign:
     post:
       tags: [delivery]
@@ -207,6 +546,30 @@ paths:
       responses:
         '200':
           description: Delivery status updated; OUT_FOR_DELIVERY → push; DELIVERED → push
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryResponse'
+
+  /deliveries/{id}/confirm-cash:
+    post:
+      tags: [delivery]
+      summary: Courier confirms cash collected on hand-off for their delivery order
+      description: >
+        For a cash-payment delivery order, the courier (not the vendor) collects the money
+        and confirms here → the order's paymentStatus becomes PAID. Only the assigned courier
+        may confirm, and only for cash orders.
+      operationId: confirmDeliveryCash
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Cash confirmed; order marked PAID
           content:
             application/json:
               schema:
@@ -259,7 +622,42 @@ components:
       bearerFormat: JWT
 
   schemas:
-    RestaurantResponse:
+    PromoResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        subtitle: { type: string, nullable: true }
+        color: { type: string }
+        vendorId: { type: string, format: uuid, nullable: true }
+        category: { type: string, nullable: true }
+        active: { type: boolean }
+
+    CreatePromoRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        subtitle: { type: string }
+        color: { type: string }
+        vendorId: { type: string, format: uuid }
+        category: { type: string }
+
+    CreateVendorRequest:
+      type: object
+      required: [name, vendorType]
+      properties:
+        name:
+          type: string
+        vendorType:
+          type: string
+          enum: [RESTAURANT, PHARMACY, GROCERY, CONVENIENCE, OTHER]
+        lat:
+          type: number
+        lng:
+          type: number
+
+    VendorResponse:
       type: object
       properties:
         id:
@@ -276,6 +674,10 @@ components:
           enum: [OPEN, CLOSED, PAUSED]
         prepMinutes:
           type: integer
+        vendorType:
+          type: string
+          enum: [RESTAURANT, PHARMACY, GROCERY, CONVENIENCE, OTHER]
+          description: What the vendor sells; orders/queue/delivery behave the same for all types.
 
     MenuItemRequest:
       type: object
@@ -297,10 +699,42 @@ components:
           format: uuid
         name:
           type: string
+        description:
+          type: string
+          nullable: true
         price:
           type: number
         available:
           type: boolean
+        groups:
+          type: array
+          description: Add-on groups a customer can choose from
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              multi: { type: boolean, description: false = pick one, true = pick many }
+              required: { type: boolean }
+              options:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    label: { type: string }
+                    price: { type: number }
+
+    PlatformFees:
+      type: object
+      properties:
+        serviceFeePct:
+          type: number
+          description: Fraction of the food subtotal (e.g. 0.05 = 5%)
+        deliveryBaseFee:
+          type: number
+        deliveryPerKm:
+          type: number
 
     PlaceOrderRequest:
       type: object
@@ -319,12 +753,21 @@ components:
                 format: uuid
               qty:
                 type: integer
+              addonOptionIds:
+                type: array
+                items: { type: string, format: uuid }
+                description: Selected add-on option ids for this line
         mode:
           type: string
           enum: [DELIVERY, PICKUP, WALKIN]
         deliveryAddr:
           type: string
           description: Required when mode=DELIVERY
+        deliveryLat:
+          type: number
+          description: Customer coords for the distance-based delivery fee (DELIVERY)
+        deliveryLng:
+          type: number
 
     OrderResponse:
       type: object
@@ -346,9 +789,17 @@ components:
           type: number
         deliveryFee:
           type: number
+        serviceFee:
+          type: number
         createdAt:
           type: string
           format: date-time
+        paymentStatus:
+          type: string
+          enum: [UNPAID, AWAITING, PAID]
+        paymentMethod:
+          type: string
+          nullable: true
 
     OrderStatusUpdate:
       type: object
@@ -367,12 +818,29 @@ components:
         orderId:
           type: string
           format: uuid
-        courierId:
+        vendorName:
           type: string
-          format: uuid
+        dropoffAddr:
+          type: string
+          nullable: true
+        total:
+          type: number
         status:
           type: string
           enum: [ASSIGNED, PICKED_UP, ENROUTE, DELIVERED]
+        courierId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null until a courier accepts
+        paymentMethod:
+          type: string
+          nullable: true
+          description: wallet | cash | momo | card (null if not yet paid)
+        paymentStatus:
+          type: string
+          enum: [UNPAID, AWAITING, PAID]
+          description: AWAITING for cash until the courier confirms collection
 
     DeliveryStatusUpdate:
       type: object

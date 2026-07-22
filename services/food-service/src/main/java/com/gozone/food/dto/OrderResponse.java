@@ -17,11 +17,15 @@ public record OrderResponse(
     String status,
     BigDecimal total,
     BigDecimal deliveryFee,
+    BigDecimal serviceFee,
     String deliveryAddr,
     OffsetDateTime createdAt,
+    String paymentStatus,
+    String paymentMethod,
     List<ItemLine> items
 ) {
-    public record ItemLine(UUID menuItemId, String name, short qty, BigDecimal unitPrice) {}
+    public record ItemLine(UUID menuItemId, String name, short qty, BigDecimal unitPrice, List<Addon> addons) {}
+    public record Addon(String label, BigDecimal price) {}
 
     public static OrderResponse from(Order o) {
         List<ItemLine> lines = o.getItems().stream()
@@ -29,7 +33,8 @@ public record OrderResponse(
                 i.getMenuItem().getId(),
                 i.getMenuItem().getName(),
                 i.getQty(),
-                i.getUnitPrice()))
+                i.getUnitPrice(),
+                i.getAddons().stream().map(a -> new Addon(a.getLabel(), a.getPrice())).toList()))
             .toList();
         return new OrderResponse(
             o.getId(),
@@ -40,8 +45,11 @@ public record OrderResponse(
             o.getStatus().name(),
             o.getTotal(),
             o.getDeliveryFee(),
+            o.getServiceFee(),
             o.getDeliveryAddr(),
             o.getCreatedAt(),
+            o.getPaymentStatus().name(),
+            o.getPaymentMethod(),
             lines
         );
     }

@@ -5,6 +5,7 @@ import com.gozone.food.service.FoodService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,13 +28,58 @@ public class FoodController {
     // ── Restaurants ───────────────────────────────────────────────────────────
 
     @GetMapping("/restaurants")
-    public ResponseEntity<List<RestaurantResponse>> listRestaurants() {
+    public ResponseEntity<List<VendorResponse>> listRestaurants() {
         return ResponseEntity.ok(foodService.listOpenRestaurants());
     }
 
     @GetMapping("/restaurants/{id}/menu")
     public ResponseEntity<List<MenuItemResponse>> getMenu(@PathVariable UUID id) {
         return ResponseEntity.ok(foodService.getMenu(id));
+    }
+
+    // ── Vendor catalogue management (owner-authorised) ──────────────────────────
+
+    @GetMapping("/restaurants/{id}/catalogue")
+    public ResponseEntity<List<MenuItemResponse>> catalogue(
+            @PathVariable UUID id, @AuthenticationPrincipal String ownerId) {
+        return ResponseEntity.ok(foodService.getCatalogue(ownerId, id));
+    }
+
+    @PostMapping("/restaurants/{id}/menu")
+    public ResponseEntity<MenuItemResponse> createMenuItem(
+            @PathVariable UUID id, @AuthenticationPrincipal String ownerId,
+            @Valid @RequestBody CreateMenuItemRequest req) {
+        return ResponseEntity.ok(foodService.createMenuItem(ownerId, id, req));
+    }
+
+    @PatchMapping("/menu-items/{id}")
+    public ResponseEntity<MenuItemResponse> updateMenuItem(
+            @PathVariable UUID id, @AuthenticationPrincipal String ownerId,
+            @RequestBody UpdateMenuItemRequest req) {
+        return ResponseEntity.ok(foodService.updateMenuItem(ownerId, id, req));
+    }
+
+    @DeleteMapping("/menu-items/{id}")
+    public ResponseEntity<Void> deleteMenuItem(
+            @PathVariable UUID id, @AuthenticationPrincipal String ownerId) {
+        foodService.deleteMenuItem(ownerId, id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── Vendor onboarding ───────────────────────────────────────────────────────
+
+    @PostMapping("/vendors")
+    @PreAuthorize("hasRole('RESTAURANT_OWNER')")
+    public ResponseEntity<VendorResponse> createVendor(
+            @AuthenticationPrincipal String ownerId,
+            @Valid @RequestBody CreateVendorRequest req) {
+        return ResponseEntity.ok(foodService.createVendor(ownerId, req));
+    }
+
+    @GetMapping("/vendors/mine")
+    public ResponseEntity<List<VendorResponse>> myVendors(
+            @AuthenticationPrincipal String ownerId) {
+        return ResponseEntity.ok(foodService.myVendors(ownerId));
     }
 
     // ── Orders ────────────────────────────────────────────────────────────────
@@ -59,11 +105,48 @@ public class FoodController {
         return ResponseEntity.ok(foodService.myOrders(customerId));
     }
 
+    // ── Payment ───────────────────────────────────────────────────────────────
+
+    @PostMapping("/orders/{id}/pay")
+    public ResponseEntity<OrderResponse> payOrder(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String customerId,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(foodService.payOrder(
+            id, customerId, body.getOrDefault("method", "wallet"), body.get("reference")));
+    }
+
+    @PostMapping("/orders/{id}/confirm-cash")
+    public ResponseEntity<OrderResponse> confirmOrderCash(
+            @PathVariable UUID id, @AuthenticationPrincipal String userId) {
+        return ResponseEntity.ok(foodService.confirmOrderCash(id, userId));
+    }
+
+    @GetMapping("/restaurants/{id}/awaiting-cash")
+    public ResponseEntity<List<OrderResponse>> awaitingCash(
+            @PathVariable UUID id, @AuthenticationPrincipal String ownerId) {
+        return ResponseEntity.ok(foodService.awaitingCashOrders(ownerId, id));
+    }
+
+    // ── Platform fees (admin-controlled service + delivery fees) ─────────────────
+
+    @GetMapping("/platform-fees")
+    public ResponseEntity<PlatformFeesResponse> platformFees() {
+        return ResponseEntity.ok(foodService.getPlatformFees());
+    }
+
+    @PatchMapping("/platform-fees")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<PlatformFeesResponse> updatePlatformFees(@RequestBody UpdatePlatformFeesRequest req) {
+        return ResponseEntity.ok(foodService.updatePlatformFees(req));
+    }
+
     // ── Restaurant dashboard ──────────────────────────────────────────────────
 
     @GetMapping("/restaurants/{id}/orders")
-    public ResponseEntity<List<OrderResponse>> restaurantOrders(@PathVariable UUID id) {
-        return ResponseEntity.ok(foodService.restaurantOrders(id));
+    public ResponseEntity<List<OrderResponse>> restaurantOrders(
+            @PathVariable UUID id, @AuthenticationPrincipal String ownerId) {
+        return ResponseEntity.ok(foodService.restaurantOrders(ownerId, id));
     }
 
     @PatchMapping("/orders/{id}/status")
@@ -74,9 +157,31 @@ public class FoodController {
         return ResponseEntity.ok(foodService.advanceStatus(id, ownerId, req));
     }
 
-    // ── Delivery courier ──────────────────────────────────────────────────────
+    // ── Delivery courier (drivers/couriers only) ────────────────────────────────
+
+    @GetMapping("/deliveries/available")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER') and hasAuthority('STATUS_ACTIVE')")
+    public ResponseEntity<List<DeliveryResponse>> availableDeliveries() {
+        return ResponseEntity.ok(foodService.listAvailableDeliveries());
+    }
+
+    @GetMapping("/deliveries/mine")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER') and hasAuthority('STATUS_ACTIVE')")
+    public ResponseEntity<List<DeliveryResponse>> myDeliveries(
+            @AuthenticationPrincipal String courierId) {
+        return ResponseEntity.ok(foodService.myDeliveries(courierId));
+    }
+
+    @PostMapping("/deliveries/{id}/accept")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER') and hasAuthority('STATUS_ACTIVE')")
+    public ResponseEntity<DeliveryResponse> acceptDelivery(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String courierId) {
+        return ResponseEntity.ok(foodService.acceptDelivery(id, courierId));
+    }
 
     @PostMapping("/deliveries/location")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER') and hasAuthority('STATUS_ACTIVE')")
     public ResponseEntity<Void> pushCourierLocation(
             @AuthenticationPrincipal String courierId,
             @Valid @RequestBody CourierLocationUpdate dto) {
@@ -85,12 +190,21 @@ public class FoodController {
     }
 
     @PatchMapping("/deliveries/{id}/status")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER') and hasAuthority('STATUS_ACTIVE')")
     public ResponseEntity<Map<String, String>> advanceDeliveryStatus(
             @PathVariable UUID id,
             @AuthenticationPrincipal String courierId,
             @RequestBody Map<String, String> body) {
         foodService.advanceDeliveryStatus(id, courierId, body.getOrDefault("status", ""));
         return ResponseEntity.ok(Map.of("status", "updated"));
+    }
+
+    @PostMapping("/deliveries/{id}/confirm-cash")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER') and hasAuthority('STATUS_ACTIVE')")
+    public ResponseEntity<DeliveryResponse> confirmDeliveryCash(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String courierId) {
+        return ResponseEntity.ok(foodService.confirmDeliveryCash(id, courierId));
     }
 
     // ── Queue ─────────────────────────────────────────────────────────────────
@@ -106,13 +220,15 @@ public class FoodController {
     }
 
     @PostMapping("/restaurants/{id}/queue/call-next")
-    public ResponseEntity<QueuePositionResponse> callNext(@PathVariable UUID id) {
-        return ResponseEntity.ok(foodService.callNext(id));
+    public ResponseEntity<QueuePositionResponse> callNext(
+            @PathVariable UUID id, @AuthenticationPrincipal String ownerId) {
+        return ResponseEntity.ok(foodService.callNext(ownerId, id));
     }
 
     @PostMapping("/queue/{entryId}/serve")
-    public ResponseEntity<Map<String, String>> serveEntry(@PathVariable UUID entryId) {
-        foodService.serveQueueEntry(entryId);
+    public ResponseEntity<Map<String, String>> serveEntry(
+            @PathVariable UUID entryId, @AuthenticationPrincipal String ownerId) {
+        foodService.serveQueueEntry(ownerId, entryId);
         return ResponseEntity.ok(Map.of("status", "served"));
     }
 
@@ -121,8 +237,9 @@ public class FoodController {
     @PostMapping("/orders/{id}/rate")
     public ResponseEntity<Map<String, String>> rateOrder(
             @PathVariable UUID id,
+            @AuthenticationPrincipal String userId,
             @Valid @RequestBody RateFoodRequest req) {
-        foodService.rateOrder(id, req);
+        foodService.rateOrder(id, userId, req);
         return ResponseEntity.ok(Map.of("status", "rated"));
     }
 

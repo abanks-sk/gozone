@@ -15,7 +15,7 @@ public class QueueEntry {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "restaurant_id", nullable = false)
-    private Restaurant restaurant;
+    private Vendor restaurant;
 
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")
@@ -34,8 +34,8 @@ public class QueueEntry {
     public enum Status { WAITING, CALLED, SERVED }
 
     public UUID getId() { return id; }
-    public Restaurant getRestaurant() { return restaurant; }
-    public void setRestaurant(Restaurant restaurant) { this.restaurant = restaurant; }
+    public Vendor getRestaurant() { return restaurant; }
+    public void setRestaurant(Vendor restaurant) { this.restaurant = restaurant; }
     public Order getOrder() { return order; }
     public void setOrder(Order order) { this.order = order; }
     public int getPosition() { return position; }
