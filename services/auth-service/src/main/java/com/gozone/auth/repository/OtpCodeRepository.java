@@ -8,4 +8,5 @@ import java.util.UUID;
 
 public interface OtpCodeRepository extends JpaRepository<OtpCode, UUID> {
     Optional<OtpCode> findTopByPhoneAndConsumedAtIsNullOrderByExpiresAtDesc(String phone);
+    Optional<OtpCode> findTopByEmailAndConsumedAtIsNullOrderByExpiresAtDesc(String email);
 }

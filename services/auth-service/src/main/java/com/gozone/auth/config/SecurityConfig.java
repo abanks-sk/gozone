@@ -39,8 +39,12 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
-                    "/register", "/verify-otp", "/refresh",
-                    "/actuator/**"
+                    "/register", "/login", "/register-email", "/login-email",
+                    "/login-email-password",
+                    "/verify-otp", "/refresh", "/admin/login", "/google",
+                    "/actuator/**", "/error",
+                    // Internal service-to-service call, guarded by X-Internal-Key in the controller.
+                    "/delivery-riders/availability"
                 ).permitAll()
                 .anyRequest().authenticated()
             )
@@ -51,6 +55,11 @@ public class SecurityConfig {
     @Bean
     public OncePerRequestFilter jwtFilter() {
         return new OncePerRequestFilter() {
+            // Also run on the internal ERROR dispatch so thrown exceptions render with their
+            // real status + message instead of an empty 403 (the SecurityContext is per-request).
+            @Override
+            protected boolean shouldNotFilterErrorDispatch() { return false; }
+
             @Override
             protected void doFilterInternal(HttpServletRequest request,
                                             HttpServletResponse response,

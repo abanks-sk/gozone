@@ -24,6 +24,7 @@ public class JwtService {
         return Jwts.builder()
             .subject(user.getId().toString())
             .claim("role", user.getRole().name())
+            .claim("status", user.getStatus().name())
             .claim("phone", user.getPhone())
             .issuedAt(new Date())
             .expiration(new Date(System.currentTimeMillis() + props.getExpiryMs()))

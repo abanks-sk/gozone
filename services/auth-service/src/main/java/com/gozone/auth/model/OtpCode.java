@@ -12,8 +12,12 @@ public class OtpCode {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false, length = 20)
+    /** Either phone or email is set, matching how the OTP was requested. */
+    @Column(length = 20)
     private String phone;
+
+    @Column(length = 255)
+    private String email;
 
     @Column(nullable = false, length = 10)
     private String code;
@@ -24,9 +28,16 @@ public class OtpCode {
     @Column(name = "consumed_at")
     private OffsetDateTime consumedAt;
 
+    @Column(nullable = false)
+    private int attempts = 0;
+
     public UUID getId() { return id; }
+    public int getAttempts() { return attempts; }
+    public void setAttempts(int attempts) { this.attempts = attempts; }
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
     public String getCode() { return code; }
     public void setCode(String code) { this.code = code; }
     public OffsetDateTime getExpiresAt() { return expiresAt; }

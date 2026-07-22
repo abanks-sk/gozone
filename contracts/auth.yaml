@@ -17,7 +17,10 @@ paths:
   /register:
     post:
       tags: [auth]
-      summary: Register phone + role; issues OTP to logs
+      summary: Sign up (phone + role); creates the account and issues OTP to logs
+      description: >
+        Sign-up only. A phone that already has an account returns 409 so the client can
+        steer the user to log in instead of silently logging into the existing account.
       operationId: register
       requestBody:
         required: true
@@ -34,6 +37,80 @@ paths:
                 $ref: '#/components/schemas/RegisterResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '409':
+          description: An account with this phone already exists
+
+  /login:
+    post:
+      tags: [auth]
+      summary: Login (phone-only); issues OTP only if the phone already has an account
+      description: >
+        Unlike /register this never creates a user. An unknown phone returns 404 so the
+        client can steer the user to sign up instead of silently creating an account.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: OTP issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: No account found for this phone
+
+  /register-email:
+    post:
+      tags: [auth]
+      summary: Email sign-up; creates the account and issues OTP to the email (logged in dev)
+      operationId: registerEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRegisterRequest'
+      responses:
+        '200':
+          description: OTP issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: An account with this email already exists
+
+  /login-email:
+    post:
+      tags: [auth]
+      summary: Email login; issues OTP only if the email already has an account
+      operationId: loginEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailLoginRequest'
+      responses:
+        '200':
+          description: OTP issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: No account found for this email
 
   /verify-otp:
     post:
@@ -94,6 +171,166 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /admin/login:
+    post:
+      tags: [admin]
+      summary: Admin step 1 — username + password; on success OTPs the phone on file
+      operationId: adminLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Credentials valid; OTP sent. Complete with /verify-otp.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLoginResponse'
+
+  /admins:
+    post:
+      tags: [admin]
+      summary: Super admin creates an ADMIN account
+      operationId: createAdmin
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminRequest'
+      responses:
+        '200':
+          description: Admin created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /users:
+    get:
+      tags: [admin]
+      summary: Admin lists users by status (e.g. PENDING approvals)
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [ACTIVE, SUSPENDED, PENDING, REJECTED]
+      responses:
+        '200':
+          description: Users with that status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{id}/status:
+    patch:
+      tags: [admin]
+      summary: Admin approves (ACTIVE) or rejects (REJECTED) a pending account
+      operationId: reviewUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ACTIVE, REJECTED, SUSPENDED]
+      responses:
+        '200':
+          description: User status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{id}/class:
+    patch:
+      tags: [admin]
+      summary: Admin assigns a driver's vehicle class (e.g. Standard/Luxe after seeing the car)
+      operationId: assignVehicleClass
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vehicleClass]
+              properties:
+                vehicleClass:
+                  type: string
+                  enum: [OKADA, STANDARD, LUXE, CARGO]
+      responses:
+        '200':
+          description: Class assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/service-mode:
+    patch:
+      tags: [auth]
+      summary: Driver sets their own service mode
+      operationId: setServiceMode
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [RIDES, DELIVERIES, BOTH]
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+
   /driver/kyc:
     post:
       tags: [kyc]
@@ -114,6 +351,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/KycResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      tags: [kyc]
+      summary: Admin lists KYC submissions (optionally by status)
+      operationId: listKyc
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDING, VERIFIED, REJECTED]
+      responses:
+        '200':
+          description: KYC submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KycResponse'
         '403':
           $ref: '#/components/responses/Forbidden'
 
@@ -192,7 +453,44 @@ components:
           example: "+233501234567"
         role:
           type: string
-          enum: [RIDER, DRIVER, RESTAURANT_OWNER, COURIER, ADMIN]
+          enum: [RIDER, DRIVER, RESTAURANT_OWNER, COURIER, ADMIN, SUPER_ADMIN]
+        name:
+          type: string
+          description: Display name — sent on first-time sign-up; ignored for an existing phone
+        vehicleClass:
+          type: string
+          enum: [OKADA, CARGO]
+          description: Driver self-selected class at sign-up (Okada/Truck). Omit for a car → admin sets Standard/Luxe.
+
+    LoginRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone:
+          type: string
+          example: "+233501234567"
+
+    EmailRegisterRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "ama@example.com"
+        role:
+          type: string
+          enum: [RIDER, DRIVER, RESTAURANT_OWNER, COURIER]
+        name:
+          type: string
+
+    EmailLoginRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
 
     RegisterResponse:
       type: object
@@ -202,12 +500,47 @@ components:
         message:
           type: string
 
-    VerifyOtpRequest:
+    AdminLoginRequest:
       type: object
-      required: [phone, code]
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    AdminLoginResponse:
+      type: object
       properties:
         phone:
           type: string
+          description: Phone the OTP was sent to (use it in /verify-otp)
+        message:
+          type: string
+
+    CreateAdminRequest:
+      type: object
+      required: [name, username, password, phone]
+      properties:
+        name:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        phone:
+          type: string
+
+    VerifyOtpRequest:
+      type: object
+      required: [code]
+      description: Provide exactly one of phone or email (matching how the OTP was requested).
+      properties:
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
         code:
           type: string
 
@@ -236,11 +569,26 @@ components:
           format: uuid
         phone:
           type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
         role:
           type: string
         status:
           type: string
-          enum: [ACTIVE, SUSPENDED]
+          enum: [ACTIVE, SUSPENDED, PENDING, REJECTED]
+        vehicleClass:
+          type: string
+          nullable: true
+          enum: [OKADA, STANDARD, LUXE, CARGO]
+          description: Driver class; null for a car awaiting an admin tier
+        serviceMode:
+          type: string
+          enum: [RIDES, DELIVERIES, BOTH]
 
     KycSubmitRequest:
       type: object
