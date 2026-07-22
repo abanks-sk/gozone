@@ -11,6 +11,7 @@ import java.util.List;
 public class CreateMenuItemRequest {
     @NotBlank private String name;
     private String description;
+    private String category;
     @NotNull @DecimalMin("0.01") private BigDecimal price;
     private Boolean available = true;
     private List<GroupInput> groups;
@@ -41,6 +42,8 @@ public class CreateMenuItemRequest {
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public BigDecimal getPrice() { return price; }

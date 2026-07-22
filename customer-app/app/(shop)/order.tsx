@@ -216,8 +216,21 @@ export default function OrderScreen() {
           <Divider />
           <Row style={{ justifyContent: 'space-between' }}>
             <Text style={{ color: c.textMuted }}>Subtotal</Text>
-            <Text style={{ color: c.text }}>GH₵ {(order.total - (order.serviceFee ?? 0) - order.deliveryFee).toFixed(2)}</Text>
+            <Text style={{ color: c.text }}>
+              GH₵ {(order.total - (order.serviceFee ?? 0) - order.deliveryFee + (order.discount ?? 0)).toFixed(2)}
+            </Text>
           </Row>
+          {(order.discount ?? 0) > 0 && (
+            <Row style={{ justifyContent: 'space-between', marginTop: 6 }}>
+              <Row style={{ gap: 6, alignItems: 'center', flex: 1 }}>
+                <Ionicons name="pricetag" size={14} color={c.success} />
+                <Text style={{ color: c.success, fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                  {order.promoLabel || 'Discount'}
+                </Text>
+              </Row>
+              <Text style={{ color: c.success, fontWeight: '700' }}>− GH₵ {(order.discount ?? 0).toFixed(2)}</Text>
+            </Row>
+          )}
           <Row style={{ justifyContent: 'space-between', marginTop: 6 }}>
             <Text style={{ color: c.textMuted }}>Service fee</Text>
             <Text style={{ color: c.text }}>GH₵ {(order.serviceFee ?? 0).toFixed(2)}</Text>
@@ -232,6 +245,15 @@ export default function OrderScreen() {
             <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>Total</Text>
             <Text style={{ fontSize: 18, fontWeight: '800', color: c.primary }}>GH₵ {order.total.toFixed(2)}</Text>
           </Row>
+
+          {/* Offers the vendor honours in person — shown so the customer knows
+              what to expect, and matches what the vendor sees on their board. */}
+          {order.promoNotes ? (
+            <Row style={{ gap: 8, marginTop: 12, backgroundColor: c.surfaceAlt, borderRadius: 12, padding: 12 }}>
+              <Ionicons name="gift" size={16} color={c.primary} />
+              <Text style={{ flex: 1, fontSize: 13, color: c.text, lineHeight: 18 }}>{order.promoNotes}</Text>
+            </Row>
+          ) : null}
         </Card>
 
         {/* Payment */}

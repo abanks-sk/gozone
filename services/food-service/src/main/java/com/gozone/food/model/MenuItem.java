@@ -31,6 +31,10 @@ public class MenuItem {
     @Column(nullable = false)
     private boolean available = true;
 
+    /** Optional grouping within a vendor's catalogue; also a promo target. */
+    @Column(length = 40)
+    private String category;
+
     @OneToMany(mappedBy = "menuItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @OrderBy("position ASC")
     private List<AddonGroup> groups = new ArrayList<>();
@@ -45,6 +49,8 @@ public class MenuItem {
     public void setDescription(String description) { this.description = description; }
     public BigDecimal getPrice() { return price; }
     public void setPrice(BigDecimal price) { this.price = price; }
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
     public boolean isAvailable() { return available; }
     public void setAvailable(boolean available) { this.available = available; }
 }

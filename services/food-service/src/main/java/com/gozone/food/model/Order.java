@@ -40,6 +40,21 @@ public class Order {
     @Column(name = "service_fee", nullable = false, precision = 10, scale = 2)
     private BigDecimal serviceFee = BigDecimal.ZERO;
 
+    /** Money taken off by an applied DISCOUNT promo (0 when none applied). */
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal discount = BigDecimal.ZERO;
+
+    /** Snapshot of the applied discount promo, so history survives promo edits. */
+    @Column(name = "promo_id")
+    private UUID promoId;
+
+    @Column(name = "promo_label", columnDefinition = "text")
+    private String promoLabel;
+
+    /** Vendor-fulfilled promos in effect on this order, for both sides to see. */
+    @Column(name = "promo_notes", columnDefinition = "text")
+    private String promoNotes;
+
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal total;
 
@@ -78,6 +93,14 @@ public class Order {
     public void setDeliveryFee(BigDecimal deliveryFee) { this.deliveryFee = deliveryFee; }
     public BigDecimal getServiceFee() { return serviceFee; }
     public void setServiceFee(BigDecimal serviceFee) { this.serviceFee = serviceFee; }
+    public BigDecimal getDiscount() { return discount; }
+    public void setDiscount(BigDecimal discount) { this.discount = discount; }
+    public UUID getPromoId() { return promoId; }
+    public void setPromoId(UUID promoId) { this.promoId = promoId; }
+    public String getPromoLabel() { return promoLabel; }
+    public void setPromoLabel(String promoLabel) { this.promoLabel = promoLabel; }
+    public String getPromoNotes() { return promoNotes; }
+    public void setPromoNotes(String promoNotes) { this.promoNotes = promoNotes; }
     public BigDecimal getTotal() { return total; }
     public void setTotal(BigDecimal total) { this.total = total; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

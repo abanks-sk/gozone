@@ -18,7 +18,8 @@ export default function MenuScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
-  const { restaurantId, name, lat, lng, vendorType } = useLocalSearchParams<{ restaurantId: string; name: string; lat?: string; lng?: string; vendorType?: string }>();
+  const { restaurantId, name, lat, lng, vendorType, focusCategory, focusItem } =
+    useLocalSearchParams<{ restaurantId: string; name: string; lat?: string; lng?: string; vendorType?: string; focusCategory?: string; focusItem?: string }>();
   const isFood = (vendorType ?? 'RESTAURANT') === 'RESTAURANT';
   const catalogTitle = isFood ? 'Menu' : 'Products';
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -41,7 +42,7 @@ export default function MenuScreen() {
 
   const grouped = useMemo(() => {
     const g: Record<string, MenuItem[]> = {};
-    menu.forEach((it) => { const cat = itemMeta(it.name).category; (g[cat] ||= []).push(it); });
+    menu.forEach((it) => { const cat = it.category || itemMeta(it.name).category; (g[cat] ||= []).push(it); });
     return g;
   }, [menu]);
   const cats = Object.keys(grouped);
@@ -56,6 +57,21 @@ export default function MenuScreen() {
   function openItem(item: MenuItem) {
     router.push({ pathname: '/(shop)/item', params: { restaurantId, restaurantName: name, menuItemId: item.id, name: item.name, price: String(item.price), description: item.description ?? '' } });
   }
+
+  // Arrived from a promo card: land the customer on exactly what the promo
+  // covers — the promoted item's page, or its category section.
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (jumped.current || menu.length === 0) return;
+    if (focusItem) {
+      const it = menu.find((m) => m.id === focusItem);
+      if (it) { jumped.current = true; openItem(it); return; }
+    }
+    if (focusCategory) {
+      const cat = cats.find((k) => k.toLowerCase() === focusCategory.trim().toLowerCase());
+      if (cat) { jumped.current = true; setTimeout(() => jump(cat), 350); }
+    }
+  }, [menu, focusItem, focusCategory, cats]);
 
   // In-page search across this vendor's items (name + description).
   const searchResults = useMemo(() => {

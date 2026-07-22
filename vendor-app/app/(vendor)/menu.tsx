@@ -20,6 +20,7 @@ export default function VendorMenuScreen() {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('');
   const [price, setPrice] = useState('');
   type OptDraft = { label: string; price: string };
   type GroupDraft = { name: string; multi: boolean; required: boolean; options: OptDraft[] };
@@ -55,10 +56,11 @@ export default function VendorMenuScreen() {
     setBusy(true);
     try {
       await foodApi.createMenuItem(vendor.id, {
-        name: name.trim(), description: description.trim() || undefined, price: Math.round(p * 100) / 100,
+        name: name.trim(), description: description.trim() || undefined,
+        category: category.trim() || undefined, price: Math.round(p * 100) / 100,
         groups: groupsPayload.length ? groupsPayload : undefined,
       });
-      setName(''); setDescription(''); setPrice(''); setGroups([]); setAdding(false);
+      setName(''); setDescription(''); setCategory(''); setPrice(''); setGroups([]); setAdding(false);
       await load();
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.message ?? 'Could not add the item');
@@ -139,6 +141,7 @@ export default function VendorMenuScreen() {
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 20, gap: 14, paddingBottom: 14 }}>
               <Field label="Item name" value={name} onChangeText={setName} placeholder="Jollof Rice" c={c} />
               <Field label="Description" value={description} onChangeText={setDescription} placeholder="Smoky party jollof with grilled chicken" multiline c={c} />
+              <Field label="Category" value={category} onChangeText={setCategory} placeholder="Mains · Drinks · Sides — groups your items and lets you run a promo on just this group" c={c} />
               <Field label="Price (GH₵)" value={price} onChangeText={setPrice} placeholder="35.00" keyboardType="decimal-pad" c={c} />
 
               {/* Add-on groups */}

@@ -8,5 +8,6 @@ import java.util.UUID;
 
 public interface PromoRepository extends JpaRepository<Promo, UUID> {
     List<Promo> findByActiveTrueOrderByCreatedAtDesc();
+    List<Promo> findByVendorIdAndActiveTrue(UUID vendorId);
     List<Promo> findAllByOrderByCreatedAtDesc();
 }

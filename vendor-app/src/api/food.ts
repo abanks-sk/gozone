@@ -16,6 +16,8 @@ export interface MenuItem {
   id: string;
   name: string;
   description?: string | null;
+  /** Grouping within the catalogue; also what a CATEGORY promo targets. */
+  category?: string | null;
   price: number;
   available: boolean;
 }
@@ -48,11 +50,33 @@ export interface Promo {
   id: string;
   title: string;
   subtitle: string | null;
+  description?: string | null;
   color?: string | null;
+  imageUrl?: string | null;
   vendorId: string | null;
   category?: string | null;
+  menuItemId?: string | null;
+  /** DISCOUNT is applied by GoZone at checkout; BOGO/OTHER you honour in store. */
+  promoKind: 'DISCOUNT' | 'BOGO' | 'OTHER';
+  discountType?: 'PERCENT' | 'AMOUNT' | null;
+  discountValue?: number | null;
+  /** What it covers: the whole catalogue, one category, or one item. */
+  scope: 'VENDOR' | 'CATEGORY' | 'ITEM';
   active: boolean;
-  createdAt: string;
+}
+
+/** What the vendor sends when applying to run a promotion. */
+export interface PromoApplication {
+  vendorId: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  promoKind: 'DISCOUNT' | 'BOGO' | 'OTHER';
+  discountType?: 'PERCENT' | 'AMOUNT';
+  discountValue?: number;
+  scope: 'VENDOR' | 'CATEGORY' | 'ITEM';
+  category?: string;
+  menuItemId?: string;
 }
 
 export const foodApi = {
@@ -60,8 +84,8 @@ export const foodApi = {
     api.get<Restaurant[]>('/food/restaurants').then(r => r.data),
 
   // Self-serve promotion: apply (pending admin approval) + list my applications.
-  applyPromo: (vendorId: string, title: string, subtitle?: string) =>
-    api.post<Promo>('/food/promos/apply', { vendorId, title, subtitle }).then(r => r.data),
+  applyPromo: (body: PromoApplication) =>
+    api.post<Promo>('/food/promos/apply', body).then(r => r.data),
 
   myPromos: (vendorId: string) =>
     api.get<Promo[]>(`/food/promos/mine?vendorId=${vendorId}`).then(r => r.data),
@@ -74,11 +98,11 @@ export const foodApi = {
     api.get<MenuItem[]>(`/food/restaurants/${restaurantId}/catalogue`).then(r => r.data),
 
   createMenuItem: (restaurantId: string, body: {
-    name: string; description?: string; price: number; available?: boolean;
+    name: string; description?: string; category?: string; price: number; available?: boolean;
     groups?: { name: string; multi: boolean; required: boolean; options: { label: string; price: number }[] }[];
   }) => api.post<MenuItem>(`/food/restaurants/${restaurantId}/menu`, body).then(r => r.data),
 
-  updateMenuItem: (itemId: string, body: { name?: string; description?: string; price?: number; available?: boolean }) =>
+  updateMenuItem: (itemId: string, body: { name?: string; description?: string; category?: string; price?: number; available?: boolean }) =>
     api.patch<MenuItem>(`/food/menu-items/${itemId}`, body).then(r => r.data),
 
   deleteMenuItem: (itemId: string) =>

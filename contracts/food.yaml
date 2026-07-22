@@ -128,13 +128,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [vendorId, title]
-              properties:
-                vendorId: { type: string, format: uuid }
-                title: { type: string }
-                subtitle: { type: string, nullable: true }
+            schema: { $ref: '#/components/schemas/CreatePromoRequest' }
       responses:
         '200':
           description: Application recorded (inactive promo)
@@ -624,24 +618,47 @@ components:
   schemas:
     PromoResponse:
       type: object
+      description: >
+        A promotion. DISCOUNT promos are applied by the platform at checkout;
+        BOGO/OTHER are fulfilled by the vendor and only recorded on the order.
+        `scope` decides both what a discount covers and where the card links.
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
         subtitle: { type: string, nullable: true }
+        description: { type: string, nullable: true, description: Terms shown for vendor-fulfilled promos }
         color: { type: string }
+        imageUrl: { type: string, nullable: true, description: Card background; falls back to color }
         vendorId: { type: string, format: uuid, nullable: true }
-        category: { type: string, nullable: true }
-        active: { type: boolean }
+        category: { type: string, nullable: true, description: Target when scope = CATEGORY }
+        menuItemId: { type: string, format: uuid, nullable: true, description: Target when scope = ITEM }
+        promoKind: { type: string, enum: [DISCOUNT, BOGO, OTHER] }
+        discountType: { type: string, enum: [PERCENT, AMOUNT], nullable: true }
+        discountValue: { type: number, nullable: true }
+        scope: { type: string, enum: [VENDOR, CATEGORY, ITEM] }
+        active: { type: boolean, description: Doubles as the approval flag for vendor applications }
 
     CreatePromoRequest:
       type: object
       required: [title]
+      description: >
+        Used by both POST /promos (admin, goes live immediately) and
+        POST /promos/apply (vendor, created inactive pending admin approval).
+        A DISCOUNT requires a vendor plus discountType and discountValue;
+        scope CATEGORY requires category, scope ITEM requires menuItemId.
       properties:
         title: { type: string }
         subtitle: { type: string }
+        description: { type: string }
         color: { type: string }
+        imageUrl: { type: string }
         vendorId: { type: string, format: uuid }
+        scope: { type: string, enum: [VENDOR, CATEGORY, ITEM], default: VENDOR }
         category: { type: string }
+        menuItemId: { type: string, format: uuid }
+        promoKind: { type: string, enum: [DISCOUNT, BOGO, OTHER], default: DISCOUNT }
+        discountType: { type: string, enum: [PERCENT, AMOUNT] }
+        discountValue: { type: number, description: Percent (max 90) or a fixed GHS amount }
 
     CreateVendorRequest:
       type: object
@@ -702,6 +719,10 @@ components:
         description:
           type: string
           nullable: true
+        category:
+          type: string
+          nullable: true
+          description: Vendor-defined grouping; what a CATEGORY-scoped promo targets
         price:
           type: number
         available:
@@ -791,6 +812,17 @@ components:
           type: number
         serviceFee:
           type: number
+        discount:
+          type: number
+          description: Money removed by an applied DISCOUNT promo (0 when none)
+        promoLabel:
+          type: string
+          nullable: true
+          description: Snapshot of the applied discount promo's terms
+        promoNotes:
+          type: string
+          nullable: true
+          description: Vendor-fulfilled promos in effect, for customer and vendor to see
         createdAt:
           type: string
           format: date-time

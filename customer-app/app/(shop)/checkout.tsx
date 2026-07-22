@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { shopApi, PlatformFees } from '../../src/api/shop';
+import { shopApi, PlatformFees, Promo } from '../../src/api/shop';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useShopCart, cartTotal, lineTotal } from '../../src/store/shopCart';
 import { itemMeta, Mode, MODE_LABEL } from '../../src/data/shopCatalog';
 import { haversineKm } from '../../src/lib/pricing';
+import { previewPromos } from '../../src/lib/promos';
 import { Empty, Row } from '../../src/components/ui';
 
 const MODE_ICON: Record<Mode, any> = { DELIVERY: 'bicycle', PICKUP: 'bag-handle', WALKIN: 'walk' };
@@ -29,19 +30,40 @@ export default function CheckoutScreen() {
   // Admin-controlled fees + the vendor's coords (for the distance-based delivery estimate).
   const [fees, setFees] = useState<PlatformFees | null>(null);
   const [vendorCoord, setVendorCoord] = useState<{ lat: number; lng: number } | null>(null);
+  // This vendor's live promos + each item's category, so the discount can be
+  // previewed here. The server recomputes it authoritatively on placeOrder.
+  const [promos, setPromos] = useState<Promo[]>([]);
+  const [catById, setCatById] = useState<Record<string, string | undefined>>({});
   useEffect(() => {
     shopApi.getPlatformFees().then(setFees).catch(() => {});
+    if (!restaurantId) return;               // empty cart — nothing to price yet
     shopApi.listRestaurants()
       .then((list) => { const v = list.find((r) => r.id === restaurantId); if (v) setVendorCoord({ lat: v.lat, lng: v.lng }); })
+      .catch(() => {});
+    shopApi.listPromos()
+      .then((all) => setPromos(all.filter((p) => p.vendorId === restaurantId)))
+      .catch(() => {});
+    shopApi.getMenu(restaurantId)
+      .then((items) => {
+        const m: Record<string, string | undefined> = {};
+        items.forEach((i) => { m[i.id] = i.category ?? undefined; });
+        setCatById(m);
+      })
       .catch(() => {});
   }, [restaurantId]);
 
   const subtotal = cartTotal(lines);
-  const serviceFee = fees ? Math.round(subtotal * fees.serviceFeePct * 100) / 100 : 0;
+  const promo = useMemo(
+    () => previewPromos(promos, lines, (id) => catById[id]),
+    [promos, lines, catById]);
+  // The service fee is charged on what's actually paid for the goods, i.e. after
+  // any discount — same rule as the server.
+  const discounted = Math.max(0, subtotal - promo.discount);
+  const serviceFee = fees ? Math.round(discounted * fees.serviceFeePct * 100) / 100 : 0;
   const deliveryFee = fees && mode === 'DELIVERY' && vendorCoord
     ? Math.round((fees.deliveryBaseFee + fees.deliveryPerKm * haversineKm(vendorCoord, deliveryPlace)) * 100) / 100
     : 0;
-  const total = subtotal + serviceFee + deliveryFee;
+  const total = discounted + serviceFee + deliveryFee;
 
   async function placeOrder() {
     if (!restaurantId || lines.length === 0) return;
@@ -148,6 +170,17 @@ export default function CheckoutScreen() {
               <Text style={{ fontSize: 15, color: c.textMuted }}>Subtotal</Text>
               <Text style={{ fontSize: 15, fontWeight: '600', color: c.text }}>GH₵ {subtotal.toFixed(2)}</Text>
             </Row>
+            {promo.discount > 0 && (
+              <Row style={{ justifyContent: 'space-between', marginTop: 6 }}>
+                <Row style={{ gap: 6, alignItems: 'center', flex: 1 }}>
+                  <Ionicons name="pricetag" size={14} color={c.success} />
+                  <Text style={{ fontSize: 14, color: c.success, fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                    {promo.applied?.title ?? 'Discount'}
+                  </Text>
+                </Row>
+                <Text style={{ fontSize: 14, color: c.success, fontWeight: '700' }}>− GH₵ {promo.discount.toFixed(2)}</Text>
+              </Row>
+            )}
             <Row style={{ justifyContent: 'space-between', marginTop: 6 }}>
               <Text style={{ fontSize: 14, color: c.textMuted }}>Service fee</Text>
               <Text style={{ fontSize: 14, color: c.text }}>GH₵ {serviceFee.toFixed(2)}</Text>
@@ -164,6 +197,20 @@ export default function CheckoutScreen() {
               <Text style={{ fontSize: 16, fontWeight: '800', color: c.text }}>Total</Text>
               <Text style={{ fontSize: 16, fontWeight: '800', color: c.text }}>GH₵ {total.toFixed(2)}</Text>
             </Row>
+
+            {/* Vendor-fulfilled offers: no money changes here, the vendor honours
+                them — but the customer should know what they're entitled to. */}
+            {promo.notes.map((n) => (
+              <Row key={n.id} style={{ gap: 8, marginTop: 10, backgroundColor: c.surfaceAlt, borderRadius: 12, padding: 12 }}>
+                <Ionicons name="gift" size={16} color={c.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13.5, fontWeight: '700', color: c.text }}>{n.title}</Text>
+                  <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 1 }}>
+                    {n.description || 'Applied by the vendor when they prepare your order.'}
+                  </Text>
+                </View>
+              </Row>
+            ))}
           </ScrollView>
 
           {/* Place order */}

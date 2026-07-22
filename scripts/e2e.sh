@@ -216,13 +216,60 @@ echo " 8. PROMOS / VENDOR SELF-SERVE"
 echo "=============================================="
 eq "public promos load" "$(GET /food/promos $RIDER | python -c "import sys,json;print(len(json.load(sys.stdin))>0)")" "True"
 MYV=$(GET /food/vendors/mine $VENDOR | jq_ "d[0]['id']")
-AP=$(POST /food/promos/apply "$VENDOR" "{\"vendorId\":\"$MYV\",\"title\":\"E2E test promo\"}")
+# A discount application must carry its terms; scope defaults to the whole catalogue.
+AP=$(POST /food/promos/apply "$VENDOR" "{\"vendorId\":\"$MYV\",\"title\":\"E2E test promo\",\"promoKind\":\"DISCOUNT\",\"discountType\":\"PERCENT\",\"discountValue\":15,\"scope\":\"VENDOR\"}")
 APID=$(echo "$AP" | jq_ "d['id']")
 eq "vendor applies → inactive (pending)" "$(echo "$AP" | jq_ "d['active']")" "False"
+eq "  …with its discount terms recorded"  "$(echo "$AP" | jq_ "d['discountType']+' '+str(int(d['discountValue']))")" "PERCENT 15"
 eq "vendor sees own application" "$(GET "/food/promos/mine?vendorId=$MYV" $VENDOR | python -c "import sys,json;print(any(p['id']=='$APID' for p in json.load(sys.stdin)))")" "True"
 eq "admin activates (= approve)" "$(PATCH_ "/food/promos/$APID" "$ADMIN" '{"active":true}' | jq_ "d['active']")" "True"
 curl -s -X DELETE -H "Authorization: Bearer $ADMIN" $GW/food/promos/$APID >/dev/null
 eq "test promo removed" "$(GET /food/promos/all $ADMIN | python -c "import sys,json;print(any(p['id']=='$APID' for p in json.load(sys.stdin)))")" "False"
+
+echo
+echo "=============================================="
+echo " 8b. DISCOUNT ENGINE — promos that change the total"
+echo "=============================================="
+# Baseline for one item, so the expected discounts are exact.
+UNIT=$(echo "$MENU" | jq_ "d[0]['price']")
+ord1() { POST /food/orders "$RIDER" "{\"restaurantId\":\"$VID\",\"mode\":\"PICKUP\",\"items\":[{\"menuItemId\":\"$MI\",\"qty\":2}]}"; }
+SUB=$(python -c "print(round($UNIT*2,2))")
+BASE=$(ord1); BID_=$(echo "$BASE" | jq_ "d['id']")
+eq "no promo → no discount" "$(echo "$BASE" | jq_ "float(d['discount'])")" "0.0"
+PATCH_ "/food/orders/$BID_/status" "$VENDOR" '{"status":"CANCELLED"}' >/dev/null
+
+# Vendor-wide 10% off.
+D1=$(POST /food/promos "$ADMIN" "{\"title\":\"E2E 10 off\",\"vendorId\":\"$VID\",\"scope\":\"VENDOR\",\"promoKind\":\"DISCOUNT\",\"discountType\":\"PERCENT\",\"discountValue\":10}" | jq_ "d['id']")
+O1=$(ord1)
+eq "vendor-wide 10% applied" "$(echo "$O1" | jq_ "float(d['discount'])")" "$(python -c "print(round($SUB*0.10,2))")"
+eq "  service fee charged after discount" \
+  "$(echo "$O1" | jq_ "float(d['serviceFee'])")" \
+  "$(python -c "print(round(($SUB-round($SUB*0.10,2))*0.05,2))")"
+PATCH_ "/food/orders/$(echo "$O1" | jq_ "d['id']")/status" "$VENDOR" '{"status":"CANCELLED"}' >/dev/null
+
+# A bigger fixed-amount promo must win over the percentage one — no stacking.
+D2=$(POST /food/promos "$ADMIN" "{\"title\":\"E2E big off\",\"vendorId\":\"$VID\",\"scope\":\"VENDOR\",\"promoKind\":\"DISCOUNT\",\"discountType\":\"AMOUNT\",\"discountValue\":9}" | jq_ "d['id']")
+O2=$(ord1)
+eq "best discount wins, no stacking" "$(echo "$O2" | jq_ "float(d['discount'])")" "9.0"
+PATCH_ "/food/orders/$(echo "$O2" | jq_ "d['id']")/status" "$VENDOR" '{"status":"CANCELLED"}' >/dev/null
+curl -s -X DELETE -H "Authorization: Bearer $ADMIN" $GW/food/promos/$D1 >/dev/null
+curl -s -X DELETE -H "Authorization: Bearer $ADMIN" $GW/food/promos/$D2 >/dev/null
+
+# Vendor-fulfilled promo: recorded, but no money moves.
+D3=$(POST /food/promos "$ADMIN" "{\"title\":\"E2E BOGO\",\"description\":\"Dine-in only\",\"vendorId\":\"$VID\",\"scope\":\"VENDOR\",\"promoKind\":\"BOGO\"}" | jq_ "d['id']")
+O3=$(ord1)
+eq "vendor-fulfilled promo takes no money" "$(echo "$O3" | jq_ "float(d['discount'])")" "0.0"
+eq "  …but is recorded on the order"       "$(echo "$O3" | jq_ "'E2E BOGO' in (d['promoNotes'] or '')")" "True"
+PATCH_ "/food/orders/$(echo "$O3" | jq_ "d['id']")/status" "$VENDOR" '{"status":"CANCELLED"}' >/dev/null
+curl -s -X DELETE -H "Authorization: Bearer $ADMIN" $GW/food/promos/$D3 >/dev/null
+
+# Guard rails.
+eq "discount without terms rejected" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $ADMIN" -d "{\"title\":\"bad\",\"vendorId\":\"$VID\",\"promoKind\":\"DISCOUNT\"}" $GW/food/promos)" "400"
+eq "percentage over 90 rejected" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $ADMIN" -d "{\"title\":\"bad\",\"vendorId\":\"$VID\",\"promoKind\":\"DISCOUNT\",\"discountType\":\"PERCENT\",\"discountValue\":95}" $GW/food/promos)" "400"
+eq "customer cannot create a promo" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER" -d "{\"title\":\"nope\",\"vendorId\":\"$VID\",\"promoKind\":\"BOGO\"}" $GW/food/promos)" "403"
 
 echo
 echo "=============================================="

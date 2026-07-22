@@ -30,6 +30,7 @@ public class FoodService {
     private final QueueEntryRepository queueRepo;
     private final FoodRatingRepository ratingRepo;
     private final PlatformSettingsRepository settingsRepo;
+    private final PromoRepository promoRepo;
     private final SimpMessagingTemplate messaging;
     private final WalletClient walletClient;
     private final AuthClient authClient;
@@ -47,6 +48,7 @@ public class FoodService {
                        QueueEntryRepository queueRepo,
                        FoodRatingRepository ratingRepo,
                        PlatformSettingsRepository settingsRepo,
+                       PromoRepository promoRepo,
                        SimpMessagingTemplate messaging,
                        WalletClient walletClient,
                        AuthClient authClient) {
@@ -57,6 +59,7 @@ public class FoodService {
         this.queueRepo      = queueRepo;
         this.ratingRepo     = ratingRepo;
         this.settingsRepo   = settingsRepo;
+        this.promoRepo      = promoRepo;
         this.messaging      = messaging;
         this.walletClient   = walletClient;
         this.authClient     = authClient;
@@ -111,6 +114,7 @@ public class FoodService {
         item.setRestaurant(vendor);
         item.setName(req.getName().trim());
         item.setDescription(req.getDescription() != null ? req.getDescription().trim() : null);
+        item.setCategory(req.getCategory() != null && !req.getCategory().isBlank() ? req.getCategory().trim() : null);
         item.setPrice(req.getPrice());
         item.setAvailable(req.getAvailable() == null || req.getAvailable());
         // Add-on groups + options (cascade-persisted with the item).
@@ -149,6 +153,7 @@ public class FoodService {
         requireOwner(ownerId, item.getRestaurant().getId());
         if (req.getName() != null && !req.getName().isBlank()) item.setName(req.getName().trim());
         if (req.getDescription() != null) item.setDescription(req.getDescription().trim());
+        if (req.getCategory() != null) item.setCategory(req.getCategory().isBlank() ? null : req.getCategory().trim());
         if (req.getPrice() != null) item.setPrice(req.getPrice());
         if (req.getAvailable() != null) item.setAvailable(req.getAvailable());
         menuItemRepo.save(item);
@@ -162,6 +167,98 @@ public class FoodService {
         requireOwner(ownerId, item.getRestaurant().getId());
         menuItemRepo.delete(item);
         log.info("[MENU] item deleted {}", itemId);
+    }
+
+    // ── Promotions at checkout ──────────────────────────────────────────────────
+
+    /**
+     * Resolve the vendor's active promos against this order.
+     *
+     * <p>DISCOUNT promos are money the platform takes off. Each is evaluated
+     * against the part of the order it is scoped to (whole catalogue, one
+     * category, or one item) and the <b>single best one wins</b> — discounts do
+     * not stack, which keeps the arithmetic explainable to a customer and stops
+     * overlapping campaigns from driving a total to zero.
+     *
+     * <p>BOGO and OTHER promos are fulfilled by the vendor. They are recorded on
+     * the order as notes so the customer sees what they are entitled to and the
+     * vendor sees what to honour, but no money is computed for them here.
+     */
+    private void applyPromos(Order order, Vendor vendor, BigDecimal subtotal) {
+        List<Promo> promos = promoRepo.findByVendorIdAndActiveTrue(vendor.getId());
+        if (promos.isEmpty()) return;
+
+        Promo best = null;
+        BigDecimal bestAmount = BigDecimal.ZERO;
+        StringBuilder notes = new StringBuilder();
+
+        for (Promo p : promos) {
+            if (!p.isPlatformDiscount()) {
+                // Vendor-fulfilled: record the terms for both sides.
+                if (eligibleAmount(order, p).signum() > 0) {
+                    if (notes.length() > 0) notes.append(" · ");
+                    notes.append(p.getTitle());
+                    if (p.getDescription() != null && !p.getDescription().isBlank()) {
+                        notes.append(" — ").append(p.getDescription().trim());
+                    }
+                }
+                continue;
+            }
+            BigDecimal eligible = eligibleAmount(order, p);
+            if (eligible.signum() <= 0) continue;
+
+            BigDecimal amount = p.getDiscountType() == Promo.DiscountType.PERCENT
+                ? eligible.multiply(p.getDiscountValue())
+                          .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP)
+                : p.getDiscountValue().min(eligible);   // a fixed amount never exceeds what it applies to
+
+            if (amount.compareTo(bestAmount) > 0) { best = p; bestAmount = amount; }
+        }
+
+        // Never discount more than the goods are worth.
+        bestAmount = bestAmount.min(subtotal).setScale(2, RoundingMode.HALF_UP);
+
+        if (best != null && bestAmount.signum() > 0) {
+            order.setDiscount(bestAmount);
+            order.setPromoId(best.getId());
+            order.setPromoLabel(describe(best));
+            log.info("[PROMO] applied {} ({}) −GH{} to order for vendor {}",
+                best.getId(), best.getScope(), bestAmount, vendor.getId());
+        }
+        if (notes.length() > 0) order.setPromoNotes(notes.toString());
+    }
+
+    /**
+     * How much of this order the promo applies to: everything, just one
+     * category, or just one item. Line totals include add-ons, because that is
+     * what the customer is actually charged for the line.
+     */
+    private BigDecimal eligibleAmount(Order order, Promo p) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (OrderItem oi : order.getItems()) {
+            MenuItem mi = oi.getMenuItem();
+            boolean matches = switch (p.getScope()) {
+                case VENDOR   -> true;
+                case ITEM     -> mi.getId().equals(p.getMenuItemId());
+                case CATEGORY -> mi.getCategory() != null && p.getCategory() != null
+                                 && mi.getCategory().equalsIgnoreCase(p.getCategory().trim());
+            };
+            if (matches) sum = sum.add(oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQty())));
+        }
+        return sum;
+    }
+
+    /** Human-readable snapshot of the promo's terms, stored on the order. */
+    private String describe(Promo p) {
+        String terms = p.getDiscountType() == Promo.DiscountType.PERCENT
+            ? p.getDiscountValue().stripTrailingZeros().toPlainString() + "% off"
+            : "GH¢" + p.getDiscountValue().setScale(2, RoundingMode.HALF_UP) + " off";
+        String where = switch (p.getScope()) {
+            case VENDOR   -> "everything";
+            case CATEGORY -> p.getCategory();
+            case ITEM     -> menuItemRepo.findById(p.getMenuItemId()).map(MenuItem::getName).orElse("selected item");
+        };
+        return p.getTitle() + " (" + terms + " — " + where + ")";
     }
 
     /** Ensure the signed-in user owns the given vendor, returning it. */
@@ -252,10 +349,17 @@ public class FoodService {
                 .add(ps.getDeliveryPerKm().multiply(BigDecimal.valueOf(distKm)))
                 .setScale(2, RoundingMode.HALF_UP);
         }
-        BigDecimal serviceFee = subtotal.multiply(ps.getServiceFeePct()).setScale(2, RoundingMode.HALF_UP);
+        // Promotions. A DISCOUNT promo is settled here by the platform; BOGO/OTHER
+        // are fulfilled by the vendor and only recorded so both sides see the terms.
+        applyPromos(order, restaurant, subtotal);
+        BigDecimal discounted = subtotal.subtract(order.getDiscount());
+
+        // The service fee is charged on what the customer actually pays for the
+        // goods, i.e. after any discount — not on the pre-discount subtotal.
+        BigDecimal serviceFee = discounted.multiply(ps.getServiceFeePct()).setScale(2, RoundingMode.HALF_UP);
         order.setDeliveryFee(deliveryFee);
         order.setServiceFee(serviceFee);
-        order.setTotal(subtotal.add(serviceFee).add(deliveryFee));
+        order.setTotal(discounted.add(serviceFee).add(deliveryFee));
         orderRepo.save(order);
 
         // Auto-enqueue walk-in orders

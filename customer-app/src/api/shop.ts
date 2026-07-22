@@ -19,6 +19,8 @@ export interface MenuItem {
   id: string;
   name: string;
   description?: string | null;
+  /** Vendor-defined grouping within the catalogue; also a promo target. */
+  category?: string | null;
   price: number;
   available: boolean;
   groups?: AddonGroup[];
@@ -34,6 +36,12 @@ export interface Order {
   total: number;
   deliveryFee: number;
   serviceFee: number;
+  /** Money taken off by an applied discount promo (0 when none). */
+  discount?: number;
+  /** Snapshot of the applied discount promo's terms. */
+  promoLabel?: string | null;
+  /** Vendor-fulfilled promos in effect on this order. */
+  promoNotes?: string | null;
   deliveryAddr?: string;
   createdAt: string;
   paymentStatus?: 'UNPAID' | 'AWAITING' | 'PAID';
@@ -58,10 +66,27 @@ export interface Promo {
   id: string;
   title: string;
   subtitle?: string;
+  /** Longer terms — shown for vendor-fulfilled promos. */
+  description?: string | null;
   color: string;
+  /** Background image for the card; falls back to `color` when absent. */
+  imageUrl?: string | null;
   vendorId?: string | null;
   category?: string | null;
+  menuItemId?: string | null;
+  /** DISCOUNT is applied by the platform at checkout; the rest the vendor honours. */
+  promoKind: 'DISCOUNT' | 'BOGO' | 'OTHER';
+  discountType?: 'PERCENT' | 'AMOUNT' | null;
+  discountValue?: number | null;
+  /** What the promo covers, and where tapping the card takes you. */
+  scope: 'VENDOR' | 'CATEGORY' | 'ITEM';
   active: boolean;
+}
+
+/** Short human label for a promo's terms, e.g. "20% off" or "GH¢5 off". */
+export function promoTerms(p: Promo): string | null {
+  if (p.promoKind !== 'DISCOUNT' || !p.discountValue) return null;
+  return p.discountType === 'PERCENT' ? `${p.discountValue}% off` : `GH¢${p.discountValue} off`;
 }
 
 export const shopApi = {

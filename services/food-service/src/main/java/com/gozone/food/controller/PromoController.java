@@ -46,11 +46,8 @@ public class PromoController {
     @PreAuthorize("hasRole('RESTAURANT_OWNER')")
     public ResponseEntity<PromoResponse> apply(
             @org.springframework.security.core.annotation.AuthenticationPrincipal String ownerId,
-            @RequestBody Map<String, String> body) {
-        UUID vendorId = UUID.fromString(body.get("vendorId"));
-        String title = body.getOrDefault("title", "");
-        if (title.isBlank()) throw new IllegalStateException("Give your promotion a title");
-        return ResponseEntity.ok(promoService.apply(ownerId, vendorId, title, body.get("subtitle")));
+            @Valid @RequestBody CreatePromoRequest req) {
+        return ResponseEntity.ok(promoService.apply(ownerId, req));
     }
 
     /** Vendor: their promo applications for one of their businesses. */

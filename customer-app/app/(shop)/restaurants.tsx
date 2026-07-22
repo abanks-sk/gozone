@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Dimensions, Image, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Image, ImageBackground, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { shopApi, Restaurant, Promo } from '../../src/api/shop';
+import { shopApi, Restaurant, Promo, promoTerms } from '../../src/api/shop';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useShopCart } from '../../src/store/shopCart';
 import { useShopFilter, activeFilterCount } from '../../src/store/shopFilter';
@@ -51,11 +51,29 @@ export default function RestaurantsScreen() {
   }
   useEffect(() => { load(); }, []);
 
-  // Promo tap → open the promoted vendor, or filter by the promoted cuisine.
+  // Promo tap → go to exactly what the promo covers: the item, the category
+  // within that vendor's menu, or the vendor itself. A promo with no vendor is a
+  // generic announcement and falls back to filtering the browse by cuisine.
   function onPromo(p: Promo) {
-    if (p.vendorId) {
-      const r = list.find((x) => x.id === p.vendorId);
-      if (r) { router.push({ pathname: '/(shop)/menu', params: { restaurantId: r.id, name: r.name, lat: String(r.lat), lng: String(r.lng), vendorType: r.vendorType } }); return; }
+    const r = p.vendorId ? list.find((x) => x.id === p.vendorId) : undefined;
+    if (r) {
+      const base = {
+        restaurantId: r.id, name: r.name,
+        lat: String(r.lat), lng: String(r.lng), vendorType: r.vendorType,
+      };
+      if (p.scope === 'ITEM' && p.menuItemId) {
+        // Via the menu, which already loads the items and opens the right one —
+        // the item screen needs name and price, which the promo doesn't carry.
+        router.push({ pathname: '/(shop)/menu', params: { ...base, focusItem: p.menuItemId } } as any);
+        return;
+      }
+      if (p.scope === 'CATEGORY' && p.category) {
+        // The menu screen scrolls to and highlights this category.
+        router.push({ pathname: '/(shop)/menu', params: { ...base, focusCategory: p.category } } as any);
+        return;
+      }
+      router.push({ pathname: '/(shop)/menu', params: base } as any);
+      return;
     }
     if (p.category) { filter.setCategory(p.category); setVType('RESTAURANT'); }
   }
@@ -222,16 +240,41 @@ function DealsCarousel({ c, promos, onPromo }: any) {
         ref={ref} horizontal pagingEnabled showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={(e) => { const i = Math.round(e.nativeEvent.contentOffset.x / screenW); idx.current = i; setActive(i); }}
       >
-        {promos.map((p: any) => (
-          <View key={p.id} style={{ width: screenW, paddingHorizontal: 16 }}>
-            <TouchableOpacity activeOpacity={0.9} onPress={() => onPromo(p)}
-              style={{ height: 124, borderRadius: 22, padding: 20, backgroundColor: p.color || c.primary, justifyContent: 'center' }}>
-              <Ionicons name="pricetags" size={24} color="#fff" />
+        {promos.map((p: Promo) => {
+          const terms = promoTerms(p);
+          // Text sits on a dark scrim over an image so it stays readable on any
+          // artwork; without an image the card falls back to its brand colour.
+          const body = (
+            <>
+              <Row style={{ gap: 8, alignItems: 'center' }}>
+                <Ionicons name="pricetags" size={20} color="#fff" />
+                {terms ? (
+                  <View style={{ backgroundColor: 'rgba(255,255,255,0.22)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>{terms}</Text>
+                  </View>
+                ) : null}
+              </Row>
               <Text style={{ color: '#fff', fontSize: 23, fontWeight: '800', marginTop: 8 }} numberOfLines={1}>{p.title}</Text>
-              {p.subtitle ? <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13.5, marginTop: 2 }} numberOfLines={1}>{p.subtitle}</Text> : null}
-            </TouchableOpacity>
-          </View>
-        ))}
+              {p.subtitle ? <Text style={{ color: 'rgba(255,255,255,0.92)', fontSize: 13.5, marginTop: 2 }} numberOfLines={1}>{p.subtitle}</Text> : null}
+            </>
+          );
+          return (
+            <View key={p.id} style={{ width: screenW, paddingHorizontal: 16 }}>
+              <TouchableOpacity activeOpacity={0.9} onPress={() => onPromo(p)}
+                style={{ height: 124, borderRadius: 22, overflow: 'hidden', backgroundColor: p.color || c.primary }}>
+                {p.imageUrl ? (
+                  <ImageBackground source={{ uri: p.imageUrl }} resizeMode="cover" style={{ flex: 1 }}>
+                    <View style={{ flex: 1, padding: 20, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.42)' }}>
+                      {body}
+                    </View>
+                  </ImageBackground>
+                ) : (
+                  <View style={{ flex: 1, padding: 20, justifyContent: 'center' }}>{body}</View>
+                )}
+              </TouchableOpacity>
+            </View>
+          );
+        })}
       </ScrollView>
       {promos.length > 1 && (
         <Row style={{ justifyContent: 'center', gap: 6, marginTop: 10 }}>
