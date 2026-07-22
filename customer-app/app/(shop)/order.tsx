@@ -1,0 +1,307 @@
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, RefreshControl, ScrollView, TextInput, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { shopApi, Order, QueuePosition } from '../../src/api/shop';
+import { walletApi } from '../../src/api/wallet';
+import { wsClient } from '../../src/realtime/wsClient';
+import { useTheme } from '../../src/theme/ThemeProvider';
+import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
+import { useProfileStore } from '../../src/store/profileStore';
+import { apiBaseUrl } from '../../src/lib/host';
+import { Badge, Card, Divider, Row } from '../../src/components/ui';
+
+const STAGES: Record<string, string[]> = {
+  DELIVERY: ['PLACED', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'],
+  PICKUP: ['PLACED', 'CONFIRMED', 'PREPARING', 'READY', 'COMPLETED'],
+  WALKIN: ['PLACED', 'CONFIRMED', 'PREPARING', 'READY', 'COMPLETED'],
+};
+
+function statusInfo(status: string, mode: string): { title: string; sub: string; icon: any } {
+  switch (status) {
+    case 'PLACED': return { title: 'Order placed', sub: 'Waiting for the vendor to confirm', icon: 'receipt-outline' };
+    case 'CONFIRMED': return { title: 'Order confirmed', sub: 'The vendor is getting started', icon: 'checkmark-circle-outline' };
+    case 'PREPARING': return { title: 'Preparing your order', sub: 'Your order is being prepared', icon: 'cube-outline' };
+    case 'READY': return { title: mode === 'DELIVERY' ? 'Ready for pickup' : 'Ready', sub: mode === 'DELIVERY' ? 'A courier is being assigned' : mode === 'PICKUP' ? 'Head over to collect it' : 'Listen for your number', icon: 'bag-check-outline' };
+    case 'OUT_FOR_DELIVERY': return { title: 'On the way', sub: 'Your courier is heading to you', icon: 'bicycle' };
+    case 'COMPLETED': return { title: mode === 'DELIVERY' ? 'Delivered' : 'Completed', sub: 'Thanks for your order!', icon: 'checkmark-done' };
+    case 'CANCELLED': return { title: 'Order cancelled', sub: 'This order was cancelled', icon: 'close-circle-outline' };
+    default: return { title: status, sub: '', icon: 'ellipse-outline' };
+  }
+}
+
+function eta(status: string): string {
+  switch (status) {
+    case 'PLACED': case 'CONFIRMED': return 'Estimated 20–30 min';
+    case 'PREPARING': return 'Estimated 15–20 min';
+    case 'READY': return 'Almost there';
+    case 'OUT_FOR_DELIVERY': return 'Arriving in ~10 min';
+    default: return '';
+  }
+}
+
+export default function OrderScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { colors: c } = useTheme();
+  const { orderId } = useLocalSearchParams<{ orderId: string }>();
+  const [order, setOrder] = useState<Order | null>(null);
+  const [queue, setQueue] = useState<QueuePosition | null>(null);
+  const [courierLoc, setCourierLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [isStale, setIsStale] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [myRating, setMyRating] = useState(0);
+  const payMethod = usePaymentStore((s) => s.selected);
+  const savedMethods = usePaymentStore((s) => s.cards);
+  const profilePhone = useProfileStore((s) => s.phone);
+  const [momoNumber, setMomoNumber] = useState(profilePhone || '');
+  const [paying, setPaying] = useState(false);
+  const [payRef, setPayRef] = useState<string | null>(null); // pending Paystack reference
+  const staleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function load() {
+    try {
+      const o = await shopApi.getOrder(orderId);
+      setOrder(o);
+      if (o.mode === 'WALKIN') setQueue(await shopApi.queuePosition(orderId).catch(() => null));
+    } catch {}
+  }
+  useEffect(() => { load(); }, [orderId]);
+
+  // Auto-poll status so the tracker advances live as the restaurant moves it,
+  // until the order reaches a terminal state.
+  useEffect(() => {
+    if (!order) return;
+    if (order.status === 'COMPLETED' || order.status === 'CANCELLED') return;
+    const poll = setInterval(load, 4000);
+    return () => clearInterval(poll);
+  }, [order?.status, orderId]);
+
+  useEffect(() => {
+    if (!order || order.mode !== 'DELIVERY' || order.status !== 'OUT_FOR_DELIVERY') return;
+    wsClient.subscribeToDelivery(orderId, (loc) => {
+      setCourierLoc({ lat: loc.lat, lng: loc.lng });
+      setIsStale(false);
+      if (staleTimerRef.current) clearInterval(staleTimerRef.current);
+      staleTimerRef.current = setInterval(() => setIsStale(true), 6000);
+    });
+    return () => { if (staleTimerRef.current) clearInterval(staleTimerRef.current); };
+  }, [order?.status]);
+
+  useEffect(() => {
+    if (!order || order.mode !== 'WALKIN') return;
+    wsClient.subscribeToQueue(order.restaurantId, () => { shopApi.queuePosition(orderId).then(setQueue).catch(() => {}); });
+  }, [order?.restaurantId]);
+
+  async function rate(score: number) {
+    setMyRating(score);
+    try { await shopApi.rateOrder(orderId, score); Alert.alert('Thanks for rating!'); } catch {}
+  }
+
+  // Cash awaits the vendor/courier's confirmation — poll until PAID.
+  useEffect(() => {
+    if (!order || order.paymentStatus !== 'AWAITING') return;
+    const poll = setInterval(load, 4000);
+    return () => clearInterval(poll);
+  }, [order?.paymentStatus, orderId]);
+
+  // Wallet/cash pay in one tap; Paystack (added card/momo) opens the checkout, then verifies.
+  async function pay() {
+    if (!order) return;
+    setPaying(true);
+    try {
+      if (viaPaystack && !payRef) {
+        const { reference, authorizationUrl } = await walletApi.payInitialize(Number(order.total));
+        const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
+        setPayRef(reference);
+        await Linking.openURL(url);
+      } else {
+        setOrder(await shopApi.payOrder(orderId, payMethod, payRef ?? undefined));
+        setPayRef(null);
+      }
+    } catch (e: any) {
+      Alert.alert('Payment', e?.response?.data?.message ?? 'Please try again');
+    } finally { setPaying(false); }
+  }
+
+  if (!order) return <View style={{ flex: 1, backgroundColor: c.bg }} />;
+
+  const paid = order.paymentStatus === 'PAID';
+  const awaitingCash = order.paymentStatus === 'AWAITING';
+  const methodMeta = [...PAY_METHODS, ...savedMethods].find((m) => m.key === payMethod) ?? PAY_METHODS[0];
+  const viaPaystack = isPaystack(payMethod);
+  const confirmer = order.mode === 'DELIVERY' ? 'courier' : 'vendor';
+
+  const stages = STAGES[order.mode] ?? STAGES.PICKUP;
+  const cancelled = order.status === 'CANCELLED';
+  const currentIdx = stages.indexOf(order.status);
+  const info = statusInfo(order.status, order.mode);
+  const etaText = eta(order.status);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <Row style={{ paddingTop: insets.top + 10, paddingHorizontal: 16, gap: 12, marginBottom: 8 }}>
+        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={26} color={c.text} />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: c.text, flex: 1 }} numberOfLines={1}>{order.restaurantName}</Text>
+      </Row>
+
+      <ScrollView showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ padding: 16, paddingTop: 8, paddingBottom: insets.bottom + 24 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
+
+        {/* Status hero */}
+        <Card>
+          <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              {etaText && !cancelled ? <Text style={{ fontSize: 12, fontWeight: '700', color: c.primary, textTransform: 'uppercase', letterSpacing: 0.6 }}>{etaText}</Text> : null}
+              <Text style={{ fontSize: 23, fontWeight: '800', color: c.text, marginTop: 4 }}>{info.title}</Text>
+              <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 4, lineHeight: 20 }}>{info.sub}</Text>
+            </View>
+            <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: cancelled ? `${c.danger}1A` : c.primarySoft, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name={info.icon} size={28} color={cancelled ? c.danger : c.primary} />
+            </View>
+          </Row>
+
+          {!cancelled && (
+            <Row style={{ gap: 5, marginTop: 18 }}>
+              {stages.map((s, i) => (
+                <View key={s} style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: i <= currentIdx ? c.primary : c.border }} />
+              ))}
+            </Row>
+          )}
+        </Card>
+
+        {/* Courier */}
+        {order.mode === 'DELIVERY' && order.status === 'OUT_FOR_DELIVERY' && (
+          <Card>
+            <Row style={{ gap: 14 }}>
+              <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="bicycle" size={24} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>Your courier is on the way</Text>
+                <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }}>Delivering your order to you</Text>
+              </View>
+              <Badge label={isStale ? 'Stale' : 'Live'} color={isStale ? c.textMuted : c.success} />
+            </Row>
+            {courierLoc && (
+              <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 12 }}>
+                Courier near {courierLoc.lat.toFixed(4)}, {courierLoc.lng.toFixed(4)}
+              </Text>
+            )}
+          </Card>
+        )}
+
+        {/* Walk-in queue */}
+        {order.mode === 'WALKIN' && queue && (
+          <Card>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Your position in the queue</Text>
+            <Text style={{ fontSize: 56, fontWeight: '800', color: c.primary, textAlign: 'center', marginVertical: 6 }}>#{queue.position}</Text>
+            <View style={{ alignItems: 'center' }}><Badge label={queue.status} /></View>
+          </Card>
+        )}
+
+        {/* Summary */}
+        <Card>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 }}>Order summary</Text>
+          {order.items.map((item, i) => (
+            <Row key={i} style={{ justifyContent: 'space-between', paddingVertical: 5 }}>
+              <Text style={{ flex: 1, color: c.text }}>{item.name} × {item.qty}</Text>
+              <Text style={{ color: c.text, fontWeight: '600' }}>GH₵ {(item.unitPrice * item.qty).toFixed(2)}</Text>
+            </Row>
+          ))}
+          <Divider />
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Text style={{ color: c.textMuted }}>Subtotal</Text>
+            <Text style={{ color: c.text }}>GH₵ {(order.total - (order.serviceFee ?? 0) - order.deliveryFee).toFixed(2)}</Text>
+          </Row>
+          <Row style={{ justifyContent: 'space-between', marginTop: 6 }}>
+            <Text style={{ color: c.textMuted }}>Service fee</Text>
+            <Text style={{ color: c.text }}>GH₵ {(order.serviceFee ?? 0).toFixed(2)}</Text>
+          </Row>
+          {order.mode === 'DELIVERY' && (
+            <Row style={{ justifyContent: 'space-between', marginTop: 6 }}>
+              <Text style={{ color: c.textMuted }}>Delivery fee</Text>
+              <Text style={{ color: c.text }}>GH₵ {order.deliveryFee.toFixed(2)}</Text>
+            </Row>
+          )}
+          <Row style={{ justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: c.border }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>Total</Text>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: c.primary }}>GH₵ {order.total.toFixed(2)}</Text>
+          </Row>
+        </Card>
+
+        {/* Payment */}
+        {order.status === 'COMPLETED' && (
+          <Card>
+            {paid ? (
+              <Row style={{ justifyContent: 'center', gap: 8 }}>
+                <Ionicons name="checkmark-circle" size={18} color={c.success} />
+                <Text style={{ fontSize: 14.5, fontWeight: '700', color: c.success }}>Payment received · {methodMeta.label}</Text>
+              </Row>
+            ) : (
+              <>
+                <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>Pay GH₵ {order.total.toFixed(2)}</Text>
+                  <TouchableOpacity onPress={() => router.push('/wallet' as any)}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: c.primary }}>Change · {methodMeta.label}</Text>
+                  </TouchableOpacity>
+                </Row>
+
+                {viaPaystack && (
+                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>
+                    {payRef
+                      ? 'Finish paying in the Paystack checkout, then tap Verify to confirm.'
+                      : `You’ll pay GH₵ ${order.total.toFixed(2)} securely via Paystack (${methodMeta.label}).`}
+                  </Text>
+                )}
+                {payMethod === 'wallet' && (
+                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>Pay from your GoZone Wallet balance.</Text>
+                )}
+                {payMethod === 'cash' && awaitingCash && (
+                  <Row style={{ gap: 10, alignItems: 'center', marginBottom: 6 }}>
+                    <ActivityIndicator color={c.primary} />
+                    <Text style={{ fontSize: 13.5, color: c.text, flex: 1 }}>Pay the {confirmer} in cash — waiting for them to confirm.</Text>
+                  </Row>
+                )}
+                {payMethod === 'cash' && !awaitingCash && (
+                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>Pay the {confirmer} in cash. They’ll confirm it in their app.</Text>
+                )}
+
+                {!(payMethod === 'cash' && awaitingCash) && (
+                  <TouchableOpacity onPress={pay} disabled={paying} activeOpacity={0.9}
+                    style={{ backgroundColor: c.primary, borderRadius: 999, paddingVertical: 14, alignItems: 'center', opacity: paying ? 0.6 : 1 }}>
+                    <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>
+                      {paying ? 'Processing…'
+                        : viaPaystack ? (payRef ? 'Verify payment' : `Pay with ${methodMeta.label}`)
+                        : payMethod === 'cash' ? 'Pay with cash'
+                        : `Pay GH₵ ${order.total.toFixed(2)}`}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </Card>
+        )}
+
+        {/* Rating */}
+        {order.status === 'COMPLETED' && (
+          <Card>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginBottom: 10 }}>How was your order?</Text>
+            <Row style={{ gap: 8 }}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <TouchableOpacity key={n} onPress={() => rate(n)} activeOpacity={0.7}>
+                  <Ionicons name={n <= myRating ? 'star' : 'star-outline'} size={32} color={c.warning} />
+                </TouchableOpacity>
+              ))}
+            </Row>
+          </Card>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+

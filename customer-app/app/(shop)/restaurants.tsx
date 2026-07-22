@@ -1,0 +1,256 @@
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Dimensions, Image, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { shopApi, Restaurant, Promo } from '../../src/api/shop';
+import { useTheme } from '../../src/theme/ThemeProvider';
+import { useShopCart } from '../../src/store/shopCart';
+import { useShopFilter, activeFilterCount } from '../../src/store/shopFilter';
+import { useFavourites } from '../../src/store/favouritesStore';
+import { restaurantMeta, distanceKm } from '../../src/data/shopCatalog';
+import { Row } from '../../src/components/ui';
+
+function ratingFor(name: string) { return 4.3 + (name.length % 5) * 0.1; }
+function countFor(name: string) {
+  const n = 600 + (name.length * 317) % 5000;
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k+` : `${Math.round(n / 100) * 100}+`;
+}
+
+// Vendor-type tabs for the shop hub. 'ALL' shows everything; the rest map to a vendorType.
+const VENDOR_TYPES: { key: string; label: string; icon: any }[] = [
+  { key: 'ALL', label: 'All', icon: 'apps-outline' },
+  { key: 'RESTAURANT', label: 'Food', icon: 'fast-food-outline' },
+  { key: 'PHARMACY', label: 'Pharmacy', icon: 'medkit-outline' },
+  { key: 'GROCERY', label: 'Grocery', icon: 'basket-outline' },
+  { key: 'CONVENIENCE', label: 'Convenience', icon: 'storefront-outline' },
+  { key: 'OTHER', label: 'More', icon: 'ellipsis-horizontal' },
+];
+const TYPE_LABEL: Record<string, string> = {
+  RESTAURANT: 'Food', PHARMACY: 'Pharmacy', GROCERY: 'Grocery', CONVENIENCE: 'Convenience', OTHER: 'Shop',
+};
+
+export default function RestaurantsScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { colors: c } = useTheme();
+  const deliveryPlace = useShopCart((s) => s.deliveryPlace);
+  const filter = useShopFilter();
+  const [list, setList] = useState<Restaurant[]>([]);
+  const [promos, setPromos] = useState<Promo[]>([]);
+  const [q, setQ] = useState('');
+  const [vType, setVType] = useState('ALL');
+  const favIds = useFavourites((s) => s.ids);
+  const toggleFav = useFavourites((s) => s.toggle);
+  const [refreshing, setRefreshing] = useState(false);
+  const cat = filter.category; // cuisine category now lives in the Filter page
+
+  async function load() {
+    try { setList(await shopApi.listRestaurants()); } catch {}
+    try { setPromos(await shopApi.listPromos()); } catch {}
+  }
+  useEffect(() => { load(); }, []);
+
+  // Promo tap → open the promoted vendor, or filter by the promoted cuisine.
+  function onPromo(p: Promo) {
+    if (p.vendorId) {
+      const r = list.find((x) => x.id === p.vendorId);
+      if (r) { router.push({ pathname: '/(shop)/menu', params: { restaurantId: r.id, name: r.name, lat: String(r.lat), lng: String(r.lng), vendorType: r.vendorType } }); return; }
+    }
+    if (p.category) { filter.setCategory(p.category); setVType('RESTAURANT'); }
+  }
+
+  // Only show type tabs for types that actually exist in the data (+ All).
+  const typeTabs = VENDOR_TYPES.filter((t) => t.key === 'ALL' || list.some((r) => r.vendorType === t.key));
+  // Cuisine category only applies to food vendors.
+  const showCuisines = vType === 'ALL' || vType === 'RESTAURANT';
+  function pickType(key: string) { setVType(key); filter.setCategory('All'); }
+
+  let shown = list
+    .filter((r) => r.name.toLowerCase().includes(q.toLowerCase()))
+    .filter((r) => vType === 'ALL' || r.vendorType === vType)
+    .filter((r) => !showCuisines || cat === 'All' || restaurantMeta(r.name).categories.includes(cat));
+  if (filter.openNow) shown = shown.filter((r) => r.status === 'OPEN');
+  if (filter.freeDelivery) shown = shown.filter((r) => restaurantMeta(r.name).deliveryFee <= 3);
+  if (filter.favouritesOnly) shown = shown.filter((r) => favIds.includes(r.id));
+  if (filter.sort === 'nearest') shown = [...shown].sort((a, b) => distanceKm(a.lat, a.lng) - distanceKm(b.lat, b.lng));
+  if (filter.sort === 'rating') shown = [...shown].sort((a, b) => ratingFor(b.name) - ratingFor(a.name));
+  if (filter.sort === 'fastest') shown = [...shown].sort((a, b) => a.prepMinutes - b.prepMinutes);
+
+  const fCount = activeFilterCount(filter);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <ScrollView showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingTop: insets.top + 10, paddingBottom: insets.bottom + 24 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
+
+        {/* Location + Orders */}
+        <Row style={{ paddingHorizontal: 16, justifyContent: 'space-between', marginBottom: 16 }}>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/(shop)/address' as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <Ionicons name="location-sharp" size={15} color={c.text} />
+            <View style={{ flex: 1 }}>
+              <Row style={{ gap: 4 }}>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: c.text }} numberOfLines={1}>{deliveryPlace.label}</Text>
+                <Ionicons name="chevron-down" size={13} color={c.textMuted} />
+              </Row>
+              <Text style={{ fontSize: 11.5, color: c.textMuted }} numberOfLines={1}>{deliveryPlace.sub}</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/(shop)/orders' as any)} activeOpacity={0.8}
+            style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: c.surfaceAlt, alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="receipt-outline" size={18} color={c.text} />
+          </TouchableOpacity>
+        </Row>
+
+        {/* Promo cards — admin-controlled, clickable */}
+        {showCuisines && promos.length > 0 && <DealsCarousel c={c} promos={promos} onPromo={onPromo} />}
+
+        {/* Ride / Shop / Parcel */}
+        <Row style={{ paddingHorizontal: 24, gap: 8, marginBottom: 18 }}>
+          <Circle icon="car-sport" label="Ride" onPress={() => router.replace('/(rider)/home' as any)} c={c} />
+          <Circle icon="storefront" label="Shop" active onPress={() => {}} c={c} />
+          <Circle icon="cube" label="Parcel" onPress={() => router.replace('/(parcel)' as any)} c={c} />
+        </Row>
+
+        {/* Search + filter */}
+        <Row style={{ paddingHorizontal: 16, gap: 10, marginBottom: 14 }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: c.surfaceAlt, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12 }}>
+            <Ionicons name="search" size={18} color={c.primary} />
+            <TextInput value={q} onChangeText={setQ} placeholder="Search GoShop" placeholderTextColor={c.textMuted} style={{ flex: 1, fontSize: 15, color: c.text, padding: 0 }} />
+          </View>
+          <TouchableOpacity onPress={() => router.push('/(shop)/filter' as any)} activeOpacity={0.85}
+            style={{ width: 46, height: 46, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: fCount > 0 ? c.primary : c.surfaceAlt }}>
+            <Ionicons name="options" size={20} color={fCount > 0 ? '#fff' : c.primary} />
+            {fCount > 0 && (
+              <View style={{ position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: c.danger, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{fCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </Row>
+
+        {/* Vendor-type tabs — beneath the search bar */}
+        {typeTabs.length > 1 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }} style={{ marginBottom: 16 }}>
+            {typeTabs.map((t) => {
+              const sel = vType === t.key;
+              return (
+                <TouchableOpacity key={t.key} onPress={() => pickType(t.key)} activeOpacity={0.85}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 15, paddingVertical: 10, borderRadius: 999, backgroundColor: sel ? c.primary : c.surface, borderWidth: 1, borderColor: sel ? c.primary : c.border }}>
+                  <Ionicons name={t.icon} size={16} color={sel ? '#fff' : c.text} />
+                  <Text style={{ fontSize: 13.5, fontWeight: '700', color: sel ? '#fff' : c.text }}>{t.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        {/* Vendor cards */}
+        <View style={{ paddingHorizontal: 16 }}>
+          {shown.length === 0 ? (
+            <Text style={{ color: c.textMuted, fontSize: 15, textAlign: 'center', paddingVertical: 40 }}>
+              {filter.favouritesOnly && favIds.length === 0
+                ? 'No favourites yet — tap the heart on a vendor to save it.'
+                : 'No vendors match'}
+            </Text>
+          ) : (
+            shown.map((r) => {
+              const meta = restaurantMeta(r.name);
+              return (
+                <TouchableOpacity key={r.id} activeOpacity={0.9}
+                  onPress={() => router.push({ pathname: '/(shop)/menu', params: { restaurantId: r.id, name: r.name, lat: String(r.lat), lng: String(r.lng), vendorType: r.vendorType } })}
+                  style={{ marginBottom: 22 }}>
+                  <View>
+                    <Image source={{ uri: meta.banner }} style={{ width: '100%', height: 170, borderRadius: 18, backgroundColor: c.surfaceAlt }} />
+                    {meta.promo ? (
+                      <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: c.danger, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 }}>
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{meta.promo}</Text>
+                      </View>
+                    ) : null}
+                    <TouchableOpacity onPress={() => toggleFav(r.id)} activeOpacity={0.8}
+                      style={{ position: 'absolute', top: 12, right: 12, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name={favIds.includes(r.id) ? 'heart' : 'heart-outline'} size={19} color={favIds.includes(r.id) ? c.danger : '#111'} />
+                    </TouchableOpacity>
+                  </View>
+                  <Row style={{ gap: 8, marginTop: 10, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 18, fontWeight: '800', color: c.text, flexShrink: 1 }} numberOfLines={1}>{r.name}</Text>
+                    {r.vendorType !== 'RESTAURANT' && (
+                      <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: c.primarySoft }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: c.primary }}>{TYPE_LABEL[r.vendorType] ?? 'Shop'}</Text>
+                      </View>
+                    )}
+                  </Row>
+                  <Row style={{ gap: 6, marginTop: 4 }}>
+                    <Ionicons name="bicycle" size={14} color={c.textMuted} />
+                    <Text style={{ fontSize: 13.5, color: c.textMuted }}>GH₵ {meta.deliveryFee.toFixed(2)} delivery · {r.prepMinutes} min</Text>
+                  </Row>
+                  <Row style={{ gap: 5, marginTop: 4 }}>
+                    <Text style={{ fontSize: 13.5, color: c.text, fontWeight: '700' }}>{ratingFor(r.name).toFixed(1)}</Text>
+                    <Ionicons name="star" size={13} color={c.text} />
+                    <Text style={{ fontSize: 13.5, color: c.textMuted }}>({countFor(r.name)}) · {distanceKm(r.lat, r.lng).toFixed(1)} km</Text>
+                  </Row>
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+function DealsCarousel({ c, promos, onPromo }: any) {
+  const screenW = Dimensions.get('window').width;
+  const ref = useRef<ScrollView>(null);
+  const idx = useRef(0);
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    if (promos.length < 2) return;
+    const t = setInterval(() => {
+      idx.current = (idx.current + 1) % promos.length;
+      ref.current?.scrollTo({ x: idx.current * screenW, animated: true });
+      setActive(idx.current);
+    }, 5000);
+    return () => clearInterval(t);
+  }, [screenW, promos.length]);
+
+  return (
+    <View style={{ marginBottom: 18 }}>
+      <ScrollView
+        ref={ref} horizontal pagingEnabled showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={(e) => { const i = Math.round(e.nativeEvent.contentOffset.x / screenW); idx.current = i; setActive(i); }}
+      >
+        {promos.map((p: any) => (
+          <View key={p.id} style={{ width: screenW, paddingHorizontal: 16 }}>
+            <TouchableOpacity activeOpacity={0.9} onPress={() => onPromo(p)}
+              style={{ height: 124, borderRadius: 22, padding: 20, backgroundColor: p.color || c.primary, justifyContent: 'center' }}>
+              <Ionicons name="pricetags" size={24} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 23, fontWeight: '800', marginTop: 8 }} numberOfLines={1}>{p.title}</Text>
+              {p.subtitle ? <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13.5, marginTop: 2 }} numberOfLines={1}>{p.subtitle}</Text> : null}
+            </TouchableOpacity>
+          </View>
+        ))}
+      </ScrollView>
+      {promos.length > 1 && (
+        <Row style={{ justifyContent: 'center', gap: 6, marginTop: 10 }}>
+          {promos.map((_: any, i: number) => (
+            <View key={i} style={{ width: i === active ? 18 : 6, height: 6, borderRadius: 3, backgroundColor: i === active ? c.primary : c.border }} />
+          ))}
+        </Row>
+      )}
+    </View>
+  );
+}
+
+function Circle({ icon, label, onPress, active, c }: any) {
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.8} style={{ flex: 1, alignItems: 'center', gap: 8 }}>
+      <View style={{ width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? c.primary : c.surface, borderWidth: 1, borderColor: active ? c.primary : c.border }}>
+        <Ionicons name={icon} size={24} color={active ? '#fff' : c.text} />
+      </View>
+      <Text style={{ fontSize: 12.5, fontWeight: '600', color: c.text }}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
