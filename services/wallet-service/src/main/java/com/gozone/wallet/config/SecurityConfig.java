@@ -42,8 +42,13 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/**").permitAll()
-                // /notify is called service-to-service with a JWT
+                .requestMatchers("/actuator/**", "/error").permitAll()
+                // Settlement + notify are internal service-to-service calls guarded by an
+                // X-Internal-Key header in the controller, not a user JWT.
+                .requestMatchers("/commission", "/settle/**", "/notify/**", "/pay/verify").permitAll()
+                // Sandbox checkout page is opened in the device browser (no JWT); the
+                // real crediting still requires an authenticated /topup/verify call.
+                .requestMatchers("/mock-checkout").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtFilter(), UsernamePasswordAuthenticationFilter.class)
@@ -53,6 +58,11 @@ public class SecurityConfig {
     @Bean
     public OncePerRequestFilter jwtFilter() {
         return new OncePerRequestFilter() {
+            // Also run on the internal ERROR dispatch so thrown exceptions render with their
+            // real status + message instead of an empty 403 (the SecurityContext is per-request).
+            @Override
+            protected boolean shouldNotFilterErrorDispatch() { return false; }
+
             @Override
             protected void doFilterInternal(HttpServletRequest req,
                                             HttpServletResponse res,

@@ -2,6 +2,8 @@ server:
   port: 8084
   servlet:
     context-path: /wallet
+  error:
+    include-message: always   # surface ResponseStatusException reasons in the JSON body
 
 spring:
   application:
@@ -35,10 +37,16 @@ management:
 
 app:
   jwt:
-    secret: ${JWT_SECRET:gozone-super-secret-jwt-key-minimum-256-bits-padpadpad}
+    secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
+  internal:
+    key: ${INTERNAL_KEY}   # required — shared secret for service-to-service settlement (no default)
   expo:
     access-token: ${EXPO_ACCESS_TOKEN:}
     push-url: https://exp.host/--/api/v2/push/send
+  paystack:
+    # "mock" (default) = no external calls, sandbox checkout. Set a real sk_test_… / sk_live_…
+    # key via the PAYSTACK_SECRET_KEY env var to hit the real Paystack API. Never hardcode a key.
+    secret-key: ${PAYSTACK_SECRET_KEY:mock}
 
 logging:
   level:
