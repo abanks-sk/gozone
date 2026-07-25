@@ -14,6 +14,7 @@ export default function VerifyOtpScreen() {
   const router = useRouter();
   const { verifyOtp, verifyEmailOtp, fetchMe } = useAuthStore();
   const setProfile = useProfileStore((s) => s.setProfile);
+  const setFromServer = useProfileStore((s) => s.setFromServer);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -27,16 +28,18 @@ export default function VerifyOtpScreen() {
       if (isEmail) await verifyEmailOtp(target, code);
       else await verifyOtp(target, code);
       // Start from a clean slate so no previous account's data (recents, cart, profile)
-      // bleeds into this session, then seed this user's own profile.
+      // bleeds into this session, then seed this user's own profile from the server —
+      // the same call works for sign-up and login, since sign-up already sent the
+      // name/username to /auth/register.
       await clearUserData();
       const contact = isEmail ? { email: target } : { phone: target };
-      if (name) {
-        // Sign-up: use the name (and optional username) just entered.
-        setProfile({ name, ...(username ? { username } : {}), ...contact });
+      const me = await fetchMe();
+      if (me.name || me.phone || me.email) {
+        setFromServer(me);
       } else {
-        // Login: pull the real name/email from the backend profile.
-        const me = await fetchMe();
-        setProfile({ name: me.name ?? '', email: me.email ?? (isEmail ? target : ''), ...(isEmail ? {} : { phone: target }) });
+        // /auth/me didn't answer (offline?) — fall back to what we know locally so the
+        // app isn't nameless; the account screen refreshes from the server on open.
+        setProfile({ name: name ?? '', ...(username ? { username } : {}), ...contact });
       }
       const newRole = useAuthStore.getState().role;
       router.replace(roleHome(newRole) as any);

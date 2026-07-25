@@ -55,6 +55,9 @@ export default function AuthEntryScreen() {
     let id = phone.trim();
     if (isSignup && !name.trim()) return Alert.alert('Enter your name');
     if (isSignup && username.trim().length < 3) return Alert.alert('Choose a username', 'Your username must be at least 3 characters.');
+    // Same rule the server enforces, so a bad character is caught before the round-trip.
+    if (isSignup && !/^[a-z0-9._]{3,30}$/.test(username.trim().toLowerCase()))
+      return Alert.alert('Choose a username', 'Use only letters, numbers, dots and underscores.');
     if (!id) return Alert.alert('Enter a phone number');
     // Ghanaian mobile numbers only — validate + canonicalise to +233… before sending.
     const gh = normalizeGhPhone(id);

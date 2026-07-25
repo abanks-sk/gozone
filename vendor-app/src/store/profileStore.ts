@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { storage } from '../lib/storage';
 
-// A local cache of the driver's server profile (GET/PATCH /auth/me), persisted and
-// user-scoped (cleared on logout/login via lib/session.ts) so the name, avatar and the
-// phone sent with ride offers render instantly. auth-service is the source of truth.
+// A local cache of the vendor owner's personal server profile (GET/PATCH /auth/me),
+// persisted and user-scoped (cleared on logout/login via lib/session.ts). This is the
+// person, not the business — the shop's own details live in businessStore/vendorStore.
+// auth-service is the source of truth.
 export interface ProfileData {
   name: string;
   username: string;
@@ -12,7 +13,7 @@ export interface ProfileData {
 }
 
 const DEFAULTS: ProfileData = { name: '', username: '', email: '', phone: '' };
-const KEY = 'driverProfile';
+const KEY = 'vendorProfile';
 
 /** The subset of `GET /auth/me` this cache mirrors (nulls mean "not set on the account"). */
 export interface ServerProfile {
@@ -55,5 +56,5 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 }));
 
 export function initial(name: string): string {
-  return (name.trim()[0] ?? 'D').toUpperCase();
+  return (name.trim()[0] ?? 'V').toUpperCase();
 }

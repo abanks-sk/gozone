@@ -6,34 +6,35 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../src/theme/ThemeProvider';
 import { useAuthStore } from '../src/store/authStore';
 import { useProfileStore } from '../src/store/profileStore';
+import { normalizeGhPhone } from '../src/lib/phone';
 import { Btn, Row } from '../src/components/ui';
 
-// Adds a login email to a phone-verified vendor account:
-//   step 1 — enter email + create a password  → a 6-digit code is emailed
-//   step 2 — enter that code                  → the email is verified and attached
-export default function AddEmailScreen() {
+// Adds or changes the phone number on an account:
+//   step 1 — enter the new Ghanaian number → a 6-digit code is texted to it
+//   step 2 — enter that code               → the verified number replaces the old one
+// The number is only attached after the code checks out, so nobody can move their
+// account onto a line they don't control.
+export default function AddPhoneScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
-  const startAddEmail = useAuthStore((s) => s.startAddEmail);
-  const verifyAddEmail = useAuthStore((s) => s.verifyAddEmail);
+  const startAddPhone = useAuthStore((s) => s.startAddPhone);
+  const verifyAddPhone = useAuthStore((s) => s.verifyAddPhone);
   const setProfile = useProfileStore((s) => s.setProfile);
+  const current = useProfileStore((s) => s.phone);
 
   const [step, setStep] = useState<'details' | 'code'>('details');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
+  const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function sendCode() {
-    const e = email.trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return Alert.alert('Invalid email', 'Enter a valid email address.');
-    if (password.length < 6) return Alert.alert('Weak password', 'Password must be at least 6 characters.');
-    if (password !== confirm) return Alert.alert('Passwords don’t match', 'Re-enter the same password.');
+    const e164 = normalizeGhPhone(phone);
+    if (!e164) return Alert.alert('Invalid number', 'Enter a valid Ghanaian mobile number (e.g. 024 123 4567).');
+    if (e164 === current) return Alert.alert('Same number', 'That is already the number on your account.');
     setBusy(true);
     try {
-      await startAddEmail(e, password);
+      await startAddPhone(e164);
       setStep('code');
     } catch (err: any) {
       Alert.alert('Could not send code', err?.response?.data?.message ?? 'Please try again.');
@@ -41,13 +42,14 @@ export default function AddEmailScreen() {
   }
 
   async function confirmCode() {
-    const e = email.trim().toLowerCase();
-    if (code.trim().length < 4) return Alert.alert('Enter the code', 'Type the 6-digit code we emailed you.');
+    const e164 = normalizeGhPhone(phone);
+    if (!e164) return;
+    if (code.trim().length < 6) return Alert.alert('Enter the code', 'Type the 6-digit code we texted you.');
     setBusy(true);
     try {
-      await verifyAddEmail(e, code.trim());
-      setProfile({ email: e });
-      Alert.alert('Email verified', 'You can now log in with your email and password.', [
+      await verifyAddPhone(e164, code.trim());
+      setProfile({ phone: e164 });
+      Alert.alert('Number verified', `${e164} is now the number on your account.`, [
         { text: 'Done', onPress: () => router.back() },
       ]);
     } catch (err: any) {
@@ -65,27 +67,22 @@ export default function AddEmailScreen() {
             <TouchableOpacity onPress={() => (step === 'code' ? setStep('details') : router.back())} activeOpacity={0.7}>
               <Ionicons name="chevron-back" size={26} color={c.text} />
             </TouchableOpacity>
-            <Text style={{ fontSize: 22, fontWeight: '800', color: c.text }}>Add an email</Text>
+            <Text style={{ fontSize: 22, fontWeight: '800', color: c.text }}>
+              {current ? 'Change your number' : 'Add a phone number'}
+            </Text>
           </Row>
 
           {step === 'details' ? (
             <>
               <Text style={{ fontSize: 13.5, color: c.textMuted, lineHeight: 20, marginBottom: 18 }}>
-                Add an email and password so you can also sign in without your phone. We’ll email you a
-                6-digit code to confirm it’s yours.
+                {current
+                  ? `Your account currently uses ${current}. Enter the new number and we’ll text it a 6-digit code to confirm it’s yours.`
+                  : 'Enter your mobile number and we’ll text you a 6-digit code to confirm it’s yours.'}
               </Text>
 
-              <Text style={section(c)}>Email address</Text>
-              <Field value={email} onChangeText={setEmail} placeholder="you@email.com" icon="mail-outline"
-                keyboardType="email-address" autoCapitalize="none" autoComplete="email" c={c} />
-
-              <Text style={section(c)}>Create a password</Text>
-              <Field value={password} onChangeText={setPassword} placeholder="At least 6 characters"
-                icon="lock-closed-outline" secureTextEntry autoCapitalize="none" c={c} />
-
-              <Text style={section(c)}>Confirm password</Text>
-              <Field value={confirm} onChangeText={setConfirm} placeholder="Re-enter password"
-                icon="lock-closed-outline" secureTextEntry autoCapitalize="none" c={c} />
+              <Text style={section(c)}>New phone number</Text>
+              <Field value={phone} onChangeText={setPhone} placeholder="024 123 4567" icon="call-outline"
+                keyboardType="phone-pad" autoComplete="tel" c={c} />
 
               <View style={{ height: 16 }} />
               <Btn label={busy ? 'Sending…' : 'Send verification code'} onPress={sendCode} loading={busy} />
@@ -94,7 +91,7 @@ export default function AddEmailScreen() {
             <>
               <Text style={{ fontSize: 13.5, color: c.textMuted, lineHeight: 20, marginBottom: 18 }}>
                 Enter the 6-digit code we sent to{' '}
-                <Text style={{ color: c.text, fontWeight: '700' }}>{email.trim().toLowerCase()}</Text>.
+                <Text style={{ color: c.text, fontWeight: '700' }}>{normalizeGhPhone(phone)}</Text>.
               </Text>
 
               <Text style={section(c)}>Verification code</Text>
@@ -102,7 +99,7 @@ export default function AddEmailScreen() {
                 placeholder="123456" icon="keypad-outline" keyboardType="number-pad" c={c} />
 
               <View style={{ height: 16 }} />
-              <Btn label={busy ? 'Verifying…' : 'Verify email'} onPress={confirmCode} loading={busy} />
+              <Btn label={busy ? 'Verifying…' : 'Verify number'} onPress={confirmCode} loading={busy} />
 
               <TouchableOpacity onPress={sendCode} disabled={busy} activeOpacity={0.7} style={{ marginTop: 14, alignItems: 'center' }}>
                 <Text style={{ fontSize: 13.5, fontWeight: '600', color: c.primary }}>Resend code</Text>

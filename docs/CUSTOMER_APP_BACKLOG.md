@@ -53,6 +53,13 @@ Tags: **[bug]** broken/wrong behaviour · **[feat]** new feature · **[design]**
   **Username** field (below Full name); it's passed through verify-otp and seeds `profileStore.username`
   (local mock, consistent with the account editor — no backend username for customers). Blank still shows
   "Passenger".
+  **Update:** usernames are now **real and server-side** — `/auth/register` already persisted them, and
+  `PATCH /auth/me` edits them with a uniqueness check (409 if taken). `profileStore` is just a cache.
+- ☑ **[feat][backend] Account edits hit the backend** — DONE: **`PATCH /auth/me`** (name + username)
+  replaces the local-only editor; the account screen re-reads `/auth/me` on focus and surfaces server
+  errors. **Phone is no longer a free-text field** — like email it's a verified credential, changed via
+  the new **`app/add-phone.tsx`** (SMS code → swap). Driver and vendor apps got the same treatment
+  (vendor gained a personal account screen; its business details stay separate).
 
 ## 2. Brand / visual
 - ☑ **[design] Glow side** — standardized all customer brand screens (welcome/register/verify-otp) to

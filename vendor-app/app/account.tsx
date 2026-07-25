@@ -78,13 +78,17 @@ export default function AccountScreen() {
           <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
             <Ionicons name="chevron-back" size={26} color={c.text} />
           </TouchableOpacity>
-          <Text style={{ fontSize: 22, fontWeight: '800', color: c.text }}>Your account</Text>
+          <Text style={{ fontSize: 22, fontWeight: '800', color: c.text }}>Your details</Text>
         </Row>
 
         {/* Avatar */}
         <View style={{ alignItems: 'center', marginBottom: 22 }}>
           <Avatar label={initial(name)} size={84} />
-          <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 10 }}>Driver · GoZone</Text>
+          <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 10 }}>Vendor · GoZone</Text>
+          <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 6, textAlign: 'center' }}>
+            These are your personal sign-in details. Your shop’s name and address live under
+            Business details.
+          </Text>
         </View>
 
         <Text style={section(c)}>Full name</Text>

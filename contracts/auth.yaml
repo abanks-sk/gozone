@@ -170,6 +170,37 @@ paths:
                 $ref: '#/components/schemas/UserResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [auth]
+      summary: Edit your own display name / username
+      description: >
+        Phone and email are login credentials and are not editable here — they change
+        through /me/phone and /me/email, which verify the new value with a code first.
+        Omitted fields are left unchanged; a blank value is rejected.
+      operationId: updateProfile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Blank name, or a malformed / too-short username
+        '403':
+          description: Admin usernames are super-admin managed
+        '409':
+          description: That username is already taken
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /admin/login:
     post:
@@ -561,6 +592,20 @@ components:
         refreshToken:
           type: string
 
+    UpdateProfileRequest:
+      type: object
+      description: Fields omitted (null) are left unchanged.
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+          pattern: '^[a-z0-9._]{3,30}$'
+          description: Lower-cased server-side; unique across all accounts
+
     UserResponse:
       type: object
       properties:
@@ -574,6 +619,9 @@ components:
           type: string
           nullable: true
         name:
+          type: string
+          nullable: true
+        username:
           type: string
           nullable: true
         role:

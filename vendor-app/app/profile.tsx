@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../src/store/authStore';
 import { useVendorStore } from '../src/store/vendorStore';
+import { useProfileStore } from '../src/store/profileStore';
 import { useBusiness, hoursSummary } from '../src/store/businessStore';
 import { useTheme } from '../src/theme/ThemeProvider';
 import { Screen, Card, Avatar, Divider } from '../src/components/ui';
@@ -20,6 +22,15 @@ export default function ProfileScreen() {
   const { mode, setMode } = useTheme();
   const vendor = useVendorStore((s) => s.vendor);
   const business = useBusiness();
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const setFromServer = useProfileStore((s) => s.setFromServer);
+  const profile = useProfileStore();
+
+  // Refresh the owner's account details from the server so the rows below show what's
+  // actually on the account (and not a stale cache from another device).
+  useEffect(() => {
+    fetchMe().then((me) => { if (me.name || me.phone || me.email) setFromServer(me); });
+  }, [fetchMe, setFromServer]);
 
   function confirmLogout() {
     Alert.alert('Log out', 'Sign out of GoZone?', [
@@ -77,13 +88,15 @@ export default function ProfileScreen() {
       {/* Account */}
       <Text style={sectionLabel(c)}>Account</Text>
       <Card>
+        <Row icon="person-outline" label="Your details" hint={profile.name || 'Add'} onPress={() => router.push('/account' as any)} c={c} />
+        <Divider />
         <Row icon="storefront-outline" label="Business details" hint={business.address || 'Add'} onPress={() => router.push('/business' as any)} c={c} />
         <Divider />
         <Row icon="time-outline" label="Opening hours" hint={hoursSummary(business)} onPress={() => router.push('/hours' as any)} c={c} />
         <Divider />
         <Row icon="megaphone-outline" label="Promote my business" onPress={() => router.push('/promote' as any)} c={c} />
         <Divider />
-        <Row icon="mail-outline" label="Sign-in email" hint="Add" onPress={() => router.push('/add-email' as any)} c={c} />
+        <Row icon="mail-outline" label="Sign-in email" hint={profile.email || 'Add'} onPress={() => router.push('/add-email' as any)} c={c} />
         <Divider />
         <Row icon="help-circle-outline" label="Help & support" onPress={() => router.push('/help' as any)} c={c} />
         <Divider />

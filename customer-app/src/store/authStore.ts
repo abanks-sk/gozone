@@ -3,6 +3,20 @@ import api from '../api/client';
 import { storage } from '../lib/storage';
 import { clearUserData } from '../lib/session';
 
+/** The server-side profile (`GET /auth/me`) — the source of truth for account details. */
+export interface MeProfile {
+  name: string | null;
+  username: string | null;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+  status: string | null;
+}
+
+const EMPTY_ME: MeProfile = {
+  name: null, username: null, email: null, phone: null, role: null, status: null,
+};
+
 interface AuthState {
   userId: string | null;
   role: string | null;
@@ -23,7 +37,13 @@ interface AuthState {
   startAddEmail: (email: string, password: string) => Promise<void>;
   /** Settings: step 2 — confirm the emailed code. */
   verifyAddEmail: (email: string, code: string) => Promise<void>;
-  fetchMe: () => Promise<{ name: string | null; email: string | null }>;
+  /** Account: step 1 — a code is texted to the new number. */
+  startAddPhone: (phone: string) => Promise<void>;
+  /** Account: step 2 — confirm the code; the verified number replaces the old one. */
+  verifyAddPhone: (phone: string, code: string) => Promise<void>;
+  fetchMe: () => Promise<MeProfile>;
+  /** Save editable account fields (name / username) to the backend. */
+  updateProfile: (fields: { name?: string; username?: string }) => Promise<MeProfile>;
   logout: () => Promise<void>;
   hydrate: () => Promise<void>;
 }
@@ -78,13 +98,28 @@ export const useAuthStore = create<AuthState>((set) => ({
     await api.post('/auth/me/email/verify', { email, code });
   },
 
+  startAddPhone: async (phone) => {
+    await api.post('/auth/me/phone', { phone });
+  },
+
+  verifyAddPhone: async (phone, code) => {
+    await api.post('/auth/me/phone/verify', { phone, code });
+  },
+
   fetchMe: async () => {
     try {
       const { data } = await api.get('/auth/me');
-      return { name: data?.name ?? null, email: data?.email ?? null };
+      return toProfile(data);
     } catch {
-      return { name: null, email: null };
+      return { ...EMPTY_ME };
     }
+  },
+
+  // Errors are deliberately not swallowed here — the account screen shows the server's
+  // message (e.g. "That username is already taken.").
+  updateProfile: async (fields) => {
+    const { data } = await api.patch('/auth/me', fields);
+    return toProfile(data);
   },
 
   logout: async () => {
@@ -129,6 +164,17 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 }));
+
+function toProfile(data: any): MeProfile {
+  return {
+    name: data?.name ?? null,
+    username: data?.username ?? null,
+    email: data?.email ?? null,
+    phone: data?.phone ?? null,
+    role: data?.role ?? null,
+    status: data?.status ?? null,
+  };
+}
 
 // Persist tokens from a verify/refresh response and mark the session authenticated.
 async function applySession(set: (partial: Partial<AuthState>) => void, data: any) {

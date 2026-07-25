@@ -83,20 +83,14 @@ public class AuthService {
         }
 
         // Username is chosen at sign-up and must be unique across all accounts.
-        String username = req.getUsername() == null ? null : req.getUsername().trim().toLowerCase();
-        if (username != null && !username.isBlank()) {
-            if (username.length() < 3) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Username must be at least 3 characters.");
-            }
-            if (userRepo.existsByUsername(username)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "That username is already taken.");
-            }
-        }
+        String username = req.getUsername() == null || req.getUsername().isBlank()
+            ? null
+            : requireAvailableUsername(req.getUsername(), null);
 
         User user = new User();
         user.setPhone(phone);
         user.setRole(role);
-        if (username != null && !username.isBlank()) {
+        if (username != null) {
             user.setUsername(username);
         }
         if (req.getName() != null && !req.getName().isBlank()) {
@@ -419,6 +413,64 @@ public class AuthService {
         return toUserResponse(user);
     }
 
+    /**
+     * Edit the signed-in user's own display name / username (the account screen).
+     * Phone and email are login credentials and are deliberately not editable here —
+     * they change through {@link #startAddPhone}/{@link #startAddEmail}, which verify
+     * the new value with a code before attaching it.
+     *
+     * A null field is left unchanged; a blank one is a 400 rather than a silent wipe.
+     */
+    public UserResponse updateProfile(String userId, UpdateProfileRequest req) {
+        User user = userRepo.findById(UUID.fromString(userId))
+            .orElseThrow(() -> new IllegalStateException("User not found"));
+
+        if (req.getName() != null) {
+            String name = req.getName().trim();
+            if (name.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Your name can't be empty.");
+            }
+            user.setName(name);
+        }
+
+        if (req.getUsername() != null) {
+            // An admin's username is their login handle for the operator console — changing
+            // it from a client app would be a foot-gun, so it stays admin-managed.
+            if (user.getRole() == User.Role.ADMIN || user.getRole() == User.Role.SUPER_ADMIN) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "An admin username can only be changed by a super admin.");
+            }
+            user.setUsername(requireAvailableUsername(req.getUsername(), user.getId()));
+        }
+
+        userRepo.save(user);
+        log.info("[AUTH] profile updated for user {}", userId);
+        return toUserResponse(user);
+    }
+
+    /**
+     * Canonicalise a username (trimmed, lower-case) and assert it is well-formed and free.
+     * {@code selfId} is the account being edited — its own current username doesn't count
+     * as taken — or null at sign-up.
+     */
+    private String requireAvailableUsername(String raw, UUID selfId) {
+        String username = raw == null ? "" : raw.trim().toLowerCase();
+        if (username.length() < 3) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Username must be at least 3 characters.");
+        }
+        if (!username.matches("^[a-z0-9._]{3,30}$")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Use only letters, numbers, dots and underscores.");
+        }
+        boolean taken = userRepo.findByUsername(username)
+            .map(other -> selfId == null || !other.getId().equals(selfId))
+            .orElse(false);
+        if (taken) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "That username is already taken.");
+        }
+        return username;
+    }
+
     /** Driver submits KYC document references. */
     public KycResponse submitKyc(String userId, KycSubmitRequest req) {
         User user = userRepo.findById(UUID.fromString(userId))
@@ -541,7 +593,8 @@ public class AuthService {
 
     private UserResponse toUserResponse(User u) {
         return new UserResponse(
-            u.getId(), u.getPhone(), u.getEmail(), u.getName(), u.getRole().name(), u.getStatus().name(),
+            u.getId(), u.getPhone(), u.getEmail(), u.getName(), u.getUsername(),
+            u.getRole().name(), u.getStatus().name(),
             u.getVehicleClass() != null ? u.getVehicleClass().name() : null,
             u.getServiceMode() != null ? u.getServiceMode().name() : "BOTH");
     }

@@ -254,6 +254,8 @@ Shop data/stores (in `customer-app/src/`, renamed food→shop this session): `da
 - Add money / Send, "Add payment method", Saved places, Add shortcut, "Choose on map" — "coming soon".
 - **Account edits + payment-method choice are local mock** (`profileStore`/`paymentStore`, persisted) —
   there is **no backend profile API**. RIDER→PASSENGER rename still deferred.
+  *(Superseded — see "Backend profile API" at the end of this file: `PATCH /auth/me` is real now and
+  `profileStore` is only a cache. Payment-method choice is still local.)*
 - **Add-on prices are frontend-only**; the backend order total uses base menu prices (backend has
   no add-on concept).
 - Shop/banner **images load from loremflickr.com** (remote; slow on first load).
@@ -354,8 +356,9 @@ Shop data/stores (in `customer-app/src/`, renamed food→shop this session): `da
    review (approve/reject). Remaining (optional): vendor approval flow; live trip/order counts (need
    aggregation endpoints); richer analytics/charts.
 5. Optional/deferred: real **email authentication** backend; a **dedicated parcel backend** (today
-   parcels reuse `/rides/requests`); real **Add money / Send** wallet ops; **backend profile API**
-   (account edits are local-only); full **RIDER → PASSENGER** backend rename; deeper infra rename
+   parcels reuse `/rides/requests`); real **Add money / Send** wallet ops; ~~backend profile API~~
+   (**DONE** — `PATCH /auth/me`, see the entry at the end of this file); full **RIDER → PASSENGER**
+   backend rename; deeper infra rename
    (`food-service`/`com.gozone.food`/`food_db`/`/food` → shop/vendor) — kept as-is for now since it's
    destructive (DB recreate, full rebuild) and can't be compile-checked locally.
    (Note: ride/parcel **match polling is now DONE** via the new `GET /rides/requests/{id}/status`.)
@@ -1081,6 +1084,41 @@ another full copy — customers saw every dish two or three times. Fixed both en
   vendor-added/edited items are untouched. Verified: two consecutive re-runs insert 0 rows.
 - **Existing duplicates removed** via new **`seed/98_dedupe_menu_items.sql`** (keeps the copy referenced by
   orders, repoints order lines, backs deleted rows up to `menu_items_removed_backup`). 42 → 17 items.
+
+### Backend profile API — account edits are real now (latest) — REBUILD auth-service
+Account details were a **local mock** (`profileStore`) in every app: editing your name or username
+changed nothing on the server, and the account screen's phone field was a free-text box that did
+literally nothing. Now the server owns the profile.
+- **auth-service:** **`PATCH /auth/me`** (`UpdateProfileRequest`: `name`, `username`; null = leave
+  unchanged, blank = 400) + **`username` added to `UserResponse`** (it was never exposed). Username
+  rules are now shared by sign-up and edit via `requireAvailableUsername()`: trimmed + lower-cased,
+  3–30 chars, `[a-z0-9._]`, unique **excluding yourself** (409 if taken). An **admin's** username is
+  their console login handle, so PATCH refuses to change it (403). **No migration** — the columns
+  already existed. Contract `auth.yaml` updated (`UpdateProfileRequest` + the PATCH operation).
+- **Phone/email stay credentials, not text fields.** They change only through their existing
+  verify-by-code flows (`/auth/me/phone` → `/verify`, `/auth/me/email` → `/verify`), which were
+  already built for Google sign-up but had **no UI outside add-email**. The account screen now shows
+  each as a verified row with a Change action.
+- **All three apps:** `authStore` gained `updateProfile()`, `startAddPhone()`, `verifyAddPhone()` and
+  a widened `fetchMe()` returning a full `MeProfile` (name/username/email/phone[/status/class/mode]);
+  `profileStore` is now documented as a **cache** of `/auth/me` with `setFromServer()`. `verify-otp`
+  seeds it from the server for **both** sign-up and login (sign-up already posts the name to
+  `/auth/register`), with the local values as an offline fallback. New **`app/add-phone.tsx`**
+  (enter GH number → SMS code → verified swap) in all three apps.
+- **Customer + driver `account.tsx`:** saves via the API (server error messages surfaced — e.g.
+  "That username is already taken."), re-reads `/auth/me` on focus, Save disabled until something
+  changes, and sends **only changed fields**. **Vendor app got a personal account screen for the
+  first time** (`account.tsx` + `profileStore` + session clearing + `_layout` hydrate) reached from
+  Profile → **Your details**; its identity card stays the *business*, and the profile rows now show
+  the real name/email instead of a hardcoded "Add".
+- **Verified live against the running stack** (not just type-checks): profile GET/PATCH, name-only
+  edit, self-rename no-op, blank name 400, bad charset 400, short username 400, cross-account
+  duplicate 409 (case-insensitive), unauthenticated 401, and the **full phone-change flow** (code →
+  wrong code 400 → correct code swaps the number; taking another account's number 409). The seeded
+  demo phone used for the test was restored and re-verified; seeded riders now have usernames
+  (`ama.mensah`, `kojo.rider`) where they previously had none.
+- All four front-ends type-check clean. **Rebuild auth-service** (`docker compose build auth-service
+  && docker compose up -d auth-service`).
 
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set

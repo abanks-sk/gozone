@@ -62,6 +62,8 @@ function ThemedStack() {
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="account" />
+          <Stack.Screen name="add-email" />
+          <Stack.Screen name="add-phone" />
           <Stack.Screen name="help" />
           <Stack.Screen name="vehicle" />
           <Stack.Screen name="auth/register" />

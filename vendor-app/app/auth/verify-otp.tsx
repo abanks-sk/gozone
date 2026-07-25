@@ -3,6 +3,7 @@ import { Alert, KeyboardAvoidingView, Platform, Text, TouchableOpacity, View } f
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
+import { useProfileStore } from '../../src/store/profileStore';
 import { clearUserData } from '../../src/lib/session';
 import { roleHome } from '../../src/lib/routes';
 import { BrandScreen, GlowOrb, BrandInput, PillButton } from '../../src/components/brand';
@@ -11,7 +12,9 @@ import { brand } from '../../src/theme/tokens';
 export default function VerifyOtpScreen() {
   const { phone, email, channel } = useLocalSearchParams<{ phone?: string; email?: string; channel?: string }>();
   const router = useRouter();
-  const { verifyOtp, verifyEmailOtp } = useAuthStore();
+  const { verifyOtp, verifyEmailOtp, fetchMe } = useAuthStore();
+  const setProfile = useProfileStore((s) => s.setProfile);
+  const setFromServer = useProfileStore((s) => s.setFromServer);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -26,6 +29,11 @@ export default function VerifyOtpScreen() {
       else await verifyOtp(target, code);
       // Start clean so no previous vendor's business selection / onboarding draft bleeds in.
       await clearUserData();
+      // Seed the owner's own account details from the server (sign-up already sent the
+      // name to /auth/register, so one call covers both sign-up and login).
+      const me = await fetchMe();
+      if (me.name || me.phone || me.email) setFromServer(me);
+      else setProfile(isEmail ? { email: target } : { phone: target }); // offline fallback
       const newRole = useAuthStore.getState().role;
       router.replace(roleHome(newRole) as any);
     } catch (e: any) {

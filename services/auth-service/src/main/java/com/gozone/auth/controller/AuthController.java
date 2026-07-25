@@ -85,6 +85,14 @@ public class AuthController {
         return ResponseEntity.ok(authService.me(userId));
     }
 
+    /** Edit your own display name / username. Phone + email change via their verify flows. */
+    @PatchMapping("/me")
+    public ResponseEntity<UserResponse> updateProfile(
+            @AuthenticationPrincipal String userId,
+            @Valid @RequestBody UpdateProfileRequest req) {
+        return ResponseEntity.ok(authService.updateProfile(userId, req));
+    }
+
     // ── Add an email + password to a phone-verified account (Settings) ───────────
 
     /** Step 1: supply email + new password → a verification code is emailed. */

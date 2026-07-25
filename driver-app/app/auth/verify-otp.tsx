@@ -14,6 +14,7 @@ export default function VerifyOtpScreen() {
   const router = useRouter();
   const { verifyOtp, verifyEmailOtp, fetchMe } = useAuthStore();
   const setProfile = useProfileStore((s) => s.setProfile);
+  const setFromServer = useProfileStore((s) => s.setFromServer);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -28,10 +29,12 @@ export default function VerifyOtpScreen() {
       else await verifyOtp(target, code);
       // Start clean so no previous driver's state/onboarding draft bleeds into this session.
       await clearUserData();
-      // Seed this driver's account profile (name from sign-up, else the backend).
+      // Seed this driver's account profile from the server — sign-up already sent the
+      // name to /auth/register, so one call covers both sign-up and login.
       const contact = isEmail ? { email: target } : { phone: target };
-      if (name) setProfile({ name, ...contact });
-      else { const me = await fetchMe(); setProfile({ name: me.name ?? '', ...contact }); }
+      const me = await fetchMe();
+      if (me.name || me.phone || me.email) setFromServer(me);
+      else setProfile({ name: name ?? '', ...contact }); // offline fallback
       const newRole = useAuthStore.getState().role;
       router.replace(roleHome(newRole) as any);
     } catch (e: any) {

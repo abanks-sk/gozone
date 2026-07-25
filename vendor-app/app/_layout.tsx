@@ -9,6 +9,7 @@ import { useAuthStore } from '../src/store/authStore';
 import { useVendorStore } from '../src/store/vendorStore';
 import { useVendorSetup } from '../src/store/vendorSetupStore';
 import { useBusiness } from '../src/store/businessStore';
+import { useProfileStore } from '../src/store/profileStore';
 import '../src/lib/webAlert'; // patches Alert.alert on web (no-op on native)
 
 export default function RootLayout() {
@@ -16,10 +17,11 @@ export default function RootLayout() {
   const hydrateVendor = useVendorStore((s) => s.hydrate);
   const hydrateSetup = useVendorSetup((s) => s.hydrate);
   const hydrateBusiness = useBusiness((s) => s.hydrate);
+  const hydrateProfile = useProfileStore((s) => s.hydrate);
 
   // Rehydrate stored tokens + vendor prefs on cold start. Routing is handled
   // declaratively by app/index.tsx (<Redirect>).
-  useEffect(() => { hydrate(); hydrateVendor(); hydrateSetup(); hydrateBusiness(); }, []);
+  useEffect(() => { hydrate(); hydrateVendor(); hydrateSetup(); hydrateBusiness(); hydrateProfile(); }, []);
 
   return (
     <SafeAreaProvider>
@@ -57,6 +59,9 @@ function ThemedStack() {
           <Stack.Screen name="welcome" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="profile" />
+          <Stack.Screen name="account" />
+          <Stack.Screen name="add-email" />
+          <Stack.Screen name="add-phone" />
           <Stack.Screen name="help" />
           <Stack.Screen name="business" />
           <Stack.Screen name="hours" />

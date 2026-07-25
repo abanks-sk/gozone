@@ -346,7 +346,7 @@ The consumer app. Three surfaces reachable from circular buttons on every home s
 | `(rider)/`  | `home`, `live`, `rides`, `schedule`                                                                                      | Compose a ride, live tracking, history, scheduling |
 | `(shop)/`   | `restaurants`, `menu`, `item`, `checkout`, `order`, `orders`, `address`, `filter`                                        | Browse vendors, cart, checkout, order tracking     |
 | `(parcel)/` | `index`, `details`, `live`                                                                                               | Three-step parcel flow                             |
-| top level   | `search`, `map-picker`, `profile`, `account`, `wallet`, `saved-places`, `help`, `about`, `terms`, `privacy`, `add-email` | Shared utilities                                   |
+| top level   | `search`, `map-picker`, `profile`, `account`, `wallet`, `saved-places`, `help`, `about`, `terms`, `privacy`, `add-email`, `add-phone` | Shared utilities                      |
 
 Notable behaviour:
 
@@ -369,7 +369,7 @@ Notable behaviour:
 | `(driver)/deliveries`                   | Food-delivery courier feed (Okada class only)                                                       |
 | `(driver)/wallet`                       | Earnings: period selector, 7-day chart, ledger                                                      |
 | `onboarding`                            | Gated setup — resumable KYC, then "awaiting approval" polling                                       |
-| `vehicle`, `profile`, `account`, `help` | Driver settings                                                                                     |
+| `vehicle`, `profile`, `account`, `add-email`, `add-phone`, `help` | Driver settings                                                           |
 
 The feed polls every 5 seconds and filters server-side by the driver's **vehicle class** and
 **service mode**, so a driver only ever sees work they can legally take.
@@ -383,7 +383,7 @@ The feed polls every 5 seconds and filters server-side by the driver's **vehicle
 | `(vendor)/menu`                                      | Catalogue: create/edit/delete items with add-on builder (title adapts: Menu ↔ Catalogue)         |
 | `(vendor)/earnings`                                  | Revenue dashboard with period selector and 7-day chart                                           |
 | `promote`                                            | Apply for a promotion (admin approves by activating it)                                          |
-| `onboarding`, `business`, `hours`, `profile`, `help` | Setup and settings                                                                               |
+| `onboarding`, `business`, `hours`, `profile`, `account`, `add-email`, `add-phone`, `help` | Setup and settings. `business`/`hours` are the shop; `account` is the owner's own sign-in details |
 
 ### 6.4 admin-web — GoZone Admin
 
@@ -424,14 +424,15 @@ filter (`JwtAuthFilter`, order `-100`) that:
 Owns identity for every actor on the platform.
 
 **Endpoints** (`/auth/...`): `register`, `login`, `register-email`, `login-email`,
-`login-email-password`, `verify-otp`, `refresh`, `me`, `google`, `me/phone`,
-`me/phone/verify`, `me/email`, `me/email/verify`, `admin/login`, `admins`, `users`,
-`users/{id}/status`, `users/{id}/class`, `me/service-mode`, `driver/kyc` (submit / mine /
-list / review), `delivery-riders/availability` (internal only).
+`login-email-password`, `verify-otp`, `refresh`, `me` (GET profile / PATCH name + username),
+`google`, `me/phone`, `me/phone/verify`, `me/email`, `me/email/verify`, `admin/login`,
+`admins`, `users`, `users/{id}/status`, `users/{id}/class`, `me/service-mode`, `driver/kyc`
+(submit / mine / list / review), `delivery-riders/availability` (internal only).
 
 **Responsibilities**: OTP issuance and verification (with a 5-attempt cap), Ghana phone
 normalisation to E.164, password hashing (BCrypt), JWT minting with `role` and `status`
-claims, role and account-status management, the driver/vendor approval workflow, vehicle-class
+claims, the account profile (name and unique username, plus verified changes of phone and
+email), role and account-status management, the driver/vendor approval workflow, vehicle-class
 assignment, and driver KYC.
 
 ### 7.3 ride-service (port 8082) → `ride_db`
@@ -643,6 +644,28 @@ Transitions are validated server-side; an invalid jump is rejected rather than s
 
 Ghana phone numbers are normalised to E.164 (`0201000001`, `233201000001` and `+233201000001`
 all resolve to one account), validated client-side and server-side.
+
+### The account profile
+
+`GET /auth/me` is the source of truth for account details; `PATCH /auth/me` edits the two
+free-text fields, **name** and **username** (lower-cased, `[a-z0-9._]`, 3–30 characters, unique
+across all accounts — 409 if taken). An admin's username is their console login handle, so it
+stays super-admin managed and the endpoint refuses to change it.
+
+Phone and email are deliberately **not** editable there — they are login credentials, so each
+changes through its own verify-by-code flow, and the new value is only attached once the code
+checks out:
+
+| Change | Step 1                                | Step 2                        |
+| ------ | ------------------------------------- | ----------------------------- |
+| Phone  | `POST /auth/me/phone` → SMS a code    | `POST /auth/me/phone/verify`  |
+| Email  | `POST /auth/me/email` (+ password)    | `POST /auth/me/email/verify`  |
+
+Both reject a value already in use on another account (409). The apps keep a persisted
+`profileStore` cache of this profile so the greeting, avatar and phone render instantly on
+launch, but every write goes to the API first and the account screen re-reads `/auth/me` on
+focus. The cache is user-scoped and wiped by `lib/session.ts` on logout and on every fresh
+login, so no identity leaks between accounts.
 
 ### Roles and the status gate
 
@@ -894,7 +917,7 @@ explain _why_ each one was made is more valuable than pretending they do not exi
 | **KYC verification**           | Placeholder document URLs plus an admin approve/reject toggle                                                     | Real identity verification requires a third-party vendor and legal agreements. The workflow around it is complete and real.                                     |
 | **Payments**                   | Real Paystack integration, with a mock checkout when the key is `mock`                                            | Full PSP behaviour including server-side verification, demonstrable without live funds.                                                                         |
 | **GPS in demos**               | Scripted waypoint streams alongside real device GPS                                                               | A phone sitting on a desk does not move; the scripted stream makes tracking demonstrable indoors.                                                               |
-| **Customer profile edits**     | Local persisted store                                                                                             | There is no backend profile API yet; edits are honest local state, not a fake server call.                                                                      |
+| **Profile cache**              | `PATCH /auth/me` writes through to auth-service, with a persisted local cache in front of it                       | The cache exists for instant first paint and offline reads, not as the record — the server answer always wins and the cache is cleared between accounts.        |
 | **Push notifications**         | Real Expo Push, falling back to a logged SMS stub, recording which channel was used                               | The one genuinely real external integration in the original scope.                                                                                              |
 
 **Things intentionally not built** (documented rather than implemented): station-fill and queue
@@ -1074,7 +1097,6 @@ the passenger requests.
 **Product backlog**
 
 - A dedicated parcel backend (parcels currently reuse `/rides/requests`).
-- A backend profile API (customer account edits are local-only today).
 - Real wallet top-up and withdrawal beyond Paystack top-up.
 - Replacing synchronous settlement with a transactional outbox.
 - Renaming `RIDER` to `PASSENGER` across the backend — deliberately deferred because it is a
