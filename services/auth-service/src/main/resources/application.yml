@@ -60,7 +60,10 @@ management:
 
 app:
   jwt:
-    secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
+    # RS256: only auth-service gets the private key, because only auth-service mints tokens.
+    # Both values are base64 of the DER bytes (single line — see RsaKeys).
+    private-key: ${JWT_PRIVATE_KEY}   # required — auth-service only, never share
+    public-key: ${JWT_PUBLIC_KEY}     # required — safe to distribute; cannot sign
     # Access tokens can't be revoked, so they expire quickly; clients swap the 7-day refresh
     # token (which CAN be revoked — see /auth/logout) for a new one.
     expiry-ms: ${JWT_EXPIRY_MS:3600000}            # 1 hour

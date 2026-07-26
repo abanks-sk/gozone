@@ -70,6 +70,19 @@ COURIER=$(login "+233201000005"); neq "courier login (+…005)"  "$COURIER" ""
 VENDOR=$(login "+233201000004");  neq "vendor login (+…004)"   "$VENDOR" ""
 ADMIN=$(login "+233201000006");   neq "admin login (+…006)"    "$ADMIN" ""
 
+# Tokens must be RS256, not a shared-secret algorithm: only auth-service should be able to
+# mint one. A regression to HS* would silently give every service minting power again.
+eq "access token is RS256"   "$(python -c "
+import base64,json,sys
+h='$RIDER'.split('.')[0]; h+='='*(-len(h)%4)
+print(json.loads(base64.urlsafe_b64decode(h))['alg'])")" "RS256"
+
+# ...and the private key must live in exactly one container.
+eq "only auth-service holds the signing key"   "$(for c in gozone-gateway gozone-auth gozone-ride gozone-food gozone-wallet; do
+       docker exec $c env 2>/dev/null | grep -q '^JWT_PRIVATE_KEY=' && echo $c;
+     done | tr '
+' ' ' | sed 's/ $//')" "gozone-auth"
+
 eq "rider role"    "$(GET /auth/me $RIDER   | jq_ "d['role']")" "RIDER"
 eq "driver role"   "$(GET /auth/me $DRIVER  | jq_ "d['role']")" "DRIVER"
 eq "driver class"  "$(GET /auth/me $DRIVER  | jq_ "d['vehicleClass']")" "STANDARD"

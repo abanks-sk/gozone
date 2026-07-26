@@ -7,7 +7,7 @@
 | FR | Description | Status | Notes |
 |----|-------------|--------|-------|
 | FR-01 | Phone + OTP registration | ✅ | OTP logged to console (mock) |
-| FR-02 | JWT access token (24h) + refresh token (7d) | ✅ | HS256, shared secret across services |
+| FR-02 | JWT access token (1h) + refresh token (7d, revocable) | ✅ | RS256: auth signs, services verify with the public key |
 | FR-03 | RBAC: RIDER / DRIVER / RESTAURANT_OWNER / COURIER / ADMIN | ✅ | Spring @PreAuthorize + JWT role claim |
 | FR-04 | Driver KYC submission (licence, vehicle, doc URL) | ✅ | |
 | FR-05 | KYC admin review (VERIFIED / REJECTED) | ✅ | Admin screen + PATCH /driver/kyc/{id} |

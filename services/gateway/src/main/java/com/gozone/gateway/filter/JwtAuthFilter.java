@@ -2,7 +2,6 @@ package com.gozone.gateway.filter;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -12,8 +11,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.PublicKey;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Base64;
 import java.util.List;
 
 /**
@@ -42,8 +43,14 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
         "/auth/delivery-riders"
     );
 
-    @Value("${app.jwt.secret}")
-    private String jwtSecret;
+    /**
+     * RSA public key (base64 DER) for verifying tokens. The gateway checks signatures but never
+     * mints tokens, so it is not given the private key — see RsaKeys / auth-service.
+     */
+    @Value("${app.jwt.public-key}")
+    private String jwtPublicKey;
+
+    private volatile PublicKey verificationKey;
 
     /** Must match what auth-service stamps, so only tokens minted by us are accepted. */
     @Value("${app.jwt.issuer:gozone-auth}")
@@ -75,9 +82,8 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
 
         try {
             String token = authHeader.substring(7);
-            SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
             Claims claims = Jwts.parser()
-                .verifyWith(key)
+                .verifyWith(key())
                 .requireIssuer(jwtIssuer)
                 .requireAudience(jwtAudience)
                 .build()
@@ -94,6 +100,26 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
+    }
+
+    /**
+     * Decode the verification key once. Supplied as base64 of the DER bytes (X.509) rather than
+     * PEM, because a single-line value survives .env and Compose interpolation unharmed.
+     */
+    private PublicKey key() {
+        PublicKey k = verificationKey;
+        if (k == null) {
+            try {
+                String cleaned = jwtPublicKey.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
+                k = KeyFactory.getInstance("RSA")
+                    .generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(cleaned)));
+                verificationKey = k;
+            } catch (Exception e) {
+                throw new IllegalStateException(
+                    "JWT_PUBLIC_KEY is not a base64-encoded X.509 RSA key: " + e.getMessage(), e);
+            }
+        }
+        return k;
     }
 
     private boolean isPublicPath(String path) {

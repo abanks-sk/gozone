@@ -16,7 +16,7 @@ into a terminal. Treat all of them as compromised and issue new ones for product
 
 | Variable                              | What to do                                                                          |
 | ------------------------------------- | ----------------------------------------------------------------------------------- |
-| `JWT_SECRET`                          | Generate fresh, ≥64 random characters. Rotating it invalidates every issued token.   |
+| `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY`  | Generate a fresh RSA pair (see `.env.example`). Rotating invalidates every issued token. The private key goes to auth-service only. |
 | `INTERNAL_KEY`                        | Generate fresh. This is the only thing standing between a caller and free money — see `/wallet/commission`. |
 | `SUPERADMIN_PASSWORD`                 | Set explicitly. Left blank, a random one is generated and printed to the log once.   |
 | `PAYSTACK_SECRET_KEY`                 | Live key (`sk_live_…`). See section 4 before assuming payouts work.                  |
@@ -26,7 +26,14 @@ into a terminal. Treat all of them as compromised and issue new ones for product
 | `GOOGLE_CLIENT_IDS`                   | **Must be set.** Blank means the Google ID-token audience check is skipped — anyone's Google token would be accepted. |
 
 ```bash
-openssl rand -base64 48   # JWT_SECRET
+# RS256 signing pair — note the PKCS#8 conversion: openssl's DER output for RSA is PKCS#1,
+# which Java's KeyFactory will not accept.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -outform DER -out priv.der
+openssl pkcs8 -topk8 -nocrypt -inform DER -in priv.der -outform DER -out priv_pk8.der
+openssl rsa -inform DER -in priv.der -pubout -outform DER -out pub.der
+base64 -w0 priv_pk8.der   # JWT_PRIVATE_KEY
+base64 -w0 pub.der        # JWT_PUBLIC_KEY
+
 openssl rand -base64 32   # INTERNAL_KEY
 ```
 
@@ -54,6 +61,8 @@ Current settings (`app.jwt` in auth-service, overridable by env):
 
 | Setting                 | Value          | Notes                                                              |
 | ----------------------- | -------------- | ------------------------------------------------------------------ |
+| `JWT_PRIVATE_KEY`       | base64 DER     | **auth-service only.** The one value that can mint a session — including an admin one. |
+| `JWT_PUBLIC_KEY`        | base64 DER     | Every service. Verifies but cannot sign; not a secret.             |
 | `JWT_EXPIRY_MS`         | 1 hour         | Access tokens cannot be revoked, so this is the only thing ending one. |
 | `JWT_REFRESH_EXPIRY_MS` | 7 days         | Revocable, single-use, rotated on every refresh.                   |
 | `JWT_ISSUER`            | `gozone-auth`  | Required by the gateway and all four services.                     |
@@ -62,11 +71,14 @@ Current settings (`app.jwt` in auth-service, overridable by env):
 `POST /auth/logout` revokes the refresh token (all sessions with `allDevices: true`). All four
 clients call it on sign-out.
 
-**Still using HS256** — one shared secret that every service holds in order to *verify*, which
-means every service also holds what it needs to *mint*. Moving to RS256 (auth signs with a
-private key, the others verify with the public key) is the right next step and is a contained
-change: `JwtService.signingKey()` plus the five verifier call sites. It has not been done, so
-protect `JWT_SECRET` accordingly.
+**Signing is RS256.** auth-service holds the private key and is the only thing that can mint a
+token; the gateway, ride, food and wallet hold only the public key, so a break in any of them
+cannot produce a valid session. Generate a fresh pair for production (section 1) and give the
+private key to auth-service alone — Compose already wires it that way.
+
+What is still missing is **rotation without downtime**: the public key is configuration, so
+replacing the pair means redeploying every service. Serving it from a JWKS endpoint that the
+verifiers fetch and cache is the usual answer, and is the remaining piece of this story.
 
 ---
 
@@ -145,7 +157,9 @@ protect `JWT_SECRET` accordingly.
 
 These are unfinished rather than decided against:
 
-- **RS256** signing (section 3).
+- **Key rotation without downtime** — the public key is configuration, so rotating the pair means
+  redeploying every service. A JWKS endpoint would fix it (section 3).
+
 - **Google Sign-In in the apps** — backend verification is done; the button needs OAuth client
   ids and a development build, since Google rejects Expo Go's `exp://` redirect.
 - **Automatic bank payouts** (section 4).

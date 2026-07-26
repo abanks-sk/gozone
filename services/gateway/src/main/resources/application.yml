@@ -57,7 +57,9 @@ management:
 
 app:
   jwt:
-    secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
+    # Verify only: the public key can check a signature but never create one, so a
+    # break here does not hand over the ability to mint tokens.
+    public-key: ${JWT_PUBLIC_KEY}   # required — base64 DER (see RsaKeys)
     issuer: ${JWT_ISSUER:gozone-auth}      # must match auth-service; tokens without it are rejected
     audience: ${JWT_AUDIENCE:gozone-apps}
   ratelimit:

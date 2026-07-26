@@ -40,7 +40,8 @@ Last updated: 2026-06-25
   - Public paths: `/auth/register`, `/auth/verify-otp`, `/auth/refresh`, any `*/actuator/*`
 - Auth service — full implementation:
   - `User`, `OtpCode`, `RefreshToken`, `DriverKyc` entities + Flyway migration
-  - `JwtService`: issues 24h access tokens (HS256, shared secret), validates claims
+  - `JwtService`: issues access tokens, validates claims
+    (as built: 24h, HS256 shared secret — now 1h and RS256; see README §11)
   - `AuthService`: register+OTP (logged to console), verify OTP, refresh rotation, me, KYC submit/review
   - `AuthController`: `POST /register`, `POST /verify-otp`, `POST /refresh`, `GET /me`, `POST /driver/kyc`, `PATCH /driver/kyc/{id}`
   - `SecurityConfig`: stateless, JWT filter, permits `/register` + `/verify-otp` + `/refresh` + `/actuator/**`

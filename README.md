@@ -81,7 +81,7 @@ rides exactly the same order, queue and delivery rails as a restaurant.
 
 ```bash
 cd GoZone
-cp .env.example .env          # then set JWT_SECRET and INTERNAL_KEY — compose refuses to start without them
+cp .env.example .env          # then set the JWT key pair and INTERNAL_KEY — compose refuses to start without them
 docker compose up -d
 ```
 
@@ -158,7 +158,7 @@ Accounts are listed in [section 20](#20-demo-accounts-and-script).
 | PostgreSQL                  | 16        | Database             | Mature, transactional, excellent JSON and extension support     |
 | PostGIS                     | 3.4       | Geospatial extension | Radius search in metres (`ST_DWithin`) for driver matching      |
 | Flyway                      | (core)    | Schema migrations    | Versioned, repeatable, runs automatically at service start      |
-| JJWT                        | —         | JWT signing/parsing  | HS512 access tokens validated independently by each service     |
+| JJWT                        | —         | JWT signing/parsing  | RS256 access tokens: auth-service signs, each service verifies with the public key |
 | Spring WebSocket + STOMP    | (starter) | Real-time            | Live driver/courier location and queue updates                  |
 | Spring WebFlux              | (starter) | HTTP client          | `WebClient` for service-to-service and third-party calls        |
 | Docker Compose              | v3.9      | Orchestration        | One command brings the whole backend up reproducibly            |
@@ -225,8 +225,9 @@ suited to that, with no mobile compromise.
 1. **The gateway (8080) is the only public entry point.** No client ever calls a service
    directly. Services are reachable on 8081–8084 for local debugging only.
 2. **Each service validates JWTs independently.** No service calls auth-service to check a
-   token — the shared `JWT_SECRET` allows local verification, so auth is not a runtime
-   bottleneck or single point of failure for reads.
+   token — the RSA **public** key allows local verification, so auth is not a runtime bottleneck
+   or single point of failure for reads. Verification power is deliberately separated from
+   signing power: only auth-service holds the private key.
 3. **No service reads another service's database.** Cross-service communication is API-only.
    The four logical databases live in one Postgres container for convenience, but each service
    holds credentials for exactly one of them.
@@ -880,7 +881,8 @@ breaks because of a third party.
 
 | Key                                   | Used by           | Behaviour when blank                           |
 | ------------------------------------- | ----------------- | ---------------------------------------------- |
-| `JWT_SECRET`, `INTERNAL_KEY`          | all services      | **Required** — compose refuses to start        |
+| `JWT_PUBLIC_KEY`, `INTERNAL_KEY`      | all services      | **Required** — compose refuses to start        |
+| `JWT_PRIVATE_KEY`                     | auth only         | **Required** — the only key that can mint tokens |
 | `SUPERADMIN_PASSWORD`                 | auth              | A random password is generated and logged once |
 | `PAYSTACK_SECRET_KEY`                 | wallet            | `mock` serves a local sandbox checkout page    |
 | `GOOGLE_MAPS_SERVER_KEY`              | ride (maps proxy) | Straight-line routes, no place search          |
@@ -902,11 +904,17 @@ Two rounds of security review were completed; the fixes are in place.
 
 **Authentication and secrets**
 
-- No secret has a committed default. `JWT_SECRET` and `INTERNAL_KEY` are required environment
+- No secret has a committed default. The JWT keys and `INTERNAL_KEY` are required environment
   variables and Docker Compose refuses to start without them.
-- Tokens are HS512, validated locally by each service; the gateway validates at the edge as well.
-  Every verifier **requires the `iss` and `aud` claims**, so a token minted elsewhere is refused
-  even if it is well-formed.
+- Tokens are **RS256**: auth-service signs with a private key and is the only thing on the
+  platform that can mint one. The gateway and the other three services hold only the **public**
+  key, which verifies signatures but cannot create them — so a compromise of ride, food, wallet
+  or the gateway no longer hands over the ability to forge an admin session. The public key is
+  not a secret; leaking it costs nothing. Every verifier also **requires the `iss` and `aud`
+  claims**, so a token minted elsewhere is refused even if it is well-formed.
+- Keys are supplied as single-line base64 of the DER bytes (`JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`)
+  rather than PEM, because multi-line values do not survive `.env` and Compose interpolation
+  reliably. Compose passes the private key to auth-service **only**.
 - **Access tokens live 1 hour** — they cannot be revoked, so a short life is what ends them.
   Refresh tokens live 7 days, are stored only as hashes, are **single-use** (rotated on every
   refresh, so a captured one dies as soon as the real client refreshes), and are **revocable**:
@@ -942,10 +950,9 @@ Two rounds of security review were completed; the fixes are in place.
   the 5-attempt OTP cap. Counting is in-memory per gateway instance — running more than one
   instance means moving to the Redis-backed limiter.
 
-**Known remaining items** (documented, not hidden): **RS256** — signing is still HS512 with one
-shared secret, so every service holds what it would need to mint tokens, not just verify them;
-tighter CORS and TLS termination; a dependency (SCA) scan; and distributed rate limiting for a
-multi-instance gateway. Login returns 404 for an unknown identifier — an intentional UX choice
+**Known remaining items** (documented, not hidden): tighter CORS and TLS termination; a
+dependency (SCA) scan; distributed rate limiting for a multi-instance gateway; and key rotation
+served through a JWKS endpoint rather than a redeploy. Login returns 404 for an unknown identifier — an intentional UX choice
 ("no account found — sign up") accepted as a minor enumeration trade-off.
 See **`docs/DEPLOYMENT.md`** for the full pre-launch checklist.
 
@@ -1080,7 +1087,7 @@ walk the demo script in `docs/demo-script.md`.
 | Symptom                              | Cause and fix                                                                                                                                                           |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Every call returns 500               | A downstream service is down. `docker ps` — if `gozone-auth` exited, the gateway 500s. Restart it.                                                                      |
-| Compose refuses to start             | `JWT_SECRET` or `INTERNAL_KEY` is unset. Copy `.env.example` to `.env` and set both.                                                                                    |
+| Compose refuses to start             | A JWT key or `INTERNAL_KEY` is unset. Copy `.env.example` to `.env` and set all three.                                                                                    |
 | Cannot log in                        | Check the gateway's `app.gateway.public-paths` includes the pre-login route you are calling.                                                                            |
 | Driver sees no requests              | The driver must be **ACTIVE** (approved), **online**, within the search radius, and of a class that can serve that request type. Requests also expire after 90 seconds. |
 | "No account found" on login          | Correct behaviour — `/auth/login` never creates a user. Sign up first.                                                                                                  |
@@ -1139,8 +1146,9 @@ the passenger requests.
 
 - Set `OTP_LOG_CODES=false`, populate `GOOGLE_CLIENT_IDS`, restrict the Maps SDK keys to
   Android/iOS app signatures, and rotate every credential in `.env`.
-- Move to RS256 (issuer and audience validation, short access tokens with refresh-token
-  revocation, and gateway rate limiting are already in place — see `docs/DEPLOYMENT.md`).
+- Publish the public key at a JWKS endpoint so keys can be rotated without redeploying every
+  service (RS256, issuer/audience validation, short access tokens with refresh-token revocation,
+  and gateway rate limiting are all in place — see `docs/DEPLOYMENT.md`).
 
 **Product backlog**
 

@@ -5,7 +5,6 @@ import com.gozone.ride.repository.TripPassengerRepository;
 import com.gozone.ride.repository.TripRepository;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -24,8 +23,6 @@ import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBr
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
-import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.List;
 import java.util.UUID;
@@ -90,8 +87,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     if (token == null) token = accessor.getFirstNativeHeader("token");
                     if (token == null) throw new IllegalArgumentException("Missing auth token");
                     try {
-                        SecretKey key = Keys.hmacShaKeyFor(jwtProps.getSecret().getBytes(StandardCharsets.UTF_8));
-                        Claims claims = Jwts.parser().verifyWith(key)
+                        Claims claims = Jwts.parser().verifyWith(jwtProps.verificationKey())
                             .requireIssuer(jwtProps.getIssuer())
                             .requireAudience(jwtProps.getAudience())
                             .build().parseSignedClaims(token).getPayload();

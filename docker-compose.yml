@@ -34,7 +34,7 @@ services:
       RIDE_SERVICE_URL: http://ride-service:8082
       FOOD_SERVICE_URL: http://food-service:8083
       WALLET_SERVICE_URL: http://wallet-service:8084
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?JWT_PUBLIC_KEY must be set — copy .env.example to .env}
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
     depends_on:
       auth-service:
@@ -61,7 +61,9 @@ services:
       DB_NAME: auth_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?JWT_PUBLIC_KEY must be set — copy .env.example to .env}
+      # auth-service alone can sign — no other service is given this.
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:?JWT_PRIVATE_KEY must be set — copy .env.example to .env}
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:-}
       MAIL_USERNAME: ${MAIL_USERNAME:-}
@@ -100,7 +102,7 @@ services:
       DB_NAME: ride_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?JWT_PUBLIC_KEY must be set — copy .env.example to .env}
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       AUTH_SERVICE_URL: http://auth-service:8081
       WALLET_SERVICE_URL: http://wallet-service:8084
@@ -131,7 +133,7 @@ services:
       DB_NAME: food_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?JWT_PUBLIC_KEY must be set — copy .env.example to .env}
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       WALLET_SERVICE_URL: http://wallet-service:8084
       NOTIFY_URL: http://wallet-service:8084/notify
@@ -161,7 +163,7 @@ services:
       DB_NAME: wallet_db
       DB_USER: gozone
       DB_PASS: gozone
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?JWT_PUBLIC_KEY must be set — copy .env.example to .env}
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-mock}

@@ -1250,6 +1250,37 @@ Pooling now requires `kind=RIDE` on both the candidate and the trip.
   them, contact hidden in the open feed, owner sees their own. **106/106 passing.**
 - Contract `ride.yaml` updated. Customer + driver type-check clean. **Rebuild ride-service** (V8).
 
+### RS256 — signing power separated from verification (latest) — REBUILD ALL 5 + NEW .env KEYS
+⚠️ **`JWT_SECRET` is gone.** `.env` now needs **`JWT_PRIVATE_KEY`** + **`JWT_PUBLIC_KEY`**; compose
+refuses to start without them, and everyone signs in again (old HS512 tokens are rejected).
+- **The problem it fixes:** HS512 is symmetric — the one key that *verifies* also *signs*. All five
+  services held `JWT_SECRET` because all five verify, so a break in ride/food/wallet/gateway (leaked
+  env, log dump, bad dependency, stolen image) handed over the ability to mint
+  `role=SUPER_ADMIN, status=ACTIVE` for any user id. Now **auth-service alone holds the private key**;
+  the rest hold only the public key, which verifies but cannot sign.
+- **Implementation:** `JwtService` signs with `Jwts.SIG.RS256`; new `RsaKeys` helper (copied into each
+  service, as they're self-contained) decodes keys; each `JwtProperties` caches the parsed key and
+  exposes `verificationKey()` (auth also `signingKey()`); gateway decodes its own public key in
+  `JwtAuthFilter`. Keys are **single-line base64 of DER** (PKCS#8 private / X.509 public), **not PEM** —
+  multi-line values don't survive `.env` + Compose interpolation. `.env.example` documents generation.
+- **⚠️ Gotcha that cost a restart:** `openssl genpkey -algorithm RSA -outform DER` emits **PKCS#1**,
+  which Java's `KeyFactory` rejects ("algid parse error, not a sequence"). Must convert:
+  `openssl pkcs8 -topk8 -nocrypt -inform DER -in priv.der -outform DER -out priv_pk8.der`. The
+  command in `.env.example` + DEPLOYMENT.md includes this step.
+- **compose:** every service gets `JWT_PUBLIC_KEY`; **only auth-service** gets `JWT_PRIVATE_KEY` —
+  the asymmetry is visible in the file, with a comment saying why.
+- **Verified, including the threat itself:** generated a *second* RSA key pair, hand-crafted a
+  `SUPER_ADMIN` token with it (openssl-signed JWT) → **rejected 401 by all four services**. Old HS512
+  tokens → 401. Fresh token shows `alg: RS256`, correct `iss`/`aud`, 60-min TTL, and works across
+  auth/ride/food/wallet. `docker exec … env` confirms only `gozone-auth` has a private key.
+- **Two new permanent e2e assertions** so this can't silently regress: "access token is RS256" and
+  "only auth-service holds the signing key". **Suite now 108/108.**
+- Docs swept for the old model (README §3/§4/§11/§14/§15/§19/§21, DEPLOYMENT §1/§3, architecture.md,
+  MANUAL.md, fr-coverage.md; BUILD_PROGRESS annotated as historical).
+- **Remaining in this story:** rotating keys still means redeploying every service, because the public
+  key is configuration. A **JWKS endpoint** the verifiers fetch and cache is the fix — logged in
+  DEPLOYMENT.md and the README roadmap.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.

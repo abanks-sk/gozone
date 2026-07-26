@@ -2,7 +2,6 @@ package com.gozone.wallet.config;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,9 +19,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import javax.crypto.SecretKey;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Configuration
@@ -72,10 +69,8 @@ public class SecurityConfig {
                 if (header != null && header.startsWith("Bearer ")) {
                     try {
                         String token = header.substring(7);
-                        SecretKey key = Keys.hmacShaKeyFor(
-                            jwtProps.getSecret().getBytes(StandardCharsets.UTF_8));
                         Claims claims = Jwts.parser()
-                            .verifyWith(key)
+                            .verifyWith(jwtProps.verificationKey())
                             .requireIssuer(jwtProps.getIssuer())
                             .requireAudience(jwtProps.getAudience())
                             .build()

@@ -36,7 +36,8 @@ auth_db │   food_db wallet_db
 ## Key Architectural Decisions
 
 ### JWT validation (defence in depth)
-Auth service issues JWTs signed with HS256 (shared `JWT_SECRET`). The gateway validates
+Auth service issues JWTs signed with RS256 (private key, auth-service only; every other
+service verifies with the public key and cannot mint). The gateway validates
 at the edge and adds `X-User-Id` / `X-User-Role` forwarding headers. Each downstream
 service also validates the JWT independently — this means services are safe if ever
 exposed directly (e.g., for testing), and they do not need to call Auth to check a token.

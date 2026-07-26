@@ -59,7 +59,7 @@ GoZone is a Ghana "super-app": **rides + shop/food + parcels**, plus operator to
 ```
 GoZone/
 ├── docker-compose.yml        # brings up postgres + all 5 backend services
-├── .env                      # YOUR real secrets (gitignored) — JWT_SECRET, INTERNAL_KEY
+├── .env                      # YOUR real secrets (gitignored) — JWT key pair, INTERNAL_KEY
 ├── .env.example              # template; `copy .env.example .env` then fill in
 ├── build.bat / build-local.ps1  # Windows build helpers
 ├── HANDOFF.md                # full history of what was built + why (read this for context)
@@ -123,7 +123,8 @@ copy .env.example .env
 ```
 Open `.env` and set **real** values (they're already generated for you if I ran the secret step):
 ```
-JWT_SECRET=<long random string>
+JWT_PRIVATE_KEY=<base64 DER, auth-service only>
+JWT_PUBLIC_KEY=<base64 DER, all services>
 INTERNAL_KEY=<random string>
 ```
 Compose **refuses to start** without these (by design — no committed secrets). Then:
@@ -210,7 +211,7 @@ General notes:
   `/users/{id}/class`, `/me/service-mode`, `/driver/kyc` (+ `/mine`, list, review).
 - **Logic** (`service/AuthService.java`): OTP issue/verify (5-guess cap), phone E.164 normalization, register
   (409 if exists) vs login (404 if not), email variants, admin create/approve, **vehicle class** assignment,
-  **service mode**. `service/JwtService.java` mints the HS256 token (claims: `sub`, `role`, `status`, `phone`).
+  **service mode**. `service/JwtService.java` mints the RS256 token (claims: `sub`, `iss`, `aud`, `role`, `status`, `phone`).
 - **Models** (`model/`): `User` (phone/email/username/passwordHash/role/status/**vehicleClass**/serviceMode),
   `OtpCode`, `RefreshToken`, `DriverKyc`.
 - **Migrations:** V1 baseline → V2 profiles/approval → V3 email → V4 vehicle_class → V5 otp_attempts.
@@ -371,7 +372,8 @@ Admin → Approvals and stored on `User.vehicleClass`.
 
 ## 9. Security model
 
-- **JWT (HS256):** issued by auth on verify-otp; shared secret `JWT_SECRET` (env only, no code default).
+- **JWT (RS256):** issued by auth on verify-otp. auth-service signs with `JWT_PRIVATE_KEY`; every
+  service verifies with `JWT_PUBLIC_KEY`, which cannot sign (env only, no code defaults).
   Carries `sub`, `role`, `status`. Verified at the gateway **and** re-verified in every service.
 - **Account status:** SUSPENDED/REJECTED can't get a token; PENDING can log in (for onboarding) but privileged
   actions (`placeBid`, courier endpoints) require `STATUS_ACTIVE`.
@@ -414,7 +416,7 @@ After an **app** change: just save — Metro hot-reloads. New native deps (e.g. 
   contract drift.
 - **`ddl-auto: validate`:** if an entity and the DB disagree, the service **won't start**. Always change schema
   via a Flyway migration that matches the entity.
-- **Secrets:** `.env` is gitignored and **required** — compose won't start without `JWT_SECRET` + `INTERNAL_KEY`.
+- **Secrets:** `.env` is gitignored and **required** — compose won't start without the JWT key pair + `INTERNAL_KEY`.
   Never commit real secrets; regenerate per environment (`openssl rand -base64 48`).
 - **Backend can't be compiled in this workspace** — changes are verified by review; watch the `docker compose
   build` output for the service you touched.

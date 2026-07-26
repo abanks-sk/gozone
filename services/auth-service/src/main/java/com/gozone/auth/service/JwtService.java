@@ -4,13 +4,18 @@ import com.gozone.auth.config.JwtProperties;
 import com.gozone.auth.model.User;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import org.springframework.stereotype.Service;
 
-import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
+/**
+ * Mints and reads access tokens.
+ *
+ * <p>Signed with <b>RS256</b>: auth-service holds the private key and is the only thing on the
+ * platform that can produce a valid token. The other services hold only the public key, so they
+ * can check a token but never forge one — a compromise of ride, food, wallet or the gateway no
+ * longer hands over the ability to mint an admin session.
+ */
 @Service
 public class JwtService {
 
@@ -30,21 +35,17 @@ public class JwtService {
             .claim("phone", user.getPhone())
             .issuedAt(new Date())
             .expiration(new Date(System.currentTimeMillis() + props.getExpiryMs()))
-            .signWith(signingKey())
+            .signWith(props.signingKey(), Jwts.SIG.RS256)
             .compact();
     }
 
     public Claims validateAndParseClaims(String token) {
         return Jwts.parser()
-            .verifyWith(signingKey())
+            .verifyWith(props.verificationKey())
             .requireIssuer(props.getIssuer())
             .requireAudience(props.getAudience())
             .build()
             .parseSignedClaims(token)
             .getPayload();
-    }
-
-    private SecretKey signingKey() {
-        return Keys.hmacShaKeyFor(props.getSecret().getBytes(StandardCharsets.UTF_8));
     }
 }
