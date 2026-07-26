@@ -28,6 +28,10 @@ export interface Trip {
   paymentMethod?: string | null;
   /** The customer's phone (participant-guarded — only after a match). */
   riderPhone?: string | null;
+  /** Parcels: which end the customer is at, and who the courier meets at the other end. */
+  direction?: 'SEND' | 'RECEIVE' | null;
+  partyName?: string | null;
+  partyPhone?: string | null;
 }
 
 export interface BidResponse {

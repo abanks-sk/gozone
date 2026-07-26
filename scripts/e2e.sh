@@ -142,9 +142,18 @@ echo
 echo "=============================================="
 echo " 5. PARCEL — vehicle-class routing"
 echo "=============================================="
-P1=$(POST /rides/requests "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6300,"destLng":-0.1900,"proposedFare":15,"kind":"PARCEL","parcelSize":"SMALL","parcelDesc":"A4 documents","riderPhone":"+233201000001"}')
+P1=$(POST /rides/requests "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6300,"destLng":-0.1900,"proposedFare":15,"kind":"PARCEL","parcelSize":"SMALL","parcelDesc":"A4 documents","direction":"SEND","partyName":"Yaa Recipient","partyPhone":"+233241234567","riderPhone":"+233201000001"}')
 PID=$(echo "$P1" | jq_ "d['id']")
 eq "small parcel created" "$(echo "$P1" | jq_ "d['parcelSize']")" "SMALL"
+
+# A parcel needs someone at the other end, or the courier arrives to nobody.
+eq "parcel without handover details rejected"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER" -d '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6300,"destLng":-0.1900,"proposedFare":15,"kind":"PARCEL","parcelSize":"SMALL","parcelDesc":"No recipient"}' $GW/rides/requests)" "400"
+
+# The open feed must not leak a third party's phone number to every driver in range.
+eq "handover contact hidden in the open feed"   "$(GET "/rides/requests/nearby?lat=5.6037&lng=-0.1870&radiusKm=50&vehicleClass=OKADA&serviceMode=BOTH" $COURIER | python -c "import sys,json;print(next((r['partyPhone'] for r in json.load(sys.stdin) if r['id']=='$PID'), 'missing'))")" "None"
+
+# ...but the owner gets their own back, so a reload doesn't lose it.
+eq "owner sees their own handover contact"   "$(GET "/rides/requests/$PID/status" $RIDER | jq_ "d['request']['partyName']")" "Yaa Recipient"
 eq "OKADA courier sees small parcel" \
   "$(GET "/rides/requests/nearby?lat=5.6037&lng=-0.1870&radiusKm=50&vehicleClass=OKADA&serviceMode=BOTH" $COURIER | python -c "import sys,json;print(any(r['id']=='$PID' for r in json.load(sys.stdin)))")" "True"
 eq "STANDARD driver does NOT see small parcel" \

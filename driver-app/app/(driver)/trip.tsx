@@ -66,12 +66,19 @@ export default function DriverTripScreen() {
   const [routePts, setRoutePts] = useState<{ lat: number; lng: number }[]>([]);
   const [pickupPts, setPickupPts] = useState<{ lat: number; lng: number }[]>([]);
   const [riderPhone, setRiderPhone] = useState<string | null>(null);
+  // Parcel handover: who is at the far end. Comes from the same guarded trip fetch as the
+  // customer's phone — the open feed deliberately doesn't carry contact details.
+  const [handover, setHandover] = useState<{ direction?: string | null; name?: string | null; phone?: string | null }>({});
 
   // The customer's phone comes with the full trip (participant-guarded).
   useEffect(() => {
     if (!trip) return;
     let active = true;
-    rideApi.getTrip(trip.id).then((t) => { if (active) setRiderPhone(t.riderPhone ?? null); }).catch(() => {});
+    rideApi.getTrip(trip.id).then((t) => {
+      if (!active) return;
+      setRiderPhone(t.riderPhone ?? null);
+      setHandover({ direction: t.direction, name: t.partyName, phone: t.partyPhone });
+    }).catch(() => {});
     return () => { active = false; };
   }, [trip?.id]);
   const locRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -193,6 +200,13 @@ export default function DriverTripScreen() {
   const STEP = stepsFor(isParcel);
   const ACTION = actionFor(isParcel);
 
+  // Call whoever is at the end you're driving to now. On a SEND the customer is at the pickup
+  // and the other party at the drop-off; on a RECEIVE it's the reverse. Rides always call the
+  // passenger.
+  const pickedUp = trip.status === 'STARTED';
+  const callParty = isParcel && (handover.direction === 'RECEIVE' ? !pickedUp : pickedUp);
+  const callNumber = (callParty ? handover.phone : riderPhone) ?? riderPhone;
+
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: insets.top + 14, paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}>
@@ -245,9 +259,18 @@ export default function DriverTripScreen() {
                   {isParcel ? `${req?.parcelSize ?? 'MEDIUM'} parcel` : 'Passenger'}
                 </Text>
                 {isParcel ? (
-                  <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }} numberOfLines={2}>
-                    {req?.parcelDesc || 'Parcel delivery'}
-                  </Text>
+                  <>
+                    <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }} numberOfLines={2}>
+                      {req?.parcelDesc || 'Parcel delivery'}
+                    </Text>
+                    {!!handover.name && (
+                      <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 3 }}>
+                        {handover.direction === 'RECEIVE'
+                          ? `Collect from ${handover.name}`
+                          : `Hand to ${handover.name}`}
+                      </Text>
+                    )}
+                  </>
                 ) : (
                   <Row style={{ gap: 5, marginTop: 2 }}>
                     <Ionicons name="star" size={13} color={c.warning} />
@@ -255,9 +278,9 @@ export default function DriverTripScreen() {
                   </Row>
                 )}
               </View>
-              {riderPhone ? (
+              {callNumber ? (
                 <TouchableOpacity activeOpacity={0.85}
-                  onPress={() => Linking.openURL(`tel:${riderPhone}`).catch(() => {})}
+                  onPress={() => Linking.openURL(`tel:${callNumber}`).catch(() => {})}
                   style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.surfaceAlt, alignItems: 'center', justifyContent: 'center' }}>
                   <Ionicons name="call" size={18} color={c.primary} />
                 </TouchableOpacity>

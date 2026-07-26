@@ -52,6 +52,24 @@ public class RideRequest {
     @Column(name = "parcel_desc", columnDefinition = "text")
     private String parcelDesc;
 
+    /**
+     * Which end of a parcel trip the customer is standing at — SEND means they hand over at
+     * pickup, RECEIVE means they collect at the drop-off. Null for rides.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private Direction direction;
+
+    /**
+     * The other person in a parcel handover: the recipient when the customer is sending, the
+     * sender when the customer is receiving. Hence "party" rather than "recipient".
+     */
+    @Column(name = "party_name", length = 120)
+    private String partyName;
+
+    @Column(name = "party_phone", length = 30)
+    private String partyPhone;
+
     // The rider's phone, shared with the matched driver (via TripResponse) so
     // they can call — never exposed in the open nearby feed.
     @Column(name = "rider_phone", columnDefinition = "text")
@@ -64,6 +82,7 @@ public class RideRequest {
     public enum Kind { RIDE, PARCEL }
     public enum RideType { STANDARD, LUXE, OKADA }
     public enum ParcelSize { SMALL, MEDIUM, LARGE }
+    public enum Direction { SEND, RECEIVE }
 
     public UUID getId() { return id; }
     public UUID getRiderId() { return riderId; }
@@ -88,6 +107,12 @@ public class RideRequest {
     public void setParcelSize(ParcelSize parcelSize) { this.parcelSize = parcelSize; }
     public String getParcelDesc() { return parcelDesc; }
     public void setParcelDesc(String parcelDesc) { this.parcelDesc = parcelDesc; }
+    public Direction getDirection() { return direction; }
+    public void setDirection(Direction direction) { this.direction = direction; }
+    public String getPartyName() { return partyName; }
+    public void setPartyName(String partyName) { this.partyName = partyName; }
+    public String getPartyPhone() { return partyPhone; }
+    public void setPartyPhone(String partyPhone) { this.partyPhone = partyPhone; }
     public String getRiderPhone() { return riderPhone; }
     public void setRiderPhone(String riderPhone) { this.riderPhone = riderPhone; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

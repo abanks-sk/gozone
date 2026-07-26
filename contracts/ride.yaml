@@ -557,6 +557,25 @@ components:
           type: string
           nullable: true
           description: What the parcel is (required by the client for parcels)
+        direction:
+          type: string
+          enum: [SEND, RECEIVE]
+          nullable: true
+          description: >
+            Parcels: which end the customer is at. SEND — they hand over at the pickup and the
+            other party receives at the drop-off. RECEIVE — the other party hands over at the
+            pickup and the customer collects at the drop-off.
+        partyName:
+          type: string
+          nullable: true
+          description: >
+            The other person in the handover — the recipient when sending, the sender when
+            receiving. Required for parcels (400 without it): a courier can't complete a
+            handover without knowing who they are meeting.
+        partyPhone:
+          type: string
+          nullable: true
+          description: Required for parcels. Revealed only to the owner and the assigned courier.
         riderPhone:
           type: string
           nullable: true
@@ -599,6 +618,20 @@ components:
         parcelDesc:
           type: string
           nullable: true
+        direction:
+          type: string
+          enum: [SEND, RECEIVE]
+          nullable: true
+        partyName:
+          type: string
+          nullable: true
+          description: >
+            Handover contact. Populated only for the request's owner — the open nearby feed
+            returns null, so a driver browsing work cannot harvest third-party numbers.
+        partyPhone:
+          type: string
+          nullable: true
+          description: Owner only; null in the nearby feed.
         createdAt:
           type: string
           format: date-time
@@ -736,6 +769,18 @@ components:
           type: string
           nullable: true
           description: The rider's phone (trip endpoints are participant-guarded)
+        direction:
+          type: string
+          enum: [SEND, RECEIVE]
+          nullable: true
+          description: Parcels only — which end the customer is at
+        partyName:
+          type: string
+          nullable: true
+          description: Parcel handover contact, revealed to the assigned courier after a match
+        partyPhone:
+          type: string
+          nullable: true
 
     PoolJoinRequest:
       type: object

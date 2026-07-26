@@ -355,8 +355,9 @@ Shop data/stores (in `customer-app/src/`, renamed food→shop this session): `da
 4. **Admin web app — BUILT** (see §9b): Vite + React + TS, login (ADMIN), dashboard counts, KYC
    review (approve/reject). Remaining (optional): vendor approval flow; live trip/order counts (need
    aggregation endpoints); richer analytics/charts.
-5. Optional/deferred: real **email authentication** backend; a **dedicated parcel backend** (today
-   parcels reuse `/rides/requests`); real **Add money / Send** wallet ops; ~~backend profile API~~
+5. Optional/deferred: real **email authentication** backend; ~~a dedicated parcel backend~~
+   (**decided against** — parcels stay on `/rides/requests`; see "Parcel handover" at the end of
+   this file for the reasoning); real **Add money / Send** wallet ops; ~~backend profile API~~
    (**DONE** — `PATCH /auth/me`, see the entry at the end of this file); full **RIDER → PASSENGER**
    backend rename; deeper infra rename
    (`food-service`/`com.gozone.food`/`food_db`/`/food` → shop/vendor) — kept as-is for now since it's
@@ -1209,6 +1210,45 @@ now rejected (verified: an old token returns 401).
   six verifier sites), tighter CORS/TLS, SCA scan, distributed rate limiting.
 - *Housekeeping: the e2e suite's "call next" consumes a staged walk-in customer, so the demo
   walk-in was re-staged afterwards (Kojo Rider, Waakye + Kelewele, GH¢25.20, PLACED, 1 waiting).*
+
+### Parcel handover details — decided AGAINST a separate parcel backend (latest) — REBUILD ride-service
+The roadmap carried "a dedicated parcel backend" as a to-do. Investigated it on the user's
+challenge and **dropped it deliberately** — but found three real bugs the shared model was hiding.
+
+**Why no parcel service.** A courier carrying a box is the same primitive as a driver carrying a
+person, so parcels already inherit matching, bidding, offer selection, live tracking, payments,
+SOS and ratings for free. A second service would duplicate all of that and, worse, have two
+services competing to assign the same driver pool. The honest trigger for splitting it out is
+parcels growing a lifecycle rides don't share (multi-leg routing, warehouse custody, proof of
+delivery, insurance) — nowhere near that yet. Recorded in README §16 so it stops resurfacing.
+
+**The three real bugs (all fixed here, ~3 columns not a new service):**
+1. **Recipient details were collected, required, then thrown away.** `(parcel)/details.tsx`
+   validated name+phone, then sent neither — they were passed as **navigation params only**. The
+   courier had no idea who to hand the parcel to or what number to ring, and the details vanished
+   on reload. This is why a courier couldn't actually complete a handover.
+2. **Direction (send vs receive) wasn't persisted** — on a RECEIVE the customer is at the
+   *drop-off* and a stranger is at the pickup, so `riderPhone` was the wrong number at collection.
+3. **Pooling didn't filter `kind`** — `poolCandidates`/`poolJoin` would happily offer a parcel as
+   a pool "passenger". Latent (no screen calls pooling) but exactly the leak a shared table invites.
+
+**Backend (ride-service, `V8__parcel_handover.sql`):** `direction` (SEND|RECEIVE), `party_name`,
+`party_phone` on `ride_requests` + entity/DTO/create-path. Named **party** not recipient because on
+a RECEIVE that person is the *sender*. `createRequest` **rejects a parcel without them (400)**.
+Pooling now requires `kind=RIDE` on both the candidate and the trip.
+- **Privacy boundary matters here:** `RideRequestResponse` now has **two factories** — `from()` for
+  the open nearby feed (contact fields nulled) and `forOwner()` for the ownership-checked status
+  endpoint. Same reasoning that kept `riderPhone` out of the feed: a driver browsing nearby work
+  must not harvest phone numbers, least of all of third parties who never signed up. The courier
+  gets the handover contact from **`TripResponse`** after matching (participant-guarded), exactly
+  like `riderPhone`.
+- **Apps:** customer sends direction/party and the live screen now **reads them back from the
+  server** (survives reload, was nav-params-only). Driver parcel card shows "Hand to X" /
+  "Collect from X", and the call button rings **whoever is at the end you're driving to** —
+  SEND: customer before pickup, party after; RECEIVE: the reverse.
+- **e2e suite updated** (parcels now need handover details) + 3 new assertions: rejection without
+  them, contact hidden in the open feed, owner sees their own. **106/106 passing.**
+- Contract `ride.yaml` updated. Customer + driver type-check clean. **Rebuild ride-service** (V8).
 
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set

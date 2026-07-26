@@ -83,6 +83,12 @@ export default function ParcelDetailsScreen() {
         proposedFare: fare, kind: 'PARCEL',
         parcelSize: size.toUpperCase() as 'SMALL' | 'MEDIUM' | 'LARGE',
         parcelDesc: contents.trim(),
+        // The courier needs the other end of the handover: who they're meeting, on which
+        // number, and which end we're standing at. Persisted, not just passed to the next
+        // screen, so it survives a reload and reaches the courier's app.
+        direction: sending ? 'SEND' : 'RECEIVE',
+        partyName: otherName.trim(),
+        partyPhone: otherPhone.trim(),
         riderPhone: myPhone || undefined,
       });
       router.push({ pathname: '/(parcel)/live', params: {

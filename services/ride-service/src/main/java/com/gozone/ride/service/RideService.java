@@ -94,10 +94,29 @@ public class RideService {
         req.setRideType(parseEnum(RideRequest.RideType.class, dto.getRideType(), RideRequest.RideType.STANDARD));
         req.setParcelSize(parseEnum(RideRequest.ParcelSize.class, dto.getParcelSize(), null));
         req.setParcelDesc(dto.getParcelDesc());
+        req.setDirection(parseEnum(RideRequest.Direction.class, dto.getDirection(), null));
+        req.setPartyName(trimToNull(dto.getPartyName()));
+        req.setPartyPhone(trimToNull(dto.getPartyPhone()));
         req.setRiderPhone(dto.getRiderPhone());
+
+        // A parcel needs someone at the other end — a ride doesn't. Without this the courier
+        // arrives with nobody to hand it to and no number to ring.
+        if (req.getKind() == RideRequest.Kind.PARCEL
+                && (req.getPartyName() == null || req.getPartyPhone() == null)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "A parcel needs the other person's name and phone number.");
+        }
+
         requestRepo.save(req);
-        log.debug("[RIDE] request created id={} rider={}", req.getId(), riderId);
-        return RideRequestResponse.from(req);
+        log.debug("[RIDE] request created id={} rider={} kind={}", req.getId(), riderId, req.getKind());
+        // The creator owns it, so they get their own handover details back.
+        return RideRequestResponse.forOwner(req);
+    }
+
+    private static String trimToNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
     }
 
     /**
@@ -203,7 +222,8 @@ public class RideService {
             : bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(requestId, Bid.BidStatus.ACCEPTED)
                 .map(b -> BidOffer.from(b, driverDistanceKm(b, req)))
                 .orElse(null);
-        return new RideStatusResponse(RideRequestResponse.from(req), trip, driver);
+        // Ownership was checked at the top of this method, so the owner shape is correct here.
+        return new RideStatusResponse(RideRequestResponse.forOwner(req), trip, driver);
     }
 
     /**
@@ -464,14 +484,22 @@ public class RideService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
         }
 
+        // A courier on a parcel run is never offered passengers to pick up.
+        if (trip.getRequest().getKind() != RideRequest.Kind.RIDE) {
+            return List.of();
+        }
+
         Point dest = trip.getRequest().getDest();
         double destLat = dest.getY();
         double destLng = dest.getX();
 
-        // Same-corridor match: open requests within maxPoolDistanceKm of this trip's destination
+        // Same-corridor match: open requests within maxPoolDistanceKm of this trip's destination.
+        // Rides only — pooling is people sharing a car, and the shared request table means a
+        // parcel would otherwise show up here as a "passenger" to pick up.
         return requestRepo.findNearby(destLat, destLng, maxPoolDistanceKm, requestTtlSeconds)
             .stream()
             .filter(r -> r.getStatus() == RideRequest.Status.OPEN)
+            .filter(r -> r.getKind() == RideRequest.Kind.RIDE)
             .map(RideRequestResponse::from)
             .toList();
     }
@@ -495,6 +523,13 @@ public class RideService {
         // The joining request must belong to the caller (can't matchmake others' requests).
         if (!joiningReq.getRiderId().equals(UUID.fromString(riderId))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your ride request");
+        }
+
+        // Pooling seats people. Because rides and parcels share one request table, guard both
+        // ends: a parcel can't join a trip, and a parcel trip can't take on passengers.
+        if (joiningReq.getKind() != RideRequest.Kind.RIDE
+                || trip.getRequest().getKind() != RideRequest.Kind.RIDE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only rides can be pooled.");
         }
 
         long currentOccupancy = passengerRepo.countByIdTripId(tripId);

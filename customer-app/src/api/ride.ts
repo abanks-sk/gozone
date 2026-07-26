@@ -10,6 +10,14 @@ export interface RideRequest {
   seats: number;
   proposedFare: number;
   status: string;
+  kind?: 'RIDE' | 'PARCEL';
+  parcelSize?: 'SMALL' | 'MEDIUM' | 'LARGE' | null;
+  parcelDesc?: string | null;
+  /** Parcels: which end the customer is at. */
+  direction?: 'SEND' | 'RECEIVE' | null;
+  /** The other person in a handover — only returned to the request's owner. */
+  partyName?: string | null;
+  partyPhone?: string | null;
   createdAt: string;
 }
 
@@ -22,6 +30,10 @@ export interface Trip {
   completedAt?: string;
   paymentStatus?: 'UNPAID' | 'AWAITING' | 'PAID';
   paymentMethod?: string | null;
+  riderPhone?: string | null;
+  direction?: 'SEND' | 'RECEIVE' | null;
+  partyName?: string | null;
+  partyPhone?: string | null;
 }
 
 export interface BidResponse {
@@ -90,6 +102,9 @@ export const rideApi = {
     proposedFare: number; seats?: number; scheduledAt?: string;
     kind?: 'RIDE' | 'PARCEL'; rideType?: 'STANDARD' | 'LUXE' | 'OKADA';
     parcelSize?: 'SMALL' | 'MEDIUM' | 'LARGE'; parcelDesc?: string;
+    // Parcels: who is at the other end, and which end the customer is at. The backend
+    // rejects a parcel without them — a courier can't complete a handover blind.
+    direction?: 'SEND' | 'RECEIVE'; partyName?: string; partyPhone?: string;
     riderPhone?: string;
   }) => api.post<RideRequest>('/rides/requests', body).then(r => r.data),
 

@@ -19,6 +19,9 @@ public class CreateRideRequestDto {
     private String rideType;    // STANDARD | LUXE | OKADA (rides)
     private String parcelSize;  // SMALL | MEDIUM | LARGE (parcels)
     private String parcelDesc;  // what the parcel is
+    private String direction;   // SEND | RECEIVE (parcels) — which end the customer is at
+    private String partyName;   // the other person in the handover (recipient, or sender on RECEIVE)
+    private String partyPhone;
     private String riderPhone;  // shared with the matched driver for calling
 
     public Double getOriginLat() { return originLat; }
@@ -43,6 +46,12 @@ public class CreateRideRequestDto {
     public void setParcelSize(String parcelSize) { this.parcelSize = parcelSize; }
     public String getParcelDesc() { return parcelDesc; }
     public void setParcelDesc(String parcelDesc) { this.parcelDesc = parcelDesc; }
+    public String getDirection() { return direction; }
+    public void setDirection(String direction) { this.direction = direction; }
+    public String getPartyName() { return partyName; }
+    public void setPartyName(String partyName) { this.partyName = partyName; }
+    public String getPartyPhone() { return partyPhone; }
+    public void setPartyPhone(String partyPhone) { this.partyPhone = partyPhone; }
     public String getRiderPhone() { return riderPhone; }
     public void setRiderPhone(String riderPhone) { this.riderPhone = riderPhone; }
 }

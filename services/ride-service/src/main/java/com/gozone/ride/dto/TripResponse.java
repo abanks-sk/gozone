@@ -17,9 +17,15 @@ public record TripResponse(
     String paymentMethod,
     // The rider's phone so the matched driver can call them. Trip endpoints are
     // participant-guarded, so this is only ever revealed after a match.
-    String riderPhone
+    String riderPhone,
+    // Parcel handover: who the courier meets at the far end, and which end the customer is at.
+    // Revealed on the same terms as riderPhone — to an assigned participant, after a match.
+    String direction,
+    String partyName,
+    String partyPhone
 ) {
     public static TripResponse from(Trip t) {
+        var req = t.getRequest();
         return new TripResponse(
             t.getId(),
             t.getDriverId(),
@@ -29,7 +35,10 @@ public record TripResponse(
             t.getCompletedAt(),
             t.getPaymentStatus().name(),
             t.getPaymentMethod(),
-            t.getRequest() != null ? t.getRequest().getRiderPhone() : null
+            req != null ? req.getRiderPhone() : null,
+            req != null && req.getDirection() != null ? req.getDirection().name() : null,
+            req != null ? req.getPartyName() : null,
+            req != null ? req.getPartyPhone() : null
         );
     }
 }

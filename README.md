@@ -508,7 +508,7 @@ reference id so a retry can never double-credit.
 
 | Table              | Contents                                                                                                                                                 |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ride_requests`    | rider, origin/dest `geography(POINT)`, seats, proposed fare, status, kind (RIDE\|PARCEL), ride_type, parcel_size, parcel_desc, scheduled_at, rider_phone |
+| `ride_requests`    | rider, origin/dest `geography(POINT)`, seats, proposed fare, status, kind (RIDE\|PARCEL), ride_type, parcel_size, parcel_desc, direction (SEND\|RECEIVE), party_name, party_phone, scheduled_at, rider_phone |
 | `bids`             | request, driver, amount, type (ACCEPT\|COUNTER), status, driver name/phone/vehicle/plate/position                                                        |
 | `trips`            | request, driver, agreed fare, status, timestamps, payment status/method                                                                                  |
 | `trip_passengers`  | locked fare and pickup order per passenger (pooling)                                                                                                     |
@@ -542,7 +542,7 @@ reference id so a retry can never double-credit.
 | `notifications`     | title, body, sent flag                                                                |
 | `push_tokens`       | Expo push tokens per user                                                             |
 
-Migration counts: auth **V1–V5**, ride **V1–V7**, food **V1–V8**, wallet **V1–V2**.
+Migration counts: auth **V1–V5**, ride **V1–V8**, food **V1–V8**, wallet **V1–V2**.
 
 ---
 
@@ -959,6 +959,7 @@ explain _why_ each one was made is more valuable than pretending they do not exi
 | Simplification                 | What was built instead                                                                                            | Why                                                                                                                                                             |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Pooling**                    | Corridor + bearing match with a haversine fair-share split, a flat distance threshold, and a `rule_version` stamp | True en-route pooling needs route geometry, detour tolerance and ETA caps — a system in its own right. An existing passenger's locked fare is never recomputed. |
+| **Parcels share the ride service** | One `ride_requests` table with a `kind`, plus parcel-only columns for size, contents and the handover contact | A courier carrying a box is the same primitive as a driver carrying a person, so parcels inherit matching, bidding, live tracking, payments, SOS and ratings rather than duplicating them — and one service, not two, competes for the same driver pool. The cost is a few nullable columns and `kind` guards where the two genuinely differ (pooling seats people, so parcels are excluded at both ends). Splitting this out becomes right only when parcels grow a lifecycle rides don't share — multi-leg routing, warehouse custody, proof of delivery, insurance — at which point the shared trip state machine stops fitting. |
 | **Cross-service transactions** | Synchronous REST from ride/food to wallet, made idempotent by reference id                                        | The production answer is a transactional outbox or saga. Documented as the next step; building it would not change what the demo shows.                         |
 | **OTP / SMS**                  | Real provider integration that logs the code when no key is set                                                   | Lets the system be demonstrated without spending on SMS, while proving the real path works.                                                                     |
 | **KYC verification**           | Placeholder document URLs plus an admin approve/reject toggle                                                     | Real identity verification requires a third-party vendor and legal agreements. The workflow around it is complete and real.                                     |
@@ -1143,7 +1144,6 @@ the passenger requests.
 
 **Product backlog**
 
-- A dedicated parcel backend (parcels currently reuse `/rides/requests`).
 - Replacing synchronous settlement with a transactional outbox.
 - Renaming `RIDER` to `PASSENGER` across the backend — deliberately deferred because it is a
   destructive migration touching four services for a cosmetic gain.

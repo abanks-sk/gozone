@@ -43,7 +43,6 @@ export default function ParcelLiveScreen() {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const p = useLocalSearchParams<{ requestId: string; direction: 'send' | 'receive'; size: string; party: string; fare: string }>();
-  const sending = (p.direction ?? 'send') === 'send';
   const requestId = p.requestId;
   const origin = useRideDraft((s) => s.origin);
   const dest = useRideDraft((s) => s.dest);
@@ -58,6 +57,14 @@ export default function ParcelLiveScreen() {
   const [isStale, setIsStale] = useState(false);
   const [rating, setRating] = useState(0);
   const [rated, setRated] = useState(false);
+  // The nav params are only a first paint: the request itself is the record, so a reload or a
+  // cold open still knows the direction and who the handover is with.
+  const [serverDirection, setServerDirection] = useState<'SEND' | 'RECEIVE' | null>(null);
+  const [serverParty, setServerParty] = useState<string | null>(null);
+
+  // Server wins once it answers; the nav param covers the first render.
+  const sending = serverDirection ? serverDirection === 'SEND' : (p.direction ?? 'send') === 'send';
+  const partyName = serverParty ?? p.party ?? '';
   const payMethod = usePaymentStore((s) => s.selected);
   const savedMethods = usePaymentStore((s) => s.cards);
   const [paying, setPaying] = useState(false);
@@ -106,6 +113,8 @@ export default function ParcelLiveScreen() {
       try {
         const s = await rideApi.requestStatus(requestId);
         if (!active) return;
+        if (s.request?.direction) setServerDirection(s.request.direction);
+        if (s.request?.partyName) setServerParty(s.request.partyName);
         if (s.trip) { setTrip(s.trip); if (s.driver) setCourierInfo(s.driver); return; }
         if (s.request?.status === 'EXPIRED' || s.request?.status === 'CANCELLED') {
           setReqDead(true);
@@ -182,7 +191,7 @@ export default function ParcelLiveScreen() {
     catch (e: any) { Alert.alert('Error', e?.response?.data?.message ?? 'Could not submit rating'); }
   }
 
-  const phase = trip ? courierPhase(trip.status, sending, p.party ?? '') : null;
+  const phase = trip ? courierPhase(trip.status, sending, partyName) : null;
 
   // Map phases: courier→pickup while collecting; pickup→drop-off once in transit.
   const center = beforePickup && courierLoc
@@ -356,7 +365,7 @@ export default function ParcelLiveScreen() {
               </View>
               <Text style={{ fontSize: 20, fontWeight: '800', color: c.text, marginTop: 10 }}>Parcel delivered</Text>
               <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 4 }}>
-                {sending ? (p.party ? `Handed to ${p.party}.` : 'Handed to your recipient.') : 'Your parcel has arrived.'}
+                {sending ? (partyName ? `Handed to ${partyName}.` : 'Handed to your recipient.') : 'Your parcel has arrived.'}
               </Text>
               <Text style={{ fontSize: 22, fontWeight: '800', color: c.primary, marginTop: 4 }}>GH₵ {trip?.agreedFare}</Text>
             </View>
