@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, TextInput, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -12,6 +12,7 @@ import { useRideDraft } from '../../src/store/rideDraft';
 import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
 import { useProfileStore } from '../../src/store/profileStore';
 import { apiBaseUrl } from '../../src/lib/host';
+import { getCurrentLocation } from '../../src/lib/location';
 import { LeafletMap } from '../../src/components/LeafletMap';
 import { Row, Badge } from '../../src/components/ui';
 
@@ -22,6 +23,17 @@ function tripPhase(status: string): { label: string; title: string; sub: string 
     case 'STARTED': return { label: 'On trip', title: 'Enjoy your ride', sub: 'You’re on your way to your destination.' };
     default: return { label: status, title: 'Your trip', sub: '' };
   }
+}
+
+/** Rough metres between two points — accurate enough to decide "have they moved much?". */
+function metresBetween(a: LatLng, b: LatLng): number {
+  const R = 6371000;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const la1 = (a.lat * Math.PI) / 180;
+  const la2 = (b.lat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
 }
 
 export default function LiveRideScreen() {
@@ -64,18 +76,39 @@ export default function LiveRideScreen() {
   }, [origin.lat, origin.lng, dest.lat, dest.lng]);
   const route = routePts.length ? routePts : [{ lat: origin.lat, lng: origin.lng }, { lat: dest.lat, lng: dest.lng }];
 
-  // The driver's road route to the pickup — fetched once their live location
-  // first arrives, shown while they're heading to you (MATCHED/ENROUTE).
+  // The driver's road route to your pickup, shown while they're on their way (MATCHED/ENROUTE).
+  // It is re-drawn as they move, so the line visibly shortens and you can see how far off they
+  // are — fetching it once (as this used to) left a stale route with only the car sliding along.
   const [pickupRoute, setPickupRoute] = useState<LatLng[]>([]);
   const beforePickup = !!trip && (trip.status === 'MATCHED' || trip.status === 'ENROUTE');
+  // Where the driver was when we last asked for a route. Re-routing on every GPS ping would be a
+  // request every few seconds per rider; re-routing once they've actually covered ground keeps
+  // it live for a fraction of the traffic.
+  const lastRoutedFrom = useRef<LatLng | null>(null);
   useEffect(() => {
-    if (!beforePickup || !driverLoc || pickupRoute.length) return;
+    if (!beforePickup || !driverLoc) return;
+    if (lastRoutedFrom.current && metresBetween(lastRoutedFrom.current, driverLoc) < 120) return;
+
     let active = true;
+    lastRoutedFrom.current = driverLoc;
     mapsApi.directions(driverLoc, { lat: origin.lat, lng: origin.lng })
       .then((d) => { if (active && d.points?.length) setPickupRoute(d.points); })
       .catch(() => {});
     return () => { active = false; };
   }, [beforePickup, driverLoc?.lat, driverLoc?.lng]);
+
+  // Once they've picked you up the map becomes the journey, so drop the pickup leg.
+  useEffect(() => {
+    if (!beforePickup) { setPickupRoute([]); lastRoutedFrom.current = null; }
+  }, [beforePickup]);
+
+  // Your own position — without it the map says nothing while you wait for a driver.
+  const [myLoc, setMyLoc] = useState<LatLng | null>(null);
+  useEffect(() => {
+    let active = true;
+    getCurrentLocation().then((l) => { if (active && l) setMyLoc(l); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const searching = !trip;
   // Show the "no drivers" panel once the request is dead, or we timed out with no live offers.
@@ -177,6 +210,8 @@ export default function LiveRideScreen() {
 
   // Map phases: while the driver heads to you the map is about the pickup leg
   // (driver → pickup); once the trip starts it becomes the journey (pickup → dest).
+  // Centre on whatever the rider needs to see right now: the gap between them and the driver
+  // while they wait, and the journey itself once they're aboard.
   const center = beforePickup && driverLoc
     ? { lat: (driverLoc.lat + origin.lat) / 2, lng: (driverLoc.lng + origin.lng) / 2 }
     : { lat: (origin.lat + dest.lat) / 2, lng: (origin.lng + dest.lng) / 2 };
@@ -192,7 +227,8 @@ export default function LiveRideScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers} driver={driverLoc} route={shownRoute} />
+      <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers}
+        driver={driverLoc} userLocation={myLoc} route={shownRoute} />
 
       {/* Back */}
       <TouchableOpacity onPress={() => router.replace('/(rider)/home' as any)} activeOpacity={0.85}

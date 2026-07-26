@@ -62,12 +62,18 @@ export default function AddressScreen() {
   async function useCurrentLocation() {
     setLocating(true);
     const loc = await getCurrentLocation();
-    if (!loc) { setLocating(false); return Alert.alert('Location unavailable', 'Turn on location access to use your current position.'); }
-    const geo = await reverseGeocode(loc.lat, loc.lng);
+    if (!loc) {
+      setLocating(false);
+      return Alert.alert('Location unavailable', 'Turn on location access to use your current position.');
+    }
+
+    // The coordinates ARE the answer — the street name is decoration. Set the field and leave
+    // immediately instead of holding the user on a spinner while a geocoder is consulted:
+    // waiting on the name is what made this button look like it never finished.
     setLocating(false);
     pick({
-      label: geo?.label ?? 'Current location',
-      sub: geo?.sub ?? `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`,
+      label: 'Current location',
+      sub: `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`,
       lat: loc.lat, lng: loc.lng,
     });
   }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -11,6 +11,7 @@ import { useTheme } from '../../src/theme/ThemeProvider';
 import { useRideDraft } from '../../src/store/rideDraft';
 import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
 import { apiBaseUrl } from '../../src/lib/host';
+import { getCurrentLocation } from '../../src/lib/location';
 import { LeafletMap } from '../../src/components/LeafletMap';
 import { Row, Badge } from '../../src/components/ui';
 
@@ -36,6 +37,17 @@ function courierPhase(status: string, sending: boolean, party: string) {
     };
     default: return { label: status, title: 'Your parcel', sub: '' };
   }
+}
+
+/** Rough metres between two points — enough to decide "have they moved much?". */
+function metresBetween(a: LatLng, b: LatLng): number {
+  const R = 6371000;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const la1 = (a.lat * Math.PI) / 180;
+  const la2 = (b.lat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
 }
 
 export default function ParcelLiveScreen() {
@@ -83,17 +95,35 @@ export default function ParcelLiveScreen() {
   }, [origin.lat, origin.lng, dest.lat, dest.lng]);
   const route = routePts.length ? routePts : [{ lat: origin.lat, lng: origin.lng }, { lat: dest.lat, lng: dest.lng }];
 
-  // The courier's road route to the pickup, shown while they head there.
+  // The courier's road route to the pickup, re-drawn as they move so the line shortens and you
+  // can see them closing in — not a fixed route with a marker sliding along it.
   const [pickupRoute, setPickupRoute] = useState<LatLng[]>([]);
   const beforePickup = !!trip && (trip.status === 'MATCHED' || trip.status === 'ENROUTE');
+  // Re-route only once they've covered ground, rather than on every GPS ping.
+  const lastRoutedFrom = useRef<LatLng | null>(null);
   useEffect(() => {
-    if (!beforePickup || !courierLoc || pickupRoute.length) return;
+    if (!beforePickup || !courierLoc) return;
+    if (lastRoutedFrom.current && metresBetween(lastRoutedFrom.current, courierLoc) < 120) return;
+
     let active = true;
+    lastRoutedFrom.current = courierLoc;
     mapsApi.directions(courierLoc, { lat: origin.lat, lng: origin.lng })
       .then((d) => { if (active && d.points?.length) setPickupRoute(d.points); })
       .catch(() => {});
     return () => { active = false; };
   }, [beforePickup, courierLoc?.lat, courierLoc?.lng]);
+
+  useEffect(() => {
+    if (!beforePickup) { setPickupRoute([]); lastRoutedFrom.current = null; }
+  }, [beforePickup]);
+
+  // Your own position, so the map is useful while you're still waiting for a courier.
+  const [myLoc, setMyLoc] = useState<LatLng | null>(null);
+  useEffect(() => {
+    let active = true;
+    getCurrentLocation().then((l) => { if (active && l) setMyLoc(l); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const searching = !trip;
   const noCouriers = searching && (reqDead || (timedOut && offers.length === 0));
@@ -209,7 +239,8 @@ export default function ParcelLiveScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers} driver={courierLoc} route={shownRoute} />
+      <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers}
+        driver={courierLoc} userLocation={myLoc} route={shownRoute} />
 
       {/* Back */}
       <TouchableOpacity onPress={() => router.replace('/(parcel)' as any)} activeOpacity={0.85}

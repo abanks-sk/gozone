@@ -47,9 +47,22 @@ export async function forwardSearch(query: string): Promise<Place[]> {
  * Prefers our backend Google proxy (accurate place names, server-side key); falls back
  * to Nominatim if the proxy is unavailable or the Maps key isn't authorised.
  */
+/**
+ * Naming a coordinate is a nicety, never a blocker: both lookups are bounded so a slow or
+ * unreachable geocoder can't leave the UI waiting on a label it doesn't need.
+ */
+const GEOCODE_TIMEOUT_MS = 5000;
+
+function bounded<T>(p: Promise<T>, ms = GEOCODE_TIMEOUT_MS): Promise<T | null> {
+  return Promise.race([
+    p.catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 export async function reverseGeocode(lat: number, lng: number): Promise<{ label: string; sub: string } | null> {
   try {
-    const g = await mapsApi.reverseGeocode(lat, lng);
+    const g = await bounded(mapsApi.reverseGeocode(lat, lng));
     if (g?.address) {
       const parts = String(g.address).split(',').map((s) => s.trim());
       return { label: g.name || parts[0], sub: parts.slice(0, 3).join(', ') };
@@ -57,10 +70,11 @@ export async function reverseGeocode(lat: number, lng: number): Promise<{ label:
   } catch { /* fall through to OSM */ }
 
   try {
-    const r = await fetch(
+    const r = await bounded(fetch(
       `${BASE}/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=17&addressdetails=1`,
       { headers: { Accept: 'application/json' } },
-    );
+    ));
+    if (!r) return null;
     const d = await r.json();
     if (!d || !d.display_name) return null;
     const a = d.address ?? {};

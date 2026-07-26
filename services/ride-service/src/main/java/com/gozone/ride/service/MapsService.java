@@ -37,8 +37,7 @@ public class MapsService {
 
     /** Road route between two points → decoded polyline points + distance/duration. */
     public Map<String, Object> directions(double oLat, double oLng, double dLat, double dLng) {
-        Map<String, Object> empty = Map.of("points", List.of(), "distanceMeters", 0, "durationSeconds", 0, "enabled", enabled());
-        if (!enabled()) return empty;
+        if (!enabled()) return osrmDirections(oLat, oLng, dLat, dLng);
         try {
             String url = UriComponentsBuilder.fromHttpUrl("https://maps.googleapis.com/maps/api/directions/json")
                 .queryParam("origin", oLat + "," + oLng)
@@ -64,7 +63,41 @@ public class MapsService {
         } catch (Exception e) {
             log.error("[MAPS] directions failed: {}", e.getMessage());
         }
-        return Map.of("points", List.of(), "distanceMeters", 0, "durationSeconds", 0, "enabled", true);
+        // Google said no — most often because the server key is IP-restricted and the machine's
+        // address has changed. Fall back to a real road route rather than letting the apps draw a
+        // straight line through buildings.
+        return osrmDirections(oLat, oLng, dLat, dLng);
+    }
+
+    /**
+     * Road route from OSRM's public demo server — no key, no IP allowlist.
+     *
+     * <p>This exists so routing degrades to "still a real route" instead of "a straight line".
+     * The apps' own last resort is a straight line, and that is what a viewer notices first: a
+     * path cutting across blocks and water. OSRM is best-effort (public instance, no SLA), so a
+     * failure here simply returns empty and the app falls back as before.
+     */
+    private Map<String, Object> osrmDirections(double oLat, double oLng, double dLat, double dLng) {
+        try {
+            String url = String.format(
+                "https://router.project-osrm.org/route/v1/driving/%f,%f;%f,%f?overview=full&geometries=polyline",
+                oLng, oLat, dLng, dLat);
+            JsonNode root = rest.getForObject(url, JsonNode.class);
+            if (root != null && "Ok".equalsIgnoreCase(root.path("code").asText())
+                    && root.path("routes").size() > 0) {
+                JsonNode route = root.path("routes").get(0);
+                List<Map<String, Double>> points = decodePolyline(route.path("geometry").asText());
+                log.info("[MAPS] routed via OSRM ({} points)", points.size());
+                return Map.of(
+                    "points", points,
+                    "distanceMeters", (int) route.path("distance").asDouble(),
+                    "durationSeconds", (int) route.path("duration").asDouble(),
+                    "enabled", true);
+            }
+        } catch (Exception e) {
+            log.error("[MAPS] OSRM fallback failed: {}", e.getMessage());
+        }
+        return Map.of("points", List.of(), "distanceMeters", 0, "durationSeconds", 0, "enabled", enabled());
     }
 
     /** Place autocomplete (Places API New) → [{placeId, description}]. */

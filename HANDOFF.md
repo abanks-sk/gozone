@@ -1319,6 +1319,35 @@ Three things the evaluation caught, all confirmed in code and two worse than rep
 - ⚠️ **Demo note:** a test run leaves the seeded courier at 0 (cleanup does this); the walk-in
   demo customer still needs re-staging after a run, as before.
 
+### Maps fixes: current-location hang, straight-line routes, live driver route (latest)
+### — REBUILD ride-service
+1. **"Use current location" spun forever** (worst on iOS). Two unbounded waits: `getCurrentPositionAsync`
+   has no timeout and blocks until a GPS fix — cold receiver or indoors, that's effectively never —
+   and then the screen *waited on a reverse-geocode* before navigating. Fixed in
+   `src/lib/location.ts`: try `getLastKnownPositionAsync` first (instant, accurate enough to drop a
+   pin), then a **bounded** fresh fix (8s), with a web-side belt-and-braces timeout for browsers
+   that fire neither geolocation callback. `lib/geocode.ts` lookups are bounded (5s) too. And the
+   screens now **fill the field and navigate back the moment coordinates exist** — the street name
+   is decoration, not a gate. Applies to ride search + GoShop address.
+2. **Straight lines instead of routes — root cause found:** the Google **server key is IP-restricted**
+   and the machine's IP had changed, so every Directions call returned `REQUEST_DENIED` ("This IP …
+   is not authorized") and the apps drew their straight-line fallback. Two responses: (a) told the
+   user how to re-restrict the key; (b) **added a keyless OSRM fallback** in `MapsService.directions`
+   (`router.project-osrm.org`, no key/allowlist) so a blocked or rotated key degrades to *a real road
+   route* rather than a line through buildings. Verified: 240-point route, 6.7 km, 11 min for
+   Accra→Osu with Google still refusing. Place search + reverse geocode still fall back to Nominatim
+   as before (they return empty from Google while restricted).
+3. **Live driver/courier route.** The pickup-leg route was fetched **once** (`if (… || pickupRoute.length) return`)
+   so it never shrank — only the car marker slid along a stale line. Now it **re-routes as they move**,
+   throttled to once they've covered **120 m** (re-routing on every 3s GPS ping would be a request per
+   ping per rider). Cleared when they pick you up so the map switches to the journey. Also the
+   customer's **own position now shows on the live map** (`userLocation` — both map implementations
+   already supported the blue dot, it just wasn't passed), so the map means something while you're
+   still waiting for someone to accept. Applied to **both** `(rider)/live.tsx` and `(parcel)/live.tsx`.
+- e2e 118/118; all three apps type-check clean. **Rebuild ride-service** (OSRM fallback).
+- ⚠️ **Not device-verified** — 1 and 3 are phone-side behaviours; the root causes are fixed and the
+  logic type-checks, but they want a real tap-through on iOS before the presentation.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
