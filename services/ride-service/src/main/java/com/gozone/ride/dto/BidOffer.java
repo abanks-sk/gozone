@@ -18,11 +18,16 @@ public record BidOffer(
     String driverPhone,
     String vehicle,
     String plate,
-    Double distanceKm // driver → pickup at bid time; null if the driver sent no position
+    Double distanceKm, // driver → pickup at bid time; null if the driver sent no position
+    // Where the driver was when they offered. The rider's map uses this to place the vehicle
+    // immediately on matching, instead of showing no vehicle at all until the first GPS ping
+    // arrives over the WebSocket.
+    Double lat,
+    Double lng
 ) {
     public static BidOffer from(Bid b, Double distanceKm) {
         return new BidOffer(b.getId(), b.getDriverId(), b.getAmount(), b.getType().name(),
             b.getStatus().name(), b.getCreatedAt(), b.getDriverName(), b.getDriverPhone(),
-            b.getVehicle(), b.getPlate(), distanceKm);
+            b.getVehicle(), b.getPlate(), distanceKm, b.getDriverLat(), b.getDriverLng());
     }
 }

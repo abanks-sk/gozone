@@ -55,6 +55,9 @@ export interface BidOffer {
   plate: string | null;
   /** Driver → pickup straight-line km at offer time (null if unknown). */
   distanceKm: number | null;
+  /** Where they were when they offered — lets the map show the vehicle before the first GPS ping. */
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface RideStatus {

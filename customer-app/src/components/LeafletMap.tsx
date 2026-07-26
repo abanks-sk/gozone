@@ -18,6 +18,7 @@ interface Props {
   mode?: 'picker' | 'view';
   markers?: MapMarker[];
   driver?: LatLng | null;   // live-updated without reloading the map
+  vehicleKind?: 'car' | 'bike' | 'truck'; // what that marker is drawn as (see mapTypes)
   userLocation?: LatLng | null; // the device's own location (blue dot)
   flyTo?: LatLng | null;    // recenter the map when this changes
   route?: LatLng[];
@@ -28,9 +29,10 @@ interface Props {
 function buildHtml(opts: {
   tileUrl: string; center: LatLng; zoom: number; mode: string;
   markers: MapMarker[]; driver: LatLng | null; user: LatLng | null; route: LatLng[]; primary: string;
+  vehicleKind: string;
 }): string {
-  const { tileUrl, center, zoom, mode, markers, driver, user, route, primary } = opts;
-  const data = JSON.stringify({ center, zoom, mode, markers, driver, user, route, primary, tileUrl });
+  const { tileUrl, center, zoom, mode, markers, driver, user, route, primary, vehicleKind } = opts;
+  const data = JSON.stringify({ center, zoom, mode, markers, driver, user, route, primary, tileUrl, vehicleKind });
   return `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -55,12 +57,19 @@ ${mode === 'picker' ? `<div id="dot"></div><div id="pin"><svg width="34" height=
 
   var COLORS={pickup:'#22c55e',dest:'#ef4444',plain:'#64748b'};
   function dot(m){ return L.circleMarker([m.lat,m.lng],{radius:8,color:'#fff',weight:2,fillColor:COLORS[m.kind]||COLORS.plain,fillOpacity:1}); }
-  function carIcon(){ return L.divIcon({className:'',html:'<div style="background:'+CFG.primary+';width:30px;height:30px;border-radius:15px;border:3px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4)">🚗</div>',iconSize:[30,30],iconAnchor:[15,15]}); }
+  // A courier on an okada shouldn't appear as a saloon car — on the street that's the difference
+  // between looking for a car and looking for a motorbike.
+  var GLYPH={car:'🚗',bike:'🏍️',truck:'🚚'};
+  function vehicleIcon(kind){ var g=GLYPH[kind||CFG.vehicleKind||'car']||GLYPH.car;
+    return L.divIcon({className:'',html:'<div style="background:'+CFG.primary+';width:30px;height:30px;border-radius:15px;border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;box-shadow:0 2px 6px rgba(0,0,0,.4)">'+g+'</div>',iconSize:[30,30],iconAnchor:[15,15]}); }
+  function carIcon(){ return vehicleIcon(CFG.vehicleKind); }
 
   (CFG.markers||[]).forEach(function(m){ var mk = m.kind==='driver'?L.marker([m.lat,m.lng],{icon:carIcon()}):dot(m); mk.addTo(map); if(m.label){mk.bindTooltip(m.label,{permanent:false}); } });
 
   var driverMk=null;
   window.setDriver=function(lat,lng){ if(!driverMk){driverMk=L.marker([lat,lng],{icon:carIcon()}).addTo(map);} else {driverMk.setLatLng([lat,lng]);} };
+  // The vehicle is only known once an offer is accepted, i.e. after this map has loaded.
+  window.setVehicleKind=function(kind){ CFG.vehicleKind=kind; if(driverMk){driverMk.setIcon(vehicleIcon(kind));} };
   if(CFG.driver){ window.setDriver(CFG.driver.lat,CFG.driver.lng); }
 
   var userMk=null;
@@ -75,21 +84,21 @@ ${mode === 'picker' ? `<div id="dot"></div><div id="pin"><svg width="34" height=
 
   if(CFG.mode==='picker'){ map.on('moveend',function(){ var c=map.getCenter(); post({type:'center',lat:c.lat,lng:c.lng}); }); }
 
-  function onCmd(d){ try{ var m=typeof d==='string'?JSON.parse(d):d; if(m.type==='driver'){window.setDriver(m.lat,m.lng);} else if(m.type==='user'){window.setUser(m.lat,m.lng);} else if(m.type==='flyTo'){map.setView([m.lat,m.lng],m.zoom||map.getZoom());} else if(m.type==='route'){window.setRoute(m.coords);} }catch(e){} }
+  function onCmd(d){ try{ var m=typeof d==='string'?JSON.parse(d):d; if(m.type==='driver'){window.setDriver(m.lat,m.lng);} else if(m.type==='vehicleKind'){window.setVehicleKind(m.kind);} else if(m.type==='user'){window.setUser(m.lat,m.lng);} else if(m.type==='flyTo'){map.setView([m.lat,m.lng],m.zoom||map.getZoom());} else if(m.type==='route'){window.setRoute(m.coords);} }catch(e){} }
   window.addEventListener('message',function(e){onCmd(e.data);});
   document.addEventListener('message',function(e){onCmd(e.data);});
   post({type:'ready'});
 </script></body></html>`;
 }
 
-export function LeafletMap({ style, center, zoom = 14, mode = 'view', markers = [], driver = null, userLocation = null, flyTo = null, route = [], onCenterChange, onReady }: Props) {
+export function LeafletMap({ style, center, zoom = 14, mode = 'view', markers = [], driver = null, vehicleKind = 'car', userLocation = null, flyTo = null, route = [], onCenterChange, onReady }: Props) {
   const { scheme, colors } = useTheme();
   const tileUrl = scheme === 'dark'
     ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
     : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
 
   // Build the HTML once per mode/theme/static-config (driver updates are sent live).
-  const [html] = useState(() => buildHtml({ tileUrl, center, zoom, mode, markers, driver, user: userLocation, route, primary: colors.primary }));
+  const [html] = useState(() => buildHtml({ tileUrl, center, zoom, mode, markers, driver, user: userLocation, route, primary: colors.primary, vehicleKind }));
 
   const webRef = useRef<WebView>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -110,6 +119,12 @@ export function LeafletMap({ style, center, zoom = 14, mode = 'view', markers = 
       webRef.current?.injectJavaScript(js);
     }
   }
+
+  // Swap the marker shape when the vehicle becomes known (after an offer is accepted).
+  useEffect(() => {
+    send({ type: 'vehicleKind', kind: vehicleKind },
+      `window.setVehicleKind && window.setVehicleKind(${JSON.stringify(vehicleKind)}); true;`);
+  }, [vehicleKind]);
 
   // Live driver updates → push to the map without reloading.
   useEffect(() => {

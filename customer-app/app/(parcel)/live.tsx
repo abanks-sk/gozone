@@ -13,6 +13,7 @@ import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymen
 import { apiBaseUrl } from '../../src/lib/host';
 import { getCurrentLocation } from '../../src/lib/location';
 import { LeafletMap } from '../../src/components/LeafletMap';
+import { vehicleKindOf } from '../../src/components/mapTypes';
 import { Row, Badge } from '../../src/components/ui';
 
 // Step 3 of the parcel flow — mirrors the ride live screen: full-screen map,
@@ -116,6 +117,18 @@ export default function ParcelLiveScreen() {
   useEffect(() => {
     if (!beforePickup) { setPickupRoute([]); lastRoutedFrom.current = null; }
   }, [beforePickup]);
+
+  // Put the courier's vehicle on the map as soon as they're matched, using the position they
+  // offered from. Waiting for the first GPS ping meant no vehicle marker at all for the first
+  // few seconds — or indefinitely if their app wasn't pushing location.
+  useEffect(() => {
+    if (!courierInfo?.lat || !courierInfo?.lng) return;
+    setCourierLoc((cur) => cur ?? { lat: courierInfo.lat as number, lng: courierInfo.lng as number });
+  }, [courierInfo?.lat, courierInfo?.lng]);
+
+  // Draw them as what they're actually riding — a car pin for an okada is misleading when
+  // you're stood on the street looking for them.
+  const vehicleKind = vehicleKindOf(courierInfo?.vehicle);
 
   // Your own position, so the map is useful while you're still waiting for a courier.
   const [myLoc, setMyLoc] = useState<LatLng | null>(null);
@@ -240,7 +253,7 @@ export default function ParcelLiveScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers}
-        driver={courierLoc} userLocation={myLoc} route={shownRoute} />
+        driver={courierLoc} vehicleKind={vehicleKind} userLocation={myLoc} route={shownRoute} />
 
       {/* Back */}
       <TouchableOpacity onPress={() => router.replace('/(parcel)' as any)} activeOpacity={0.85}

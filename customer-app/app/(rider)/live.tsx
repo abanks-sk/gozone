@@ -14,6 +14,7 @@ import { useProfileStore } from '../../src/store/profileStore';
 import { apiBaseUrl } from '../../src/lib/host';
 import { getCurrentLocation } from '../../src/lib/location';
 import { LeafletMap } from '../../src/components/LeafletMap';
+import { vehicleKindOf } from '../../src/components/mapTypes';
 import { Row, Badge } from '../../src/components/ui';
 
 function tripPhase(status: string): { label: string; title: string; sub: string } {
@@ -101,6 +102,18 @@ export default function LiveRideScreen() {
   useEffect(() => {
     if (!beforePickup) { setPickupRoute([]); lastRoutedFrom.current = null; }
   }, [beforePickup]);
+
+  // Put the driver's vehicle on the map as soon as they're matched, using the position they
+  // offered from. Waiting for the first GPS ping meant no vehicle marker at all for the first
+  // few seconds — or indefinitely if their app wasn't pushing location.
+  useEffect(() => {
+    if (!driverInfo?.lat || !driverInfo?.lng) return;
+    setDriverLoc((cur) => cur ?? { lat: driverInfo.lat as number, lng: driverInfo.lng as number });
+  }, [driverInfo?.lat, driverInfo?.lng]);
+
+  // Draw them as what they're actually riding — a car pin for an okada is misleading when
+  // you're stood on the street looking for them.
+  const vehicleKind = vehicleKindOf(driverInfo?.vehicle);
 
   // Your own position — without it the map says nothing while you wait for a driver.
   const [myLoc, setMyLoc] = useState<LatLng | null>(null);
@@ -228,7 +241,7 @@ export default function LiveRideScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers}
-        driver={driverLoc} userLocation={myLoc} route={shownRoute} />
+        driver={driverLoc} vehicleKind={vehicleKind} userLocation={myLoc} route={shownRoute} />
 
       {/* Back */}
       <TouchableOpacity onPress={() => router.replace('/(rider)/home' as any)} activeOpacity={0.85}

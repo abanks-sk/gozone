@@ -1348,6 +1348,25 @@ Three things the evaluation caught, all confirmed in code and two worse than rep
 - ⚠️ **Not device-verified** — 1 and 3 are phone-side behaviours; the root causes are fixed and the
   logic type-checks, but they want a real tap-through on iOS before the presentation.
 
+### Vehicle pins on the live map — why they seemed missing (latest) — REBUILD ride-service
+The car/bike marker code was there and correct (rotating top-down car SVG on device, glyph
+marker on web) — but **the marker only ever got a position from the WebSocket GPS stream**, so
+until the driver's app pushed its first ping there was *no vehicle on the map at all*, just the
+pickup/destination dots. If the driver app wasn't pushing location, it never appeared.
+- **Seeded from the offer:** `BidOffer` now carries the driver's `lat`/`lng` (the `bids` table has
+  stored them since V6 — they just weren't in the DTO). Both live screens place the vehicle the
+  moment you match, then the WS takes over. Verified end-to-end: offer → `lat 5.598 lng -0.191`,
+  and the matched `status.driver` carries position + vehicle.
+- **Vehicle-aware shape:** new `vehicleKindOf()` maps the driver's free-text vehicle onto
+  car/bike/truck. Native gets a new **top-down `BikeMarker` SVG** (rotates to heading like the
+  car); web swaps the glyph, and can change it after load (`setVehicleKind`) since the vehicle is
+  only known once an offer is accepted. An okada courier no longer shows up as a saloon car.
+- Applied to `(rider)/live.tsx` and `(parcel)/live.tsx`. e2e 118/118, all apps type-check clean.
+- ⚠️ **Self-inflicted incident worth remembering:** a Python rewrite of `LeafletMap.tsx` containing
+  emoji **truncated the file to 0 bytes** (UnicodeEncodeError *after* opening in `w` mode, on
+  Windows cp1252). Recovered with `git checkout --`; the lesson is to use the Edit tool for files
+  with non-ASCII content rather than Python read/modify/write.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
