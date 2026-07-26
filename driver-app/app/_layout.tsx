@@ -10,6 +10,7 @@ import { useDriverStore } from '../src/store/driverStore';
 import { useDriverSetup } from '../src/store/driverSetupStore';
 import { useVehicle } from '../src/store/vehicleStore';
 import { useProfileStore } from '../src/store/profileStore';
+import { usePayout } from '../src/store/payoutStore';
 import '../src/lib/webAlert'; // patches Alert.alert on web (no-op on native)
 
 export default function RootLayout() {
@@ -18,10 +19,13 @@ export default function RootLayout() {
   const hydrateSetup = useDriverSetup((s) => s.hydrate);
   const hydrateVehicle = useVehicle((s) => s.hydrate);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
+  const hydratePayout = usePayout((s) => s.hydrate);
 
   // Rehydrate stored tokens + driver prefs on cold start. Routing is handled
   // declaratively by app/index.tsx (<Redirect>).
-  useEffect(() => { hydrate(); hydrateDriver(); hydrateSetup(); hydrateVehicle(); hydrateProfile(); }, []);
+  useEffect(() => {
+    hydrate(); hydrateDriver(); hydrateSetup(); hydrateVehicle(); hydrateProfile(); hydratePayout();
+  }, []);
 
   return (
     <SafeAreaProvider>

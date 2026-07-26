@@ -10,6 +10,7 @@ import { useVendorStore } from '../src/store/vendorStore';
 import { useVendorSetup } from '../src/store/vendorSetupStore';
 import { useBusiness } from '../src/store/businessStore';
 import { useProfileStore } from '../src/store/profileStore';
+import { usePayout } from '../src/store/payoutStore';
 import '../src/lib/webAlert'; // patches Alert.alert on web (no-op on native)
 
 export default function RootLayout() {
@@ -18,10 +19,13 @@ export default function RootLayout() {
   const hydrateSetup = useVendorSetup((s) => s.hydrate);
   const hydrateBusiness = useBusiness((s) => s.hydrate);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
+  const hydratePayout = usePayout((s) => s.hydrate);
 
   // Rehydrate stored tokens + vendor prefs on cold start. Routing is handled
   // declaratively by app/index.tsx (<Redirect>).
-  useEffect(() => { hydrate(); hydrateVendor(); hydrateSetup(); hydrateBusiness(); hydrateProfile(); }, []);
+  useEffect(() => {
+    hydrate(); hydrateVendor(); hydrateSetup(); hydrateBusiness(); hydrateProfile(); hydratePayout();
+  }, []);
 
   return (
     <SafeAreaProvider>

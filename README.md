@@ -397,6 +397,7 @@ Vite + React, no router (simple page-state switch), axios against the same gatew
 | `Incidents` | SOS alerts raised from trips; mark handled                                                                                           |
 | `Promos`    | Create promos (kind, discount terms, target, background image, live preview), activate (= approve vendor applications), hide, delete |
 | `Fees`      | Platform service fee % and delivery base/per-km                                                                                      |
+| `Payouts`   | Cash-out board: what's owed, mark paid, or mark failed (which refunds the earner)                                                    |
 | `Admins`    | Super-admin only: create admin accounts                                                                                              |
 
 Admin login is **username + password, then OTP** to the phone on file — two factors, and no
@@ -480,12 +481,15 @@ with a friendly 409 when no active Okada courier exists.
 Owns money and notifications.
 
 **Endpoints**: `/wallet/balance`, `/wallet/ledger`, `/wallet/topup/initialize`,
-`/wallet/topup/verify`, `/wallet/pay/initialize`, `/wallet/pay/verify`, `/wallet/commission`,
-`/wallet/settle/{orderId}`, `/wallet/push-token`, `/wallet/notifications`, `/notify`.
+`/wallet/topup/verify`, `/wallet/pay/initialize`, `/wallet/pay/verify`, `/wallet/withdrawals`
+(request / own history), `/wallet/withdrawals/all` + `/wallet/withdrawals/{id}` (admin payout
+board), `/wallet/commission`, `/wallet/settle/{orderId}`, `/wallet/push-token`,
+`/wallet/notifications`, `/notify`.
 
 **Key logic**: a double-entry-style ledger, per-pillar commission configuration, Paystack
-initialisation and verification, Expo push delivery with an SMS-stub fallback, and idempotent
-settlement keyed on reference id so a retry can never double-credit.
+money-in (initialise, verify) and money-out (transfers) with a manual payout queue as the
+fallback, Expo push delivery with an SMS-stub fallback, and idempotent settlement keyed on
+reference id so a retry can never double-credit.
 
 ---
 
@@ -534,10 +538,11 @@ settlement keyed on reference id so a retry can never double-credit.
 | `wallets`           | balance per owner (user id + owner type)                                              |
 | `ledger_entries`    | FARE_CREDIT, COMMISSION_DEBIT, PAYOUT, TOP_UP, REFUND — with `ref_id` for idempotency |
 | `commission_config` | rate per pillar — RIDE 18%, FOOD 12%                                                  |
+| `withdrawals`       | cash outs: amount, MOMO/BANK destination, PENDING → PROCESSING → PAID / FAILED        |
 | `notifications`     | title, body, sent flag                                                                |
 | `push_tokens`       | Expo push tokens per user                                                             |
 
-Migration counts: auth **V1–V5**, ride **V1–V7**, food **V1–V8**, wallet **V1**.
+Migration counts: auth **V1–V5**, ride **V1–V7**, food **V1–V8**, wallet **V1–V2**.
 
 ---
 
@@ -838,6 +843,33 @@ double-triggering is safe. The wallet endpoints that move money require the shar
 An unverified Paystack reference is **rejected** — a client cannot fake a payment by claiming
 one.
 
+### Cash out (money leaving GoZone)
+
+Drivers, couriers and vendors move earned money out from the Earnings tab. `POST
+/wallet/withdrawals` **debits the wallet immediately**, so the same balance can never be cashed
+out twice while a payout is in flight, and one open cash out per wallet is allowed at a time.
+The floor is `app.payout.min-amount` (default GH¢10) and the caller's id comes from the token,
+never the body.
+
+The service then tries to send the money through Paystack Transfers:
+
+| Outcome                            | Status       | What happens next                                      |
+| ---------------------------------- | ------------ | ------------------------------------------------------ |
+| Provider accepts the transfer      | `PROCESSING` | Money is on its way; the transfer code is recorded     |
+| No provider, or it refuses         | `PENDING`    | Sits on the **admin Payouts board** with the reason    |
+| Admin marks paid                   | `PAID`       | Terminal; the debit stands                             |
+| Admin marks failed                 | `FAILED`     | Held amount is **refunded** (once) and the earner told |
+
+Every step is a ledger entry (`PAYOUT` on request, `REFUND` on failure, both tagged
+`refType=WITHDRAWAL`), so a balance can always be reconstructed from the ledger. Account
+numbers are returned masked to their last 4 digits.
+
+Two honest limits: automatic transfers need a **registered** Paystack business (a starter
+account is refused, and that refusal is passed through verbatim to the payout board), and
+**bank** payouts are queued for manual sending because Paystack needs a bank code rather than
+the free-text bank name the app collects — mobile money uses real network codes (MTN / VOD /
+ATL) and takes the automatic path.
+
 ---
 
 ## 14. Third-party integrations
@@ -1097,7 +1129,6 @@ the passenger requests.
 **Product backlog**
 
 - A dedicated parcel backend (parcels currently reuse `/rides/requests`).
-- Real wallet top-up and withdrawal beyond Paystack top-up.
 - Replacing synchronous settlement with a transactional outbox.
 - Renaming `RIDER` to `PASSENGER` across the backend — deliberately deferred because it is a
   destructive migration touching four services for a cosmetic gain.

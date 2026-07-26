@@ -9,6 +9,7 @@ const NAV: { key: Page; label: string; icon: string; superOnly?: boolean }[] = [
   { key: 'kyc', label: 'Driver KYC', icon: '🪪' },
   { key: 'promos', label: 'Promos', icon: '🎟️' },
   { key: 'fees', label: 'Fees', icon: '💵' },
+  { key: 'payouts', label: 'Payouts', icon: '🏧' },
   { key: 'incidents', label: 'Incidents', icon: '🚨' },
   { key: 'admins', label: 'Admins', icon: '👤', superOnly: true },
 ];

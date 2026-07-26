@@ -16,7 +16,7 @@ const FAQS: { q: string; a: string }[] = [
   { q: 'How do I collect cash?',
     a: 'For a cash trip or delivery, collect the money on hand-off and tap “Confirm cash received”. The customer then sees the payment as settled.' },
   { q: 'When do I get paid?',
-    a: 'Earnings land in your GoZone wallet as you complete trips. Cash out to mobile money from the Earnings tab (payouts are mocked in this demo).' },
+    a: 'Earnings land in your GoZone wallet as you complete trips. Cash out to your mobile money or bank account from the Earnings tab — the amount leaves your balance right away and is paid out shortly after. If a payout can’t be completed, it comes straight back to your wallet.' },
   { q: 'Why is my account pending?',
     a: 'New drivers finish a quick setup (licence, vehicle, documents) and an admin approves the account before you can go online. You’ll be notified once approved.' },
 ];

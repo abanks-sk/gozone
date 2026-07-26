@@ -3,8 +3,10 @@ import { Alert, Dimensions, RefreshControl, ScrollView, Text, TouchableOpacity, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgGradient, Stop, Rect } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
-import { walletApi, LedgerEntry } from '../../src/api/wallet';
+import { walletApi, LedgerEntry, Withdrawal } from '../../src/api/wallet';
 import { useTheme } from '../../src/theme/ThemeProvider';
+import { useProfileStore } from '../../src/store/profileStore';
+import { CashOutSheet, withdrawalLook } from '../../src/components/CashOutSheet';
 import { Empty, Row } from '../../src/components/ui';
 
 const TYPE_LABEL: Record<string, string> = {
@@ -22,17 +24,29 @@ export default function DriverEarningsScreen() {
   const cardW = Dimensions.get('window').width - 32;
   const [balance, setBalance] = useState<number | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [payouts, setPayouts] = useState<Withdrawal[]>([]);
   const [period, setPeriod] = useState<Period>('today');
   const [refreshing, setRefreshing] = useState(false);
+  const [cashOut, setCashOut] = useState(false);
+  const profile = useProfileStore();
 
   async function load() {
     try {
-      const [bal, entries] = await Promise.all([walletApi.getBalance('DRIVER'), walletApi.getLedger('DRIVER')]);
+      const [bal, entries, withdrawals] = await Promise.all([
+        walletApi.getBalance('DRIVER'),
+        walletApi.getLedger('DRIVER'),
+        walletApi.getWithdrawals('DRIVER'),
+      ]);
       setBalance(bal.balance);
       setLedger(entries);
+      setPayouts(withdrawals);
     } catch {}
   }
   useEffect(() => { load(); }, []);
+
+  // A payout in flight blocks another one, so say so on the button instead of letting
+  // the driver hit a 409.
+  const openPayout = payouts.find((p) => p.status === 'PENDING' || p.status === 'PROCESSING');
 
   const since = period === 'today' ? Date.now() - DAY : period === 'week' ? Date.now() - 7 * DAY : 0;
   const inPeriod = useMemo(() => ledger.filter((e) => new Date(e.createdAt).getTime() >= since), [ledger, since]);
@@ -97,10 +111,23 @@ export default function DriverEarningsScreen() {
                 Wallet balance: GH₵ {balance != null ? balance.toFixed(2) : '—'}
               </Text>
             </View>
-            <TouchableOpacity onPress={() => Alert.alert('Cash out', 'Payouts to mobile money land in a future build.')} activeOpacity={0.85}
+            <TouchableOpacity
+              onPress={() => {
+                if (openPayout) {
+                  return Alert.alert('Cash out in progress',
+                    `Your GH₵ ${openPayout.amount.toFixed(2)} payout is still being processed. It has to complete first.`);
+                }
+                if (balance == null || balance <= 0) {
+                  return Alert.alert('Nothing to cash out', 'Complete some trips and your earnings will show up here.');
+                }
+                setCashOut(true);
+              }}
+              activeOpacity={0.85}
               style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(255,255,255,0.22)', borderRadius: 999, paddingHorizontal: 16, paddingVertical: 9 }}>
-              <Ionicons name="cash-outline" size={16} color="#fff" />
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13.5 }}>Cash out</Text>
+              <Ionicons name={openPayout ? 'time-outline' : 'cash-outline'} size={16} color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13.5 }}>
+                {openPayout ? 'Cash out pending' : 'Cash out'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -123,6 +150,37 @@ export default function DriverEarningsScreen() {
             ))}
           </Row>
         </View>
+
+        {/* Cash outs */}
+        {payouts.length > 0 && (
+          <>
+            <Text style={section(c)}>Cash outs</Text>
+            <View style={{ marginBottom: 20 }}>
+              {payouts.slice(0, 6).map((p) => {
+                const look = withdrawalLook(p.status, c);
+                return (
+                  <View key={p.id} style={{ backgroundColor: c.surface, borderRadius: 18, borderWidth: 1, borderColor: c.border, padding: 14, marginBottom: 8 }}>
+                    <Row style={{ justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: c.text }}>GH₵ {p.amount.toFixed(2)}</Text>
+                      <View style={{ backgroundColor: `${look.color}1A`, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
+                        <Text style={{ fontSize: 11.5, fontWeight: '800', color: look.color }}>{look.label}</Text>
+                      </View>
+                    </Row>
+                    <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 3 }}>
+                      {p.method === 'MOMO' ? 'Mobile money' : 'Bank'} · {p.provider} {p.accountNumberMasked} ·{' '}
+                      {new Date(p.createdAt).toLocaleDateString()}
+                    </Text>
+                    {!!p.note && p.status !== 'PAID' && (
+                      <Text style={{ fontSize: 12, color: p.status === 'FAILED' ? c.danger : c.textMuted, marginTop: 6, lineHeight: 17 }}>
+                        {p.status === 'FAILED' ? p.note : 'Waiting to be sent — GoZone is processing it.'}
+                      </Text>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          </>
+        )}
 
         {/* Transactions */}
         <Text style={section(c)}>Activity</Text>
@@ -148,6 +206,24 @@ export default function DriverEarningsScreen() {
           })
         )}
       </ScrollView>
+
+      <CashOutSheet
+        visible={cashOut}
+        onClose={() => setCashOut(false)}
+        balance={balance ?? 0}
+        ownerType="DRIVER"
+        defaultName={profile.name}
+        defaultNumber={profile.phone}
+        onDone={async (w) => {
+          await load();
+          Alert.alert(
+            'Cash out requested',
+            w.status === 'PROCESSING'
+              ? `GH₵ ${w.amount.toFixed(2)} is on its way to your ${w.method === 'MOMO' ? 'mobile money' : 'bank account'}.`
+              : `GH₵ ${w.amount.toFixed(2)} has left your balance and is queued to be sent. You'll be notified once it's paid.`
+          );
+        }}
+      />
     </View>
   );
 }

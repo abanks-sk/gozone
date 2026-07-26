@@ -3,8 +3,10 @@ info:
   title: GoZone Wallet + Notification Service
   version: "1.0.0"
   description: |
-    Mock ledger, commission splits, payouts, and notifications.
-    All money operations record ledger entries only — no real PSP.
+    Ledger, commission splits, cash out, and notifications.
+    Money in and out runs through Paystack when a secret key is configured
+    (top-up, payment verification, transfers); with the key set to "mock" the
+    ledger stands alone and a local sandbox checkout serves the demo.
     Push notifications are REAL via Expo Push; SMS is a logged stub.
 servers:
   - url: http://localhost:8080/wallet
@@ -106,6 +108,121 @@ paths:
       responses:
         '200':
           description: Settlement recorded
+
+  /withdrawals:
+    post:
+      tags: [wallet]
+      summary: Request a cash out of earned money (driver / courier / vendor)
+      description: >
+        Debits the caller's wallet immediately so the same balance can't be cashed out
+        twice, then asks the provider to transfer. If the provider accepts the payout is
+        PROCESSING; otherwise it stays PENDING on the admin payout board. Requires an
+        ACTIVE account. One open cash out per wallet at a time.
+      operationId: requestWithdrawal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawalRequest'
+      responses:
+        '200':
+          description: Cash out requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalResponse'
+        '400':
+          description: Amount below the minimum, above the balance, or a missing/invalid field
+        '403':
+          description: Not an approved earner account
+        '409':
+          description: A cash out is already in progress
+    get:
+      tags: [wallet]
+      summary: Your own cash-out history (newest first)
+      operationId: myWithdrawals
+      parameters:
+        - name: ownerType
+          in: query
+          schema:
+            type: string
+            enum: [DRIVER, RESTAURANT]
+            default: DRIVER
+      responses:
+        '200':
+          description: Cash outs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WithdrawalResponse'
+
+  /withdrawals/all:
+    get:
+      tags: [wallet]
+      summary: Admin payout board (ADMIN / SUPER_ADMIN)
+      operationId: listWithdrawals
+      parameters:
+        - name: open
+          in: query
+          description: true (default) = still owed, oldest first; false = recent history
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Cash outs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WithdrawalResponse'
+        '403':
+          description: Not an admin
+
+  /withdrawals/{id}:
+    patch:
+      tags: [wallet]
+      summary: Mark a payout PAID or FAILED (ADMIN / SUPER_ADMIN)
+      description: >
+        PAID is terminal and keeps the debit. FAILED refunds the held amount to the
+        earner's wallet (once — a repeat call is a no-op) and notifies them.
+      operationId: reviewWithdrawal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [PAID, FAILED]
+                reason:
+                  type: string
+                  description: Shown to the earner when FAILED
+      responses:
+        '200':
+          description: Updated cash out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalResponse'
+        '400':
+          description: Status must be PAID or FAILED
+        '409':
+          description: Already settled
 
   /notify:
     post:
@@ -243,6 +360,73 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    WithdrawalRequest:
+      type: object
+      required: [amount, method, accountName, accountNumber, provider]
+      properties:
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          description: At least app.payout.min-amount (default GH¢10) and no more than the balance
+        method:
+          type: string
+          enum: [MOMO, BANK]
+        accountName:
+          type: string
+          maxLength: 120
+        accountNumber:
+          type: string
+          maxLength: 40
+        provider:
+          type: string
+          maxLength: 40
+          description: Mobile-money network (MTN / VODAFONE / AIRTELTIGO) or the bank name
+        ownerType:
+          type: string
+          enum: [DRIVER, RESTAURANT]
+          default: DRIVER
+          description: Which wallet to draw from
+
+    WithdrawalResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          format: uuid
+        ownerType:
+          type: string
+        amount:
+          type: number
+          format: double
+        method:
+          type: string
+          enum: [MOMO, BANK]
+        accountName:
+          type: string
+        accountNumberMasked:
+          type: string
+          description: Last 4 digits only
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, PAID, FAILED]
+        note:
+          type: string
+          nullable: true
+          description: Why it's still queued, or why it failed
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
 
     NotifyRequest:
       type: object

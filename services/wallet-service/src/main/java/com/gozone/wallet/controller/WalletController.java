@@ -3,6 +3,8 @@ package com.gozone.wallet.controller;
 import com.gozone.wallet.dto.PushTokenRequest;
 import com.gozone.wallet.dto.SettleOrderRequest;
 import com.gozone.wallet.dto.SettleRideRequest;
+import com.gozone.wallet.dto.WithdrawalRequest;
+import com.gozone.wallet.dto.WithdrawalResponse;
 import com.gozone.wallet.model.LedgerEntry;
 import com.gozone.wallet.service.NotificationService;
 import com.gozone.wallet.service.WalletService;
@@ -10,6 +12,7 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -104,6 +107,55 @@ public class WalletController {
         BigDecimal amount = parseAmount(body.get("amount"));
         String reference = body.get("reference") != null ? String.valueOf(body.get("reference")) : null;
         return ResponseEntity.ok(Map.of("verified", walletService.verifyPayment(reference, amount)));
+    }
+
+    // ── Cash out (withdrawals) ─────────────────────────────────────────────────
+
+    /**
+     * Request a payout of earned money. Only an approved driver/courier or vendor can —
+     * the money debits their own wallet, so the caller's id is taken from the token, never
+     * the body.
+     */
+    @PostMapping("/withdrawals")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER','RESTAURANT_OWNER') and hasAuthority('STATUS_ACTIVE')")
+    public ResponseEntity<WithdrawalResponse> requestWithdrawal(
+            @AuthenticationPrincipal String userId,
+            @Valid @RequestBody WithdrawalRequest req) {
+        String ownerType = req.getOwnerType() != null && !req.getOwnerType().isBlank()
+            ? req.getOwnerType().trim().toUpperCase()
+            : "DRIVER";
+        return ResponseEntity.ok(WithdrawalResponse.from(walletService.requestWithdrawal(
+            UUID.fromString(userId), ownerType, req.getAmount(), req.getMethod(),
+            req.getAccountName(), req.getAccountNumber(), req.getProvider())));
+    }
+
+    /** Your own cash-out history (newest first). */
+    @GetMapping("/withdrawals")
+    public ResponseEntity<List<WithdrawalResponse>> myWithdrawals(
+            @AuthenticationPrincipal String userId,
+            @RequestParam(defaultValue = "DRIVER") String ownerType) {
+        return ResponseEntity.ok(walletService
+            .getWithdrawals(UUID.fromString(userId), ownerType.trim().toUpperCase())
+            .stream().map(WithdrawalResponse::from).toList());
+    }
+
+    /** Admin payout board: `open=true` (default) lists what's still owed, oldest first. */
+    @GetMapping("/withdrawals/all")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<List<WithdrawalResponse>> allWithdrawals(
+            @RequestParam(defaultValue = "true") boolean open) {
+        return ResponseEntity.ok(walletService.listWithdrawals(open)
+            .stream().map(WithdrawalResponse::from).toList());
+    }
+
+    /** Admin marks a payout PAID (money sent) or FAILED (refunds the held amount). */
+    @PatchMapping("/withdrawals/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<WithdrawalResponse> reviewWithdrawal(
+            @PathVariable UUID id,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(WithdrawalResponse.from(walletService.reviewWithdrawal(
+            id, body.getOrDefault("status", ""), body.get("reason"))));
     }
 
     private static BigDecimal parseAmount(Object raw) {

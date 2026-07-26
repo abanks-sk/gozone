@@ -79,9 +79,14 @@ public class SecurityConfig {
                             .parseSignedClaims(token).getPayload();
 
                         String role = claims.get("role", String.class);
+                        String status = claims.get("status", String.class);
+                        if (status == null) status = "ACTIVE"; // legacy tokens
+                        // STATUS_<status> mirrors ride/food, so money-moving endpoints
+                        // (withdrawals) can require an approved account, not just a role.
                         var auth = new UsernamePasswordAuthenticationToken(
                             claims.getSubject(), null,
-                            List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                            List.of(new SimpleGrantedAuthority("ROLE_" + role),
+                                    new SimpleGrantedAuthority("STATUS_" + status))
                         );
                         SecurityContextHolder.getContext().setAuthentication(auth);
                     } catch (Exception ignored) {}

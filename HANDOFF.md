@@ -649,6 +649,7 @@ All frontend; customer + driver + vendor apps type-check clean.
     (local `catalogStore`, per-vendor, removable). Real backend catalogue-write is still the production path.
   - New stores hydrated in each `_layout` + cleared in each `lib/session.ts`.
   - **Left as acceptable demo stubs:** social sign-in, driver trip call/message, mocked cash-out/payout.
+    *(Cash-out/payout is real now — see "Cash out / withdrawals" at the end of this file.)*
 
 ### Real vendor catalogue → customer + driver account (latest, Pass 1 of catalogue integration)
 Makes vendor-added items actually appear on the customer app, with descriptions. Backend can't be
@@ -975,7 +976,8 @@ Rebuilt per user direction the night before evaluation. **Rebuild ride-service**
 
 ### Vendor app + auth-copy sweep (latest — frontend only)
 - **Vendor app audited** for the same copy issues: it was already mostly clean (Menu↔Catalogue titles,
-  neutral order-status wording; payout/social-sign-in stubs are accepted demo stubs). Fixed: the
+  neutral order-status wording; social-sign-in stays a demo stub, and the payout stub is now real —
+  see "Cash out / withdrawals" at the end of this file). Fixed: the
   **Catalogue tab** now follows the business type ("Menu" + fast-food icon for restaurants, "Catalogue" +
   pricetags icon for pharmacy/grocery/etc. — reads `vendorStore`), and the menu empty state matches.
 - **"Check the auth-service logs for the demo code" removed from all three apps' verify-otp screens**
@@ -1119,6 +1121,55 @@ literally nothing. Now the server owns the profile.
   (`ama.mensah`, `kojo.rider`) where they previously had none.
 - All four front-ends type-check clean. **Rebuild auth-service** (`docker compose build auth-service
   && docker compose up -d auth-service`).
+
+### Cash out / withdrawals — money can now leave GoZone (latest) — REBUILD wallet-service
+"Cash out" (driver) and "Request payout" (vendor) were `Alert.alert('… land in a future build')`.
+Earnings piled up in wallets with no way out. Now there's a real payout pipeline.
+- **wallet-service:** **`withdrawals` table (V2 migration)** + `Withdrawal` entity/repo.
+  **`POST /wallet/withdrawals`** (`DRIVER`/`COURIER`/`RESTAURANT_OWNER` + **`STATUS_ACTIVE`**)
+  **debits the wallet immediately** — the money is held, so the same balance can't be cashed out
+  twice — writes a `PAYOUT` ledger entry tagged `refType=WITHDRAWAL`, then asks Paystack to send it.
+  Floor is `app.payout.min-amount` (default GH¢10); **one open cash out per wallet** (409 otherwise);
+  owner id comes from the **token**, never the body. Plus `GET /wallet/withdrawals` (own history),
+  **`GET /wallet/withdrawals/all?open=`** + **`PATCH /wallet/withdrawals/{id}`** (ADMIN/SUPER_ADMIN).
+  Account numbers are **masked** to the last 4 in every response.
+- **Statuses:** provider accepts → `PROCESSING` (transfer code stored); no/refusing provider →
+  stays **`PENDING` on the admin payout board with the reason**; admin → `PAID` (debit stands) or
+  `FAILED` (**refunds** the held amount once — ledger-guarded — and notifies the earner via the
+  existing push/SMS-stub path). Re-reviewing a settled payout is a 409.
+- **`PaystackService.transfer()`** (new): creates a transfer recipient then initiates the transfer.
+  Mobile money maps to real Paystack network codes (**MTN→MTN, VODAFONE/TELECEL→VOD,
+  AIRTELTIGO→ATL**) and takes the automatic path. **Bank payouts are deliberately queued** — Paystack
+  needs a bank *code*, not the free-text bank name the app collects (a `/bank` lookup would be a
+  separate feature), so no pointless API call is made. Paystack's own refusal message is passed
+  through verbatim to the board (**this account is a "starter business", which Paystack refuses to
+  let send money** — the code path is real, the account isn't upgraded).
+- **wallet-service JWT filter now adds `STATUS_<status>`** (parity with ride/food) so the payout
+  endpoint can require an approved account, not just a role.
+- **Bug found while building it: `PaystackService` used a bare `new RestTemplate()`** — no connect
+  or read timeout, exactly the trap that once hung sign-in on a stalled SMS gateway (commit
+  `7523565`). Its fail-soft catches (initialize → 502, verify → false, transfer → queued) were
+  unreachable by construction, and since these calls run inside a transaction an unresponsive
+  Paystack would have held a DB transaction open too. Now bounded **4s connect / 8s read**.
+  Money-in was re-checked after the change (top-up initialize still returns a real checkout URL).
+- **Driver + vendor apps:** new **`CashOutSheet`** (amount with an "All" shortcut, Mobile money /
+  Bank toggle, network chips or bank name, number + account name, GH¢ floor and balance shown, momo
+  numbers validated with `lib/phone.ts`) + a **Cash outs / Payouts history list** with status pills
+  and the queued/failed reason. The hero button becomes "Cash out pending" while one is open (no
+  walking into a 409). New persisted, user-scoped **`payoutStore`** remembers the destination
+  (cleared by `lib/session.ts` on logout/login); prefilled from the profile name/phone.
+- **Admin web:** new **Payouts page** (`src/pages/Payouts.tsx`, sidebar 🏧) — To pay / Recent tabs,
+  total owed, per-payout destination + requester, **Mark paid** (confirm dialog — it asserts the money
+  really left) and **Mark failed** (prompts for a reason the earner sees, refunds them).
+- **Verified live end-to-end:** floor/over-balance/bad-method 400s, valid request holds the money
+  (198.44 → 148.44), second request 409, driver blocked from the admin board (403) and from reviewing
+  their own payout (403), admin `FAILED` refunds (back to 198.44) + repeat review 409, admin `PAID`
+  keeps the debit, ledger shows `PAYOUT`/`REFUND` as `WITHDRAWAL`, vendor **bank** payout from the
+  `RESTAURANT` wallet, and both queue reasons (bank-by-hand vs Paystack's starter-business refusal).
+  Contract `wallet.yaml` updated. All 3 front-ends type-check clean; admin-web builds.
+  **Rebuild wallet-service** (V2 migration auto-applies).
+  *Demo note: one GH¢15 MOMO payout is left **PENDING** on the board so the Payouts page has
+  something live to show; driver Kwame's balance is held down by it.*
 
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
