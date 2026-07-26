@@ -27,6 +27,9 @@ public class WalletService {
     /** A payout is "open" until an admin (or the provider) settles it either way. */
     private static final List<String> OPEN_STATUSES = List.of("PENDING", "PROCESSING");
 
+    /** GoZone's own wallet — commission and service fees land here. */
+    private static final UUID PLATFORM_WALLET = UUID.fromString("00000000-0000-0000-0000-000000000001");
+
     private final WalletRepository walletRepo;
     private final LedgerEntryRepository ledgerRepo;
     private final CommissionConfigRepository commissionRepo;
@@ -70,6 +73,14 @@ public class WalletService {
      * Returns the resulting balance.
      */
     public BigDecimal topUp(UUID userId, BigDecimal amount, String reference) {
+        return topUp(userId, amount, reference, "RIDER");
+    }
+
+    /**
+     * Credit a top-up to a specific wallet. Couriers pay into their DRIVER wallet to clear cash
+     * they owe GoZone; customers top up their RIDER wallet to spend.
+     */
+    public BigDecimal topUp(UUID userId, BigDecimal amount, String reference, String ownerType) {
         if (amount == null || amount.signum() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Top-up amount must be greater than 0");
         }
@@ -83,7 +94,7 @@ public class WalletService {
 
         // Deterministic ref id from the Paystack reference → reuse existing idempotency guard.
         UUID refId = UUID.nameUUIDFromBytes(("TOPUP:" + reference).getBytes(StandardCharsets.UTF_8));
-        Wallet wallet = ensureWallet(userId, "RIDER");
+        Wallet wallet = ensureWallet(userId, ownerType == null || ownerType.isBlank() ? "RIDER" : ownerType.trim().toUpperCase());
         if (ledgerRepo.existsByRefIdAndType(refId, "TOP_UP")) {
             log.info("[WALLET] top-up already applied ref={} — skipping", reference);
             return wallet.getBalance();
@@ -138,6 +149,41 @@ public class WalletService {
         return ledgerRepo.findByWalletIdOrderByCreatedAtDesc(wallet.getId());
     }
 
+    // ── Paying with the GoZone wallet ────────────────────────────────────────────
+
+    /**
+     * Take money out of a customer's wallet to pay for a ride or an order.
+     *
+     * <p>This is the step that was missing: "pay with wallet" used to mark the ride or order
+     * paid without touching any balance, so an empty wallet paid fine and the driver/vendor was
+     * still credited — money out of nothing. A wallet payment now fails loudly when the balance
+     * won't cover it, and the caller must not mark anything paid.
+     *
+     * <p>Idempotent on the ride/order id, so a retried call after a timeout can't charge twice.
+     *
+     * @return the customer's balance after the charge
+     */
+    public BigDecimal charge(UUID userId, BigDecimal amount, UUID refId, String refType) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid amount");
+        }
+        Wallet wallet = ensureWallet(userId, "RIDER");
+
+        if (refId != null && ledgerRepo.existsByRefIdAndType(refId, "PAYMENT")) {
+            log.info("[WALLET] {} {} already charged — skipping", refType, refId);
+            return wallet.getBalance();
+        }
+        if (wallet.getBalance().compareTo(amount) < 0) {
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,
+                "Your GoZone wallet has GH₵ " + wallet.getBalance().toPlainString()
+                    + " — top up or choose another payment method.");
+        }
+
+        debit(wallet, amount, "PAYMENT", refId, refType);
+        log.info("[WALLET] charged user={} amount={} for {} {}", userId, amount, refType, refId);
+        return wallet.getBalance();
+    }
+
     /**
      * Settle a completed ride: credit driver net-of-commission, debit commission to platform.
      * Payments always succeed (mock ledger).
@@ -160,7 +206,7 @@ public class WalletService {
         credit(driverWallet, driverNet, "FARE_CREDIT", tripId, "TRIP");
 
         // Debit commission to platform wallet
-        Wallet platformWallet = ensureWallet(UUID.fromString("00000000-0000-0000-0000-000000000001"), "PLATFORM");
+        Wallet platformWallet = ensureWallet(PLATFORM_WALLET, "PLATFORM");
         credit(platformWallet, commission, "COMMISSION_DEBIT", tripId, "TRIP");
 
         log.info("[WALLET] ride settled tripId={} fare={} commission={} driverNet={}",
@@ -168,9 +214,33 @@ public class WalletService {
     }
 
     /**
-     * Settle a completed food order: credit restaurant net-of-commission, debit commission to platform.
+     * Settle a completed food order — a three-way split, not a single credit.
+     *
+     * <p>The customer's total is <em>goods + service fee + delivery fee</em>, and each part
+     * belongs to someone different:
+     * <ul>
+     *   <li><b>vendor</b> — the goods, less GoZone's commission. Not the delivery fee: that was
+     *       never theirs (they used to be credited the whole total, so they pocketed the
+     *       customer's delivery fee and the courier got nothing).</li>
+     *   <li><b>courier</b> — the delivery fee, for the leg they actually rode. Nobody on a
+     *       pickup or walk-in order, so there is no courier to pay.</li>
+     *   <li><b>platform</b> — commission on the goods, plus the service fee.</li>
+     * </ul>
+     *
+     * <p><b>Cash orders.</b> The courier is handed the money at the door and keeps it, so on top
+     * of the split we debit them everything they collected. Their balance goes negative by
+     * exactly what they owe GoZone, which they clear by topping up — the model Bolt and DoorDash
+     * use. The vendor is paid either way and never carries the risk of a courier not paying in.
+     *
+     * @param goods       order subtotal after any discount (what the food actually cost)
+     * @param serviceFee  GoZone's platform fee, already included in the customer's total
+     * @param deliveryFee the courier's fee, already included in the customer's total
+     * @param courierId   the assigned courier, or null for pickup/walk-in
+     * @param cashCollected total the courier physically took at the door, or null if prepaid
      */
-    public void settleOrder(UUID orderId, UUID restaurantId, BigDecimal orderTotal) {
+    public void settleOrder(UUID orderId, UUID restaurantId, BigDecimal orderTotal,
+                            BigDecimal goods, BigDecimal serviceFee, BigDecimal deliveryFee,
+                            UUID courierId, BigDecimal cashCollected) {
         if (orderId != null && ledgerRepo.existsByRefIdAndType(orderId, "FARE_CREDIT")) {
             log.info("[WALLET] order already settled orderId={} — skipping", orderId);
             return;
@@ -179,17 +249,36 @@ public class WalletService {
             .map(CommissionConfig::getRate)
             .orElse(new BigDecimal("0.12"));
 
-        BigDecimal commission    = orderTotal.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal restaurantNet = orderTotal.subtract(commission);
+        // Fall back to the old whole-total behaviour only if the caller didn't break the order
+        // down — keeps a mid-deploy call from crediting nobody.
+        BigDecimal goodsAmount = goods != null ? goods : orderTotal;
+        BigDecimal service     = serviceFee != null ? serviceFee : BigDecimal.ZERO;
+        BigDecimal delivery    = deliveryFee != null ? deliveryFee : BigDecimal.ZERO;
+
+        BigDecimal commission  = goodsAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal vendorNet   = goodsAmount.subtract(commission);
 
         Wallet restaurantWallet = ensureWallet(restaurantId, "RESTAURANT");
-        credit(restaurantWallet, restaurantNet, "FARE_CREDIT", orderId, "ORDER");
+        credit(restaurantWallet, vendorNet, "FARE_CREDIT", orderId, "ORDER");
 
-        Wallet platformWallet = ensureWallet(UUID.fromString("00000000-0000-0000-0000-000000000001"), "PLATFORM");
-        credit(platformWallet, commission, "COMMISSION_DEBIT", orderId, "ORDER");
+        if (courierId != null && delivery.signum() > 0) {
+            Wallet courierWallet = ensureWallet(courierId, "DRIVER");
+            credit(courierWallet, delivery, "DELIVERY_FEE", orderId, "ORDER");
+        }
 
-        log.info("[WALLET] order settled orderId={} total={} commission={} restaurantNet={}",
-            orderId, orderTotal, commission, restaurantNet);
+        Wallet platformWallet = ensureWallet(PLATFORM_WALLET, "PLATFORM");
+        credit(platformWallet, commission.add(service), "COMMISSION_DEBIT", orderId, "ORDER");
+
+        // Cash: the courier is holding the customer's money. Everything above was credited as if
+        // GoZone had been paid, so the courier now owes GoZone the cash in their pocket.
+        if (cashCollected != null && cashCollected.signum() > 0 && courierId != null) {
+            Wallet courierWallet = ensureWallet(courierId, "DRIVER");
+            debit(courierWallet, cashCollected, "CASH_COLLECTED", orderId, "ORDER");
+            log.info("[WALLET] courier {} owes {} cash from order {}", courierId, cashCollected, orderId);
+        }
+
+        log.info("[WALLET] order settled orderId={} goods={} commission={} vendorNet={} courier={} deliveryFee={}",
+            orderId, goodsAmount, commission, vendorNet, courierId, delivery);
     }
 
     // ── Cash out (withdrawal) ────────────────────────────────────────────────────
@@ -225,6 +314,13 @@ public class WalletService {
         }
 
         Wallet wallet = ensureWallet(ownerId, ownerType);
+        if (wallet.getBalance().signum() < 0) {
+            // Cash they've collected and not yet paid in. "More than your balance" would read
+            // as a maths error here, so name the debt.
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "You owe GoZone GH₵ " + wallet.getBalance().abs().toPlainString()
+                    + " from cash collected. Pay it in before cashing out.");
+        }
         if (wallet.getBalance().compareTo(amount) < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "That's more than your balance of GH₵ " + wallet.getBalance().toPlainString() + ".");
@@ -335,7 +431,7 @@ public class WalletService {
         Wallet courierWallet = ensureWallet(courierId, "DRIVER");
         credit(courierWallet, amount, "PAYOUT", null, null);
 
-        Wallet platformWallet = ensureWallet(UUID.fromString("00000000-0000-0000-0000-000000000001"), "PLATFORM");
+        Wallet platformWallet = ensureWallet(PLATFORM_WALLET, "PLATFORM");
         debit(platformWallet, amount, "PAYOUT", null, null);
 
         log.info("[WALLET] courier payout courierId={} amount={}", courierId, amount);

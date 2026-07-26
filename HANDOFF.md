@@ -1281,6 +1281,44 @@ refuses to start without them, and everyone signs in again (old HS512 tokens are
   key is configuration. A **JWKS endpoint** the verifiers fetch and cache is the fix — logged in
   DEPLOYMENT.md and the README roadmap.
 
+### Post-evaluation fixes: wallet actually charges, courier owns delivery, real splits (latest)
+### — REBUILD wallet + food + ride + gateway
+Three things the evaluation caught, all confirmed in code and two worse than reported.
+1. **"Pay with wallet" never touched a wallet.** Not for orders, not for rides — `payOrder`/
+   `payTrip` just stamped `PAID`. An empty wallet paid fine **and the vendor/driver was credited
+   anyway**, so the money came out of nothing. Fixed: new internal **`POST /wallet/charge`**
+   (idempotent on trip/order id, **402** when short) is called *before* anything is marked paid.
+   Verified: empty wallet → 402 + order stays UNPAID; funded wallet → debited by exactly the total.
+2. **The vendor could deliver its own food.** `advanceStatus` let them run
+   `READY → OUT_FOR_DELIVERY → COMPLETED` and bypass the courier entirely. Now a **DELIVERY**
+   order is the vendor's only up to **READY** (403 beyond it, with a message saying the courier
+   takes it from there); the **courier's `PICKED_UP` sets `OUT_FOR_DELIVERY`** and their
+   `DELIVERED` completes the order — so customer and vendor both see the true state. Pickup and
+   walk-in are unchanged (there the vendor really does hand it over). Vendor board now shows
+   "Waiting for a courier to collect" / "Courier is on the way" instead of a dead button.
+3. **The vendor was pocketing the delivery fee.** Settlement credited them `order.total`, which
+   includes the service fee *and* the courier's delivery fee, and the courier got nothing.
+   Settlement is now a **three-way split**: vendor = goods − 12% commission · courier = delivery
+   fee · platform = commission + service fee. The suite asserts the three credits **sum to exactly
+   the customer's total** on every run.
+4. **Cash (researched — DoorDash "Cash on Delivery" + Bolt Food Ghana).** The courier collects and
+   **keeps** the cash; the platform deducts what's owed from their earnings and they clear it by
+   in-app transfer, blocked from cash work until they do. Implemented exactly that: vendor +
+   courier fee credited as normal, then the courier is **debited everything they collected**
+   (`CASH_COLLECTED`), so their balance goes negative by what they owe. **Prepaid work stays open
+   to them** (earn your way out); **new cash jobs 409** and **cash out is blocked** while negative.
+   They pay in via Paystack from Earnings (top-up now accepts `ownerType=DRIVER`), with a red
+   "You owe GoZone GH₵ X" banner + pay-in sheet.
+- New wallet endpoints: `/wallet/charge`, `/wallet/internal/balance` — both **internal-key guarded
+  and 404'd at the gateway edge** like the other internal paths. Ledger gained `PAYMENT`,
+  `DELIVERY_FEE`, `CASH_COLLECTED` types (labelled in all three apps' transaction lists).
+- **e2e suite: 118/118**, up from 108 — new assertions for the empty-wallet refusal, the real
+  debit, the vendor's 403s, courier-pickup driving the order, the split summing to the total, the
+  courier's delivery fee, and the cash debt. The suite now also **cleans up the cash debt it
+  creates**, so a demo after a test run isn't blocked.
+- ⚠️ **Demo note:** a test run leaves the seeded courier at 0 (cleanup does this); the walk-in
+  demo customer still needs re-staging after a run, as before.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.

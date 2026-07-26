@@ -84,7 +84,8 @@ public class WalletController {
             @RequestBody Map<String, Object> body) {
         BigDecimal amount = parseAmount(body.get("amount"));
         String reference = body.get("reference") != null ? String.valueOf(body.get("reference")) : null;
-        BigDecimal balance = walletService.topUp(UUID.fromString(userId), amount, reference);
+        String ownerType = body.get("ownerType") != null ? String.valueOf(body.get("ownerType")) : "RIDER";
+        BigDecimal balance = walletService.topUp(UUID.fromString(userId), amount, reference, ownerType);
         return ResponseEntity.ok(Map.of("balance", balance, "status", "credited"));
     }
 
@@ -183,8 +184,42 @@ public class WalletController {
             @PathVariable UUID orderId,
             @Valid @RequestBody SettleOrderRequest req) {
         requireInternal(key);
-        walletService.settleOrder(req.getOrderId(), req.getRestaurantId(), req.getOrderTotal());
+        walletService.settleOrder(req.getOrderId(), req.getRestaurantId(), req.getOrderTotal(),
+            req.getGoods(), req.getServiceFee(), req.getDeliveryFee(),
+            req.getCourierId(), req.getCashCollected());
         return ResponseEntity.ok(Map.of("status", "settled", "pillar", "FOOD"));
+    }
+
+    /**
+     * Internal: what a given wallet holds. food-service uses it to keep a courier who owes
+     * GoZone money (negative balance from cash they've collected) off new cash jobs.
+     */
+    @GetMapping("/internal/balance")
+    public ResponseEntity<Map<String, Object>> internalBalance(
+            @RequestHeader(value = "X-Internal-Key", required = false) String key,
+            @RequestParam String userId,
+            @RequestParam(defaultValue = "DRIVER") String ownerType) {
+        requireInternal(key);
+        BigDecimal balance = walletService.getBalance(UUID.fromString(userId), ownerType);
+        return ResponseEntity.ok(Map.of("balance", balance, "ownerType", ownerType));
+    }
+
+    /**
+     * Internal: charge a customer's wallet for a ride or order (called by ride/food before they
+     * mark anything paid). Returns 402 when the balance won't cover it, which is the caller's
+     * signal to reject the payment rather than mark it paid.
+     */
+    @PostMapping("/charge")
+    public ResponseEntity<Map<String, Object>> charge(
+            @RequestHeader(value = "X-Internal-Key", required = false) String key,
+            @RequestBody Map<String, Object> body) {
+        requireInternal(key);
+        UUID userId = UUID.fromString(String.valueOf(body.get("userId")));
+        BigDecimal amount = parseAmount(body.get("amount"));
+        UUID refId = body.get("refId") != null ? UUID.fromString(String.valueOf(body.get("refId"))) : null;
+        String refType = body.get("refType") != null ? String.valueOf(body.get("refType")) : null;
+        BigDecimal balance = walletService.charge(userId, amount, refId, refType);
+        return ResponseEntity.ok(Map.of("status", "charged", "balance", balance));
     }
 
     // ── Push token registration ────────────────────────────────────────────────

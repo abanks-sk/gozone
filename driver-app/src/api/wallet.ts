@@ -52,6 +52,16 @@ export const walletApi = {
   getLedger: (ownerType = 'RIDER') =>
     api.get<LedgerEntry[]>(`/wallet/ledger?ownerType=${ownerType}`).then(r => r.data),
 
+  // Paying in cash owed to GoZone: same Paystack top-up the customer app uses, but credited to
+  // the DRIVER wallet, which is the one the cash debt sits against.
+  initializeTopUp: (amount: number, email?: string) =>
+    api.post<{ reference: string; authorizationUrl: string }>('/wallet/topup/initialize', { amount, email })
+      .then(r => r.data),
+
+  verifyTopUp: (amount: number, reference: string) =>
+    api.post<{ balance: number; status: string }>('/wallet/topup/verify', { amount, reference, ownerType: 'DRIVER' })
+      .then(r => r.data),
+
   /** Cash out earned money. The wallet is debited straight away (the money is held). */
   requestWithdrawal: (input: WithdrawalInput) =>
     api.post<Withdrawal>('/wallet/withdrawals', input).then(r => r.data),

@@ -18,6 +18,7 @@ function cardBrand(digits: string): string {
 }
 
 const TYPE_LABEL: Record<string, string> = {
+  PAYMENT: 'Paid', DELIVERY_FEE: 'Delivery fee', CASH_COLLECTED: 'Cash collected',
   FARE_CREDIT: 'Ride credit', COMMISSION_DEBIT: 'Commission', PAYOUT: 'Payout',
   TOP_UP: 'Top up', REFUND: 'Refund', CREDIT: 'Credit', DEBIT: 'Debit', COMMISSION: 'Commission',
 };

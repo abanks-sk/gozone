@@ -430,6 +430,13 @@ public class RideService {
                 "Payment could not be verified. If you completed it, please try again.");
         }
 
+        // Paying from the GoZone wallet has to actually take the money. This throws (402) when
+        // the balance won't cover it, before the trip is marked paid — an empty wallet used to
+        // pay fine and the driver was credited anyway.
+        if (!viaPaystack && "wallet".equalsIgnoreCase(method)) {
+            walletClient.chargeWallet(trip.getRequest().getRiderId(), trip.getAgreedFare(), trip.getId());
+        }
+
         trip.setPaymentMethod(method);
         trip.setPaymentStatus((!viaPaystack && "cash".equalsIgnoreCase(method))
             ? Trip.PaymentStatus.AWAITING

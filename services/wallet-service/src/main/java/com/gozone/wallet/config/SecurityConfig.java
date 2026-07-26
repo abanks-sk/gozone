@@ -42,7 +42,8 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/**", "/error").permitAll()
                 // Settlement + notify are internal service-to-service calls guarded by an
                 // X-Internal-Key header in the controller, not a user JWT.
-                .requestMatchers("/commission", "/settle/**", "/notify/**", "/pay/verify").permitAll()
+                .requestMatchers("/commission", "/settle/**", "/notify/**", "/pay/verify",
+                                 "/charge", "/internal/**").permitAll()
                 // Sandbox checkout page is opened in the device browser (no JWT); the
                 // real crediting still requires an authenticated /topup/verify call.
                 .requestMatchers("/mock-checkout").permitAll()

@@ -96,7 +96,13 @@ paths:
   /settle/{orderId}:
     post:
       tags: [wallet]
-      summary: Settle completed order — net payout to restaurant after commission
+      summary: Settle a completed, paid order — three-way split (internal)
+      description: >
+        The customer's total is goods + service fee + delivery fee, and each part belongs to
+        someone different: the vendor gets the goods less commission, the courier gets the
+        delivery fee, GoZone keeps commission + the service fee. Send `cashCollected` when the
+        courier took cash at the door — they keep the money, so it is debited from them and their
+        balance goes negative by what they owe GoZone.
       operationId: settleOrder
       parameters:
         - name: orderId
@@ -105,9 +111,72 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, restaurantId, orderTotal]
+              properties:
+                orderId: { type: string, format: uuid }
+                restaurantId: { type: string, format: uuid, description: The vendor's OWNER user id }
+                orderTotal: { type: number }
+                goods: { type: number, description: Subtotal after discount — the vendor's share before commission }
+                serviceFee: { type: number, description: GoZone's fee, included in orderTotal }
+                deliveryFee: { type: number, description: The courier's fee, included in orderTotal }
+                courierId: { type: string, format: uuid, nullable: true, description: null for pickup / walk-in }
+                cashCollected: { type: number, nullable: true, description: Cash the courier took and now owes GoZone }
       responses:
         '200':
           description: Settlement recorded
+
+  /charge:
+    post:
+      tags: [wallet]
+      summary: Take money from a customer's wallet for a ride or order (internal)
+      description: >
+        Called by ride/food BEFORE marking anything paid. Returns 402 when the balance won't
+        cover it, which is the caller's signal to refuse the payment. Idempotent on refId, so a
+        retry after a timeout cannot charge twice. Blocked at the gateway edge.
+      operationId: chargeWallet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, amount]
+              properties:
+                userId: { type: string, format: uuid }
+                amount: { type: number }
+                refId: { type: string, format: uuid, description: Trip or order id — the idempotency key }
+                refType: { type: string, enum: [TRIP, ORDER] }
+      responses:
+        '200':
+          description: Charged; returns the new balance
+        '402':
+          description: Not enough in the wallet — do not mark the ride/order paid
+
+  /internal/balance:
+    get:
+      tags: [wallet]
+      summary: Read a wallet's balance service-to-service (internal)
+      description: >
+        food-service uses this to keep a courier who owes GoZone money (negative balance from
+        cash collected) off new cash jobs. Blocked at the gateway edge.
+      operationId: internalBalance
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: ownerType
+          in: query
+          schema: { type: string, default: DRIVER }
+      responses:
+        '200':
+          description: Balance
 
   /withdrawals:
     post:

@@ -823,6 +823,38 @@ activating it _is_ the approval, so a vendor can never put their own discount li
 The customer app previews the discount at checkout using `src/lib/promos.ts`, which mirrors the
 server's rules; the server recomputes authoritatively when the order is actually placed.
 
+### Paying with the GoZone wallet
+
+A wallet payment calls `POST /wallet/charge` **before** anything is marked paid, and that call
+fails with `402` if the balance won't cover it. Nothing is stamped `PAID` and nobody is credited
+on a failed charge. The charge is idempotent on the trip/order id, so a retry after a timeout
+cannot debit twice.
+
+### Who gets what on a food order
+
+The customer's total is **goods + service fee + delivery fee**, and each part has a different
+owner:
+
+| Party    | Gets                                    |
+| -------- | --------------------------------------- |
+| Vendor   | the goods, less GoZone's 12% commission |
+| Courier  | the delivery fee                        |
+| Platform | commission + the service fee            |
+
+Settlement sends the whole breakdown, so the three credits add up to exactly what the customer
+paid — the e2e suite asserts that equality on every run.
+
+### Cash orders
+
+The courier collects the cash at the door and **keeps it**. GoZone still credits the vendor and
+the courier's delivery fee as if it had been paid, then debits the courier everything they
+collected — so their balance goes negative by exactly what they owe. This is the model DoorDash
+and Bolt Food use, and it means the vendor is paid whether or not the courier pays in promptly.
+
+A courier who owes money can still take **prepaid** work (so they can earn their way out), but
+not new **cash** jobs, and cannot cash out. They clear the debt by paying in through Paystack
+from the Earnings tab, which credits their own wallet.
+
 ### Commission and settlement
 
 Commission is configured per pillar in `commission_config`: **rides 18%**, **food 12%**.

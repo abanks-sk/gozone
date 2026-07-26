@@ -198,24 +198,61 @@ eq "order placed" "$(echo "$ORD" | jq_ "d['status']")" "PLACED"
 echo "        (total GH¢ $(echo "$ORD" | jq_ "d['total']"), service fee $(echo "$ORD" | jq_ "d.get('serviceFee')"))"
 eq "vendor sees the order" "$(GET "/food/restaurants/$VID/orders" $VENDOR | python -c "import sys,json;print(any(o['id']=='$OID' for o in json.load(sys.stdin)))")" "True"
 
-for s in CONFIRMED PREPARING READY OUT_FOR_DELIVERY; do
+# The kitchen cooks; the courier delivers. The vendor's authority ends at READY.
+for s in CONFIRMED PREPARING READY; do
   eq "vendor advance → $s" "$(PATCH_ "/food/orders/$OID/status" "$VENDOR" "{\"status\":\"$s\"}" | jq_ "d['status']")" "$s"
 done
+eq "vendor CANNOT send it out for delivery"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $VENDOR" -d '{"status":"OUT_FOR_DELIVERY"}' $GW/food/orders/$OID/status)" "403"
+eq "vendor CANNOT mark it delivered"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $VENDOR" -d '{"status":"COMPLETED"}' $GW/food/orders/$OID/status)" "403"
 
 DEL=$(GET /food/deliveries/available $COURIER)
 DID=$(echo "$DEL" | python -c "import sys,json;d=json.load(sys.stdin);print(next((x['id'] for x in d if x['orderId']=='$OID'),''))")
 neq "delivery offered to courier" "$DID" ""
 eq "courier accepts delivery" "$(POST "/food/deliveries/$DID/accept" "$COURIER" '{}' | jq_ "d['status']")" "ASSIGNED"
-for s in PICKED_UP ENROUTE DELIVERED; do
+eq "courier pickup drives the order" "$(PATCH_ "/food/deliveries/$DID/status" "$COURIER" '{"status":"PICKED_UP"}' | jq_ "d['status']")" "updated"
+eq "  …order now OUT_FOR_DELIVERY" "$(GET "/food/orders/$OID" $RIDER | jq_ "d['status']")" "OUT_FOR_DELIVERY"
+for s in ENROUTE DELIVERED; do
   eq "courier advance → $s" "$(PATCH_ "/food/deliveries/$DID/status" "$COURIER" "{\"status\":\"$s\"}" | jq_ "d['status']")" "updated"
 done
-eq "order auto-completed on delivery" "$(GET "/food/orders/$OID" $RIDER | jq_ "d['status']")" "COMPLETED"
+eq "order completed by the courier's delivery" "$(GET "/food/orders/$OID" $RIDER | jq_ "d['status']")" "COMPLETED"
 eq "customer pays cash → AWAITING"  "$(POST "/food/orders/$OID/pay" "$RIDER" '{"method":"cash"}' | jq_ "d['paymentStatus']")" "AWAITING"
 eq "courier confirms cash → PAID"   "$(POST "/food/deliveries/$DID/confirm-cash" "$COURIER" '{}' | jq_ "d['paymentStatus']")" "PAID"
 sleep 1
 VBAL1=$(GET "/wallet/balance?ownerType=RESTAURANT" $VENDOR | jq_ "d['balance']")
 neq "vendor wallet credited (settlement)" "$VBAL1" "$VBAL0"
 echo "        (vendor wallet $VBAL0 → $VBAL1)"
+
+# The customer's total splits three ways. Every part of it must land somewhere, or GoZone is
+# either inventing money or losing it.
+eq "order splits exactly between vendor, courier and platform"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(amount),0) FROM ledger_entries WHERE ref_id='$OID' AND amount > 0;")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['total']")"
+eq "courier earned the delivery fee"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(amount),0) FROM ledger_entries WHERE ref_id='$OID' AND type='DELIVERY_FEE';")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['deliveryFee']")"
+# Cash: the courier walked off with the customer's money, so they owe GoZone that much.
+eq "courier owes the cash they collected"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(-amount),0) FROM ledger_entries WHERE ref_id='$OID' AND type='CASH_COLLECTED';")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['total']")"
+
+echo
+echo "=============================================="
+echo " 6b. WALLET PAYMENTS MUST MOVE MONEY"
+echo "=============================================="
+# An empty wallet used to pay for anything: the order was stamped PAID and the vendor credited,
+# with nothing debited. Guard both halves — the refusal, and that a real payment is deducted.
+BROKE_PHONE="+233244000222"
+curl -s -o /dev/null -X POST $GW/auth/register -H 'Content-Type: application/json'   -d "{\"phone\":\"$BROKE_PHONE\",\"role\":\"RIDER\",\"name\":\"Empty Wallet\",\"username\":\"empty.wallet\"}"
+sleep 1
+BROKE=$(login "$BROKE_PHONE")
+eq "new customer starts with an empty wallet" "$(GET "/wallet/balance?ownerType=RIDER" $BROKE | jq_ "d['balance']")" "0"
+BORD=$(POST /food/orders "$BROKE" "{\"restaurantId\":\"$VID\",\"mode\":\"PICKUP\",\"items\":[{\"menuItemId\":\"$MI\",\"qty\":1}]}")
+BOID=$(echo "$BORD" | jq_ "d['id']")
+eq "empty wallet cannot pay"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $BROKE" -d '{"method":"wallet"}' $GW/food/orders/$BOID/pay)" "402"
+eq "  …and the order stays unpaid" "$(GET "/food/orders/$BOID" $BROKE | jq_ "d['paymentStatus']")" "UNPAID"
+
+# A funded wallet pays and is actually debited by the order total.
+RBAL0=$(GET "/wallet/balance?ownerType=RIDER" $RIDER | jq_ "d['balance']")
+WORD=$(POST /food/orders "$RIDER" "{\"restaurantId\":\"$VID\",\"mode\":\"PICKUP\",\"items\":[{\"menuItemId\":\"$MI\",\"qty\":1}]}")
+WOID=$(echo "$WORD" | jq_ "d['id']")
+WTOT=$(echo "$WORD" | jq_ "d['total']")
+eq "funded wallet pays" "$(POST "/food/orders/$WOID/pay" "$RIDER" '{"method":"wallet"}' | jq_ "d['paymentStatus']")" "PAID"
+RBAL1=$(GET "/wallet/balance?ownerType=RIDER" $RIDER | jq_ "d['balance']")
+eq "  …customer was debited the order total"   "$(python -c "print(round(float('$RBAL0') - float('$RBAL1'), 2))")" "$(python -c "print(round(float('$WTOT'), 2))")"
 
 echo
 echo "=============================================="
@@ -331,6 +368,17 @@ eq "no token → 401"                      "$(curl -s -o /dev/null -w '%{http_co
 
 echo
 echo "=============================================="
+# ── Leave the demo world as we found it ──────────────────────────────────────
+# The cash-order test deliberately puts the courier in debt (that is the model). Left behind, it
+# would block them from taking cash orders in a later demo, so undo this run's entries.
+docker exec gozone-postgres psql -U gozone -d wallet_db -q -c "
+BEGIN;
+DELETE FROM ledger_entries WHERE ref_id = '$OID' AND type IN ('CASH_COLLECTED','DELIVERY_FEE');
+UPDATE wallets w SET balance = COALESCE((SELECT SUM(l.amount) FROM ledger_entries l WHERE l.wallet_id = w.id), 0)
+WHERE w.owner_type = 'DRIVER' AND w.owner_id = 'aaaaaaaa-0000-0000-0000-000000000005';
+COMMIT;" >/dev/null 2>&1 || true
+echo "        (courier's test cash debt cleared)"
+
 printf " RESULT:  %s passed, %s failed\n" "$PASS" "$FAIL"
 [ $FAIL -gt 0 ] && printf " Failures:%b\n" "$FAILED_LIST"
 echo "=============================================="

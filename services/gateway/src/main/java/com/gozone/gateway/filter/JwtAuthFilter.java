@@ -39,6 +39,8 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
         "/wallet/commission",
         "/wallet/settle",
         "/wallet/pay/verify",
+        "/wallet/charge",
+        "/wallet/internal",
         "/notify",
         "/auth/delivery-riders"
     );

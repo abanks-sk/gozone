@@ -17,6 +17,27 @@ const ACTION: Record<string, string> = {
   PLACED: 'Confirm order', CONFIRMED: 'Start preparing', PREPARING: 'Mark ready',
   READY: 'Out for delivery', OUT_FOR_DELIVERY: 'Complete',
 };
+
+/**
+ * A delivery order leaves the kitchen's hands once it's ready: a courier collects it and their
+ * own updates drive the rest, so there is nothing for the vendor to press. Pickup and walk-in
+ * orders stay the vendor's all the way to COMPLETED, because the vendor really is the one
+ * handing the food over.
+ */
+function vendorAction(order: Order): string | null {
+  if (order.mode === 'DELIVERY' && (order.status === 'READY' || order.status === 'OUT_FOR_DELIVERY')) {
+    return null;
+  }
+  return NEXT[order.status] ? ACTION[order.status] : null;
+}
+
+/** What the vendor sees instead of a button while the courier has it. */
+function courierNote(order: Order): string | null {
+  if (order.mode !== 'DELIVERY') return null;
+  if (order.status === 'READY') return 'Waiting for a courier to collect';
+  if (order.status === 'OUT_FOR_DELIVERY') return 'Courier is on the way to the customer';
+  return null;
+}
 const STATUS_COLOR = (c: any): Record<string, string> => ({
   PLACED: c.warning, CONFIRMED: c.warning, PREPARING: '#f97316',
   READY: c.primary, OUT_FOR_DELIVERY: '#8b5cf6', COMPLETED: c.success, CANCELLED: c.danger,
@@ -175,12 +196,17 @@ export default function VendorOrdersScreen() {
                 ))}
                 {o.items.length > 4 && <Text style={{ fontSize: 13, color: c.textMuted }}>+{o.items.length - 4} more</Text>}
               </View>
-              {NEXT[o.status] && (
+              {vendorAction(o) ? (
                 <TouchableOpacity onPress={() => advance(o)} disabled={advancingId === o.id} activeOpacity={0.9}
                   style={{ marginTop: 14, backgroundColor: c.primary, borderRadius: 999, paddingVertical: 13, alignItems: 'center' }}>
-                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{advancingId === o.id ? 'Updating…' : ACTION[o.status]}</Text>
+                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{advancingId === o.id ? 'Updating…' : vendorAction(o)}</Text>
                 </TouchableOpacity>
-              )}
+              ) : courierNote(o) ? (
+                <Row style={{ marginTop: 14, gap: 8, backgroundColor: c.surfaceAlt, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12 }}>
+                  <Ionicons name="bicycle-outline" size={17} color={c.textMuted} />
+                  <Text style={{ flex: 1, fontSize: 13, color: c.textMuted }}>{courierNote(o)}</Text>
+                </Row>
+              ) : null}
             </View>
           ))
         )}

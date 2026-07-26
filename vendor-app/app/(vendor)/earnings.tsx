@@ -12,6 +12,7 @@ import { CashOutSheet, withdrawalLook } from '../../src/components/CashOutSheet'
 import { Empty, Row } from '../../src/components/ui';
 
 const TYPE_LABEL: Record<string, string> = {
+  DELIVERY_FEE: 'Courier fee', CASH_COLLECTED: 'Cash collected', PAYMENT: 'Payment',
   FARE_CREDIT: 'Order revenue', SALE_CREDIT: 'Order revenue', COMMISSION_DEBIT: 'Platform fee',
   PAYOUT: 'Payout', REFUND: 'Refund', CREDIT: 'Revenue', DEBIT: 'Charge', COMMISSION: 'Platform fee',
 };

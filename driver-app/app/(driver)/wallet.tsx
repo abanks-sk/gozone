@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Dimensions, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Linking, Modal, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgGradient, Stop, Rect } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,9 +7,11 @@ import { walletApi, LedgerEntry, Withdrawal } from '../../src/api/wallet';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useProfileStore } from '../../src/store/profileStore';
 import { CashOutSheet, withdrawalLook } from '../../src/components/CashOutSheet';
-import { Empty, Row } from '../../src/components/ui';
+import { Empty, Row, Btn } from '../../src/components/ui';
+import { apiBaseUrl } from '../../src/lib/host';
 
 const TYPE_LABEL: Record<string, string> = {
+  DELIVERY_FEE: 'Delivery earning', CASH_COLLECTED: 'Cash you collected', PAYMENT: 'Payment',
   FARE_CREDIT: 'Trip earning', COMMISSION_DEBIT: 'Platform fee', PAYOUT: 'Cash out',
   TOP_UP: 'Top up', REFUND: 'Refund', CREDIT: 'Earning', DEBIT: 'Charge', COMMISSION: 'Platform fee',
 };
@@ -28,6 +30,10 @@ export default function DriverEarningsScreen() {
   const [period, setPeriod] = useState<Period>('today');
   const [refreshing, setRefreshing] = useState(false);
   const [cashOut, setCashOut] = useState(false);
+  const [payIn, setPayIn] = useState(false);
+  const [payAmt, setPayAmt] = useState('');
+  const [payRef, setPayRef] = useState<string | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
   const profile = useProfileStore();
 
   async function load() {
@@ -47,6 +53,42 @@ export default function DriverEarningsScreen() {
   // A payout in flight blocks another one, so say so on the button instead of letting
   // the driver hit a 409.
   const openPayout = payouts.find((p) => p.status === 'PENDING' || p.status === 'PROCESSING');
+
+  // A negative balance means cash they collected on GoZone's behalf and haven't paid in yet.
+  // Until it's cleared they can't take new cash jobs or cash out, so it needs to be the loudest
+  // thing on the screen — not a minus sign buried in the balance line.
+  const owed = balance != null && balance < 0 ? Math.abs(balance) : 0;
+
+  // Step 1: open Paystack for the amount owed.
+  async function startPayIn() {
+    const amount = Number(payAmt);
+    if (!amount || amount <= 0) return Alert.alert('Amount', 'Enter an amount greater than 0.');
+    setPayBusy(true);
+    try {
+      const { reference, authorizationUrl } = await walletApi.initializeTopUp(amount);
+      const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
+      setPayRef(reference);
+      await Linking.openURL(url);
+    } catch (e: any) {
+      Alert.alert('Pay in', e?.response?.data?.message ?? 'Could not start the payment. Please try again.');
+    } finally { setPayBusy(false); }
+  }
+
+  // Step 2: verify server-side, which credits the DRIVER wallet and clears the debt.
+  async function verifyPayIn() {
+    const amount = Number(payAmt);
+    if (!payRef) return;
+    setPayBusy(true);
+    try {
+      await walletApi.verifyTopUp(amount, payRef);
+      setPayIn(false);
+      setPayRef(null);
+      await load();
+      Alert.alert('Received', `GH₵ ${amount.toFixed(2)} paid in. Thanks!`);
+    } catch (e: any) {
+      Alert.alert('Not yet confirmed', e?.response?.data?.message ?? 'If you completed the payment, tap Verify again.');
+    } finally { setPayBusy(false); }
+  }
 
   const since = period === 'today' ? Date.now() - DAY : period === 'week' ? Date.now() - 7 * DAY : 0;
   const inPeriod = useMemo(() => ledger.filter((e) => new Date(e.createdAt).getTime() >= since), [ledger, since]);
@@ -89,6 +131,26 @@ export default function DriverEarningsScreen() {
             );
           })}
         </Row>
+
+        {/* Cash owed — the one thing that blocks working, so it sits above everything else. */}
+        {owed > 0 && (
+          <View style={{ backgroundColor: `${c.danger}14`, borderColor: c.danger, borderWidth: 1, borderRadius: 20, padding: 16, marginBottom: 16 }}>
+            <Row style={{ gap: 10 }}>
+              <Ionicons name="alert-circle" size={20} color={c.danger} />
+              <Text style={{ flex: 1, fontSize: 15, fontWeight: '800', color: c.danger }}>
+                You owe GoZone GH₵ {owed.toFixed(2)}
+              </Text>
+            </Row>
+            <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 8, lineHeight: 19 }}>
+              This is cash you collected from customers on GoZone's behalf. Pay it in to take cash
+              orders again — prepaid orders are unaffected, so you can keep earning meanwhile.
+            </Text>
+            <TouchableOpacity onPress={() => { setPayAmt(owed.toFixed(2)); setPayRef(null); setPayIn(true); }} activeOpacity={0.9}
+              style={{ marginTop: 12, backgroundColor: c.danger, borderRadius: 999, paddingVertical: 12, alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14.5 }}>Pay in GH₵ {owed.toFixed(2)}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Earnings hero */}
         <View style={{ height: 172, borderRadius: 24, overflow: 'hidden', marginBottom: 18 }}>
@@ -206,6 +268,44 @@ export default function DriverEarningsScreen() {
           })
         )}
       </ScrollView>
+
+      {/* Pay in what's owed — Paystack, credited straight to the courier's own wallet. */}
+      <Modal visible={payIn} transparent animationType="slide" onRequestClose={() => setPayIn(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: c.bg, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: insets.bottom + 20 }}>
+            <Row style={{ justifyContent: 'space-between', marginBottom: 4 }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: c.text }}>Pay in cash collected</Text>
+              <TouchableOpacity onPress={() => setPayIn(false)} hitSlop={10}>
+                <Ionicons name="close" size={24} color={c.textMuted} />
+              </TouchableOpacity>
+            </Row>
+            <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 16, lineHeight: 19 }}>
+              {payRef
+                ? 'Once you have completed the payment, tap Verify to clear it against your balance.'
+                : `You are holding GH₵ ${owed.toFixed(2)} of GoZone's money. Pay it in by mobile money or card.`}
+            </Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: c.surfaceAlt, borderRadius: 14, paddingHorizontal: 14, marginBottom: 16 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: c.textMuted }}>GH₵</Text>
+              <TextInput
+                value={payAmt}
+                onChangeText={(t) => setPayAmt(t.replace(/[^0-9.]/g, ''))}
+                placeholder="0.00"
+                placeholderTextColor={c.textMuted}
+                keyboardType="decimal-pad"
+                editable={!payRef}
+                style={{ flex: 1, paddingVertical: 14, color: c.text, fontSize: 18, fontWeight: '700' }}
+              />
+            </View>
+
+            {payRef ? (
+              <Btn label={payBusy ? 'Verifying…' : 'Verify payment'} onPress={verifyPayIn} loading={payBusy} />
+            ) : (
+              <Btn label={payBusy ? 'Opening…' : 'Pay now'} onPress={startPayIn} loading={payBusy} />
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <CashOutSheet
         visible={cashOut}

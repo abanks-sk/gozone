@@ -413,6 +413,17 @@ public class FoodService {
         requireOwner(ownerId, order.getRestaurant().getId());
 
         Order.Status newStatus = Order.Status.valueOf(req.getStatus().toUpperCase());
+
+        // A delivery order stops being the vendor's to move once the food is ready: the courier
+        // collects it, and the courier's own "picked up" / "delivered" updates drive the rest.
+        // The kitchen cannot mark food delivered that it never carried.
+        if (order.getMode() == Order.Mode.DELIVERY
+                && (newStatus == Order.Status.OUT_FOR_DELIVERY || newStatus == Order.Status.COMPLETED)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN,
+                "The courier updates this order once they collect it.");
+        }
+
         validateOrderTransition(order.getStatus(), newStatus, order.getMode());
         order.setStatus(newStatus);
         orderRepo.save(order);
@@ -471,6 +482,14 @@ public class FoodService {
             throw new org.springframework.web.server.ResponseStatusException(
                 org.springframework.http.HttpStatus.PAYMENT_REQUIRED,
                 "Payment could not be verified. If you completed it, please try again.");
+        }
+
+        // Paying from the GoZone wallet has to actually take the money. This throws (402) when
+        // the balance won't cover it, before anything is marked paid — an empty wallet used to
+        // sail straight through and the vendor was credited anyway.
+        boolean viaWallet = !viaPaystack && "wallet".equalsIgnoreCase(method);
+        if (viaWallet) {
+            walletClient.chargeWallet(o.getCustomerId(), o.getTotal(), o.getId());
         }
 
         o.setPaymentMethod(method);
@@ -532,6 +551,22 @@ public class FoodService {
         if (delivery.getCourierId() != null) {
             throw new IllegalStateException("Delivery already taken");
         }
+
+        // A courier holding GoZone's cash from earlier deliveries can't take another cash job
+        // until they've paid it in — otherwise the amount they're carrying just keeps growing.
+        // Prepaid orders stay open to them, so they can still earn their way out of the debt.
+        Order order = delivery.getOrder();
+        if ("cash".equalsIgnoreCase(order.getPaymentMethod())
+                && order.getPaymentStatus() != Order.PaymentStatus.PAID) {
+            BigDecimal owed = walletClient.courierBalance(UUID.fromString(courierId));
+            if (owed != null && owed.signum() < 0) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "You owe GoZone GH₵ " + owed.abs().toPlainString()
+                        + " from cash collected. Pay it in to take cash orders again.");
+            }
+        }
+
         delivery.setCourierId(UUID.fromString(courierId));
         deliveryRepo.save(delivery);
         log.info("[FOOD] delivery {} accepted by courier {}", deliveryId, courierId);
@@ -565,11 +600,19 @@ public class FoodService {
 
         Delivery.Status newStatus = Delivery.Status.valueOf(status.toUpperCase());
         delivery.setStatus(newStatus);
+        Order order = delivery.getOrder();
+
+        // The courier's progress is what moves the order now, so the customer and the vendor
+        // both see the real state of the food: on the road once it's collected, completed only
+        // when it's actually handed over.
+        if (newStatus == Delivery.Status.PICKED_UP && order.getStatus() == Order.Status.READY) {
+            order.setStatus(Order.Status.OUT_FOR_DELIVERY);
+            orderRepo.save(order);
+            log.info("[FOOD] order={} out for delivery — collected by courier {}", order.getId(), courierId);
+        }
 
         if (newStatus == Delivery.Status.DELIVERED) {
             delivery.setDeliveredAt(OffsetDateTime.now());
-            // Advance order to COMPLETED
-            Order order = delivery.getOrder();
             order.setStatus(Order.Status.COMPLETED);
             orderRepo.save(order);
             onOrderCompleted(order);
@@ -759,11 +802,30 @@ public class FoodService {
      * so completion and payment can each trigger it safely.
      */
     private void settleOrderIfPaid(Order order) {
-        if (order.getStatus() == Order.Status.COMPLETED
-                && order.getPaymentStatus() == Order.PaymentStatus.PAID) {
-            // Credit the vendor's OWNER (user id), not the vendor entity id — the wallet/earnings
-            // screens query the wallet by the signed-in user's id (like RIDER/DRIVER wallets).
-            walletClient.settleOrder(order.getId(), order.getRestaurant().getOwnerId(), order.getTotal());
+        if (order.getStatus() != Order.Status.COMPLETED
+                || order.getPaymentStatus() != Order.PaymentStatus.PAID) {
+            return;
         }
+        // Who gets what: the vendor is paid for the goods only, the courier for the delivery,
+        // GoZone takes commission + the service fee. Sending just the total used to hand the
+        // vendor the courier's delivery fee as well.
+        BigDecimal goods = order.getTotal()
+            .subtract(order.getServiceFee() == null ? BigDecimal.ZERO : order.getServiceFee())
+            .subtract(order.getDeliveryFee() == null ? BigDecimal.ZERO : order.getDeliveryFee());
+
+        UUID courierId = deliveryRepo.findByOrderId(order.getId())
+            .map(Delivery::getCourierId)
+            .orElse(null);
+
+        // On a cash order the courier walked away with the customer's money, so they owe GoZone
+        // what they collected (see WalletService.settleOrder).
+        BigDecimal cashCollected = "cash".equalsIgnoreCase(order.getPaymentMethod()) && courierId != null
+            ? order.getTotal()
+            : null;
+
+        // Credit the vendor's OWNER (user id), not the vendor entity id — the wallet/earnings
+        // screens query the wallet by the signed-in user's id (like RIDER/DRIVER wallets).
+        walletClient.settleOrder(order.getId(), order.getRestaurant().getOwnerId(), order.getTotal(),
+            goods, order.getServiceFee(), order.getDeliveryFee(), courierId, cashCollected);
     }
 }
