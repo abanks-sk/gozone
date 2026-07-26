@@ -45,6 +45,13 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
     @Value("${app.jwt.secret}")
     private String jwtSecret;
 
+    /** Must match what auth-service stamps, so only tokens minted by us are accepted. */
+    @Value("${app.jwt.issuer:gozone-auth}")
+    private String jwtIssuer;
+
+    @Value("${app.jwt.audience:gozone-apps}")
+    private String jwtAudience;
+
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getPath().toString();
@@ -71,6 +78,8 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
             SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
             Claims claims = Jwts.parser()
                 .verifyWith(key)
+                .requireIssuer(jwtIssuer)
+                .requireAudience(jwtAudience)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();

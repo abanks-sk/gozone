@@ -23,6 +23,8 @@ public class JwtService {
     public String generateAccessToken(User user) {
         return Jwts.builder()
             .subject(user.getId().toString())
+            .issuer(props.getIssuer())
+            .audience().add(props.getAudience()).and()
             .claim("role", user.getRole().name())
             .claim("status", user.getStatus().name())
             .claim("phone", user.getPhone())
@@ -35,6 +37,8 @@ public class JwtService {
     public Claims validateAndParseClaims(String token) {
         return Jwts.parser()
             .verifyWith(signingKey())
+            .requireIssuer(props.getIssuer())
+            .requireAudience(props.getAudience())
             .build()
             .parseSignedClaims(token)
             .getPayload();

@@ -61,8 +61,12 @@ management:
 app:
   jwt:
     secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
-    expiry-ms: 86400000       # 24 hours
-    refresh-expiry-ms: 604800000  # 7 days
+    # Access tokens can't be revoked, so they expire quickly; clients swap the 7-day refresh
+    # token (which CAN be revoked — see /auth/logout) for a new one.
+    expiry-ms: ${JWT_EXPIRY_MS:3600000}            # 1 hour
+    refresh-expiry-ms: ${JWT_REFRESH_EXPIRY_MS:604800000}  # 7 days
+    issuer: ${JWT_ISSUER:gozone-auth}      # stamped on every token; verifiers require it
+    audience: ${JWT_AUDIENCE:gozone-apps}
   internal:
     key: ${INTERNAL_KEY}    # required — shared secret for internal service-to-service calls
   superadmin:

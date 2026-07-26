@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
-import { clearAuth } from '../lib/auth';
+import { clearAuth, getRefreshToken } from '../lib/auth';
+import api from '../api/client';
 import GzMark from './GzMark';
 import type { Page } from '../App';
 
@@ -16,6 +17,17 @@ const NAV: { key: Page; label: string; icon: string; superOnly?: boolean }[] = [
 
 export default function Layout({ page, onNavigate, isSuper, children }: { page: Page; onNavigate: (p: Page) => void; isSuper: boolean; children: ReactNode }) {
   const nav = NAV.filter((n) => !n.superOnly || isSuper);
+
+  // Tell the server to revoke the refresh token, so signing out really ends the session
+  // instead of only forgetting it in this browser. Clearing locally happens either way.
+  async function signOut() {
+    const refreshToken = getRefreshToken();
+    try {
+      if (refreshToken) await api.post('/auth/logout', { refreshToken });
+    } catch { /* the session is over locally regardless */ }
+    clearAuth();
+  }
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
       {/* Sidebar */}
@@ -49,7 +61,7 @@ export default function Layout({ page, onNavigate, isSuper, children }: { page: 
 
         <div style={{ flex: 1 }} />
         <button className="btn-ghost" style={{ border: 'none', borderRadius: 12, padding: '11px 13px', textAlign: 'left', fontSize: 14, fontWeight: 600, color: 'var(--danger)' }}
-          onClick={clearAuth}>Sign out</button>
+          onClick={signOut}>Sign out</button>
       </aside>
 
       {/* Main */}

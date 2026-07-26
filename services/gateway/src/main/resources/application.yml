@@ -58,6 +58,17 @@ management:
 app:
   jwt:
     secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
+    issuer: ${JWT_ISSUER:gozone-auth}      # must match auth-service; tokens without it are rejected
+    audience: ${JWT_AUDIENCE:gozone-apps}
+  ratelimit:
+    # Per-caller (per-IP) request caps, counted in memory per gateway instance — see
+    # RateLimitFilter for why these are generous: carriers NAT many users behind one IP, and
+    # per-account abuse is bounded separately by the 5-attempt OTP cap. Scaling past one
+    # gateway instance means moving to the Redis-backed RequestRateLimiter.
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    auth-per-window: ${RATE_LIMIT_AUTH:40}
+    default-per-window: ${RATE_LIMIT_DEFAULT:600}
+    window-seconds: ${RATE_LIMIT_WINDOW_SECONDS:60}
   gateway:
     # Paths that bypass the JWT check at the gateway edge (pre-login flows).
     # Comma-separated so it binds cleanly to a List<String> via @Value.

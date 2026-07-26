@@ -405,6 +405,30 @@ public class AuthService {
         otpRepo.save(otp);
     }
 
+    /**
+     * Log out: revoke the refresh token so the session can't be resumed.
+     *
+     * Access tokens are stateless and can't be withdrawn, which is exactly why they are
+     * short-lived — the refresh token is the part that grants long-lived access, so that is
+     * the part logout kills. Without a supplied token (an app that lost it, or a "log out
+     * everywhere" request) every session for the user is revoked.
+     */
+    public void logout(String userId, String refreshToken, boolean allDevices) {
+        UUID id = UUID.fromString(userId);
+        if (allDevices || refreshToken == null || refreshToken.isBlank()) {
+            refreshRepo.revokeAllForUser(id);
+            log.info("[AUTH] logout — all sessions revoked for user {}", userId);
+            return;
+        }
+        refreshRepo.findByTokenHash(sha256(refreshToken)).ifPresent(rt -> {
+            // Only your own token: presenting someone else's must not log them out.
+            if (!rt.getUser().getId().equals(id)) return;
+            rt.setRevoked(true);
+            refreshRepo.save(rt);
+        });
+        log.info("[AUTH] logout — session revoked for user {}", userId);
+    }
+
     /** Return current user profile. */
     @Transactional(readOnly = true)
     public UserResponse me(String userId) {

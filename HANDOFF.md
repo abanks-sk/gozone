@@ -1171,6 +1171,45 @@ Earnings piled up in wallets with no way out. Now there's a real payout pipeline
   *Demo note: one GH¢15 MOMO payout is left **PENDING** on the board so the Payouts page has
   something live to show; driver Kwame's balance is held down by it.*
 
+### Pre-deploy hardening — tokens, sessions, rate limiting (latest) — REBUILD ALL 5 SERVICES
+⚠️ **Everyone must sign in again after this** — tokens issued before it lack `iss`/`aud` and are
+now rejected (verified: an old token returns 401).
+- **JWT `iss`/`aud` required everywhere.** auth-service stamps `iss=gozone-auth` /
+  `aud=gozone-apps` (`JwtProperties`, env-overridable) and **all six verification points** now
+  require them: gateway `JwtAuthFilter`, ride/food/wallet `SecurityConfig`, ride/food
+  `WebSocketConfig`. A well-formed token minted with a different secret+claims is refused.
+- **Access-token TTL 24h → 1h** (`JWT_EXPIRY_MS`). Safe because all three Expo clients already
+  silently refresh on 401 — **admin-web did not**, so it would have bounced operators to the login
+  screen every hour; it now stores the refresh token and has the same refresh-and-retry interceptor.
+- **Real logout.** New **`POST /auth/logout`** revokes the refresh token (or every session with
+  `allDevices: true`); presenting someone else's token does nothing (verified). All four clients
+  call it on sign-out — previously they only dropped tokens locally, leaving a 7-day session
+  resumable by anyone who captured the refresh token. Refresh was already single-use + rotated.
+  - **Trap found:** Spring Security's built-in `LogoutFilter` owns `POST /logout` and answered
+    with a **302**, silently shadowing our controller (the `/auth` context-path makes the servlet
+    path exactly `/logout`). Fixed with `.logout(logout -> logout.disable())` — we're stateless.
+- **Gateway rate limiting** (new `RateLimitFilter`, order -200, ahead of the JWT check): per-IP
+  fixed-window counters, **40/min on sign-in + OTP paths**, **600/min otherwise**, `429` +
+  `Retry-After`; actuator never throttled; `X-Forwarded-For` honoured. All knobs are env vars
+  (`RATE_LIMIT_*`). **Deliberately not tiny:** Ghanaian carriers NAT many subscribers behind one
+  IP, so a per-person limit would lock out a whole network — per-account abuse is bounded by the
+  5-attempt OTP cap instead. (First draft was 12/min; that tripped on legitimate bursts, which is
+  exactly the NAT failure mode in miniature.) In-memory = per instance; multi-instance needs the
+  Redis limiter.
+- **New `docs/DEPLOYMENT.md`** — the pre-launch checklist: rotate every credential (all of them
+  have been in dev logs), `OTP_LOG_CODES=false`, `GOOGLE_CLIENT_IDS` (blank = Google audience
+  check skipped), Paystack live key + registered business for payouts, Maps key restrictions,
+  TLS + CORS, actuator, managed PostGIS, and a plainly-stated known-gaps list.
+- **Verified:** old token 401 · fresh token carries `iss`/`aud` with a 60-min TTL and works across
+  auth/ride/food/wallet · refresh rotates and the old one 403s · logout then refresh 403s · a
+  driver can't revoke another user's session · limiter returns 429 + `Retry-After` · **the full
+  `scripts/e2e.sh` suite passes 103/103** against the rebuilt stack.
+- **Still open:** **RS256** (signing remains HS512 with one shared secret — every service holds
+  what it would need to mint, not just verify; contained change: `JwtService.signingKey()` + the
+  six verifier sites), tighter CORS/TLS, SCA scan, distributed rate limiting.
+- *Housekeeping: the e2e suite's "call next" consumes a staged walk-in customer, so the demo
+  walk-in was re-staged afterwards (Kojo Rider, Waakye + Kelewele, GH¢25.20, PLACED, 1 waiting).*
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.

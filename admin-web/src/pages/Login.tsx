@@ -32,7 +32,7 @@ export default function Login() {
         setError('This account is not an administrator.');
         return;
       }
-      setAuth(data.accessToken, data.role);
+      setAuth(data.accessToken, data.role, data.refreshToken);
     } catch (e: any) {
       setError(e?.response?.data?.message ?? 'Invalid or expired code.');
     } finally { setLoading(false); }

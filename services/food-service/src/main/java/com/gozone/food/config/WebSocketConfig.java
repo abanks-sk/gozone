@@ -89,7 +89,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     if (token == null) throw new IllegalArgumentException("Missing auth token");
                     try {
                         SecretKey key = Keys.hmacShaKeyFor(jwtProps.getSecret().getBytes(StandardCharsets.UTF_8));
-                        Claims claims = Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();
+                        Claims claims = Jwts.parser().verifyWith(key)
+                            .requireIssuer(jwtProps.getIssuer())
+                            .requireAudience(jwtProps.getAudience())
+                            .build().parseSignedClaims(token).getPayload();
                         var auth = new UsernamePasswordAuthenticationToken(
                             claims.getSubject(), null,
                             List.of(new SimpleGrantedAuthority("ROLE_" + claims.get("role", String.class))));

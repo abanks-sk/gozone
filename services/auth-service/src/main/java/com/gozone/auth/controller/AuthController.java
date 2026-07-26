@@ -80,6 +80,19 @@ public class AuthController {
         return ResponseEntity.ok(authService.refresh(req));
     }
 
+    /** Log out — revokes the refresh token (or every session with allDevices=true). */
+    @PostMapping("/logout")
+    public ResponseEntity<Map<String, String>> logout(
+            @AuthenticationPrincipal String userId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        String refreshToken = body != null && body.get("refreshToken") != null
+            ? String.valueOf(body.get("refreshToken"))
+            : null;
+        boolean allDevices = body != null && Boolean.parseBoolean(String.valueOf(body.get("allDevices")));
+        authService.logout(userId, refreshToken, allDevices);
+        return ResponseEntity.ok(Map.of("status", "logged out"));
+    }
+
     @GetMapping("/me")
     public ResponseEntity<UserResponse> me(@AuthenticationPrincipal String userId) {
         return ResponseEntity.ok(authService.me(userId));

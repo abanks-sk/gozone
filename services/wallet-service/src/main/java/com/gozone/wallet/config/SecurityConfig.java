@@ -75,7 +75,10 @@ public class SecurityConfig {
                         SecretKey key = Keys.hmacShaKeyFor(
                             jwtProps.getSecret().getBytes(StandardCharsets.UTF_8));
                         Claims claims = Jwts.parser()
-                            .verifyWith(key).build()
+                            .verifyWith(key)
+                            .requireIssuer(jwtProps.getIssuer())
+                            .requireAudience(jwtProps.getAudience())
+                            .build()
                             .parseSignedClaims(token).getPayload();
 
                         String role = claims.get("role", String.class);

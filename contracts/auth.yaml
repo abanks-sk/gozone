@@ -133,10 +133,43 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /logout:
+    post:
+      tags: [auth]
+      summary: End the session by revoking the refresh token
+      description: >
+        Access tokens are stateless and expire on their own (1h); the refresh token is the
+        revocable part, so logout kills that. Omit refreshToken (or send allDevices=true) to
+        revoke every session for the caller. Presenting another user's refresh token does
+        nothing.
+      operationId: logout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                allDevices:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Session revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /refresh:
     post:
       tags: [auth]
       summary: Rotate refresh token; returns new JWT pair
+      description: >
+        Single use — the presented token is revoked as part of the exchange, so a captured
+        refresh token stops working as soon as the real client next refreshes.
       operationId: refresh
       requestBody:
         required: true

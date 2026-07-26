@@ -36,6 +36,11 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http
             .csrf(csrf -> csrf.disable())
+            // Spring Security's LogoutFilter owns POST /logout by default and answers it with a
+            // 302 redirect — which silently shadowed our own POST /auth/logout (the service
+            // context-path makes the servlet path exactly /logout). We are stateless and revoke
+            // refresh tokens ourselves, so the built-in handling is turned off.
+            .logout(logout -> logout.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(

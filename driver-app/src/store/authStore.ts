@@ -144,6 +144,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: async () => {
+    // Revoke the refresh token server-side first — dropping it locally alone would leave a
+    // 7-day session resumable by anyone who captured it. Local sign-out proceeds regardless.
+    try {
+      const refreshToken = await storage.get('refreshToken');
+      if (refreshToken) await api.post('/auth/logout', { refreshToken });
+    } catch {}
     await storage.remove('accessToken');
     await storage.remove('refreshToken');
     // Wipe all user-scoped local data so the next account starts clean.

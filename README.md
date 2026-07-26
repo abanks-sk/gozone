@@ -905,6 +905,14 @@ Two rounds of security review were completed; the fixes are in place.
 - No secret has a committed default. `JWT_SECRET` and `INTERNAL_KEY` are required environment
   variables and Docker Compose refuses to start without them.
 - Tokens are HS512, validated locally by each service; the gateway validates at the edge as well.
+  Every verifier **requires the `iss` and `aud` claims**, so a token minted elsewhere is refused
+  even if it is well-formed.
+- **Access tokens live 1 hour** — they cannot be revoked, so a short life is what ends them.
+  Refresh tokens live 7 days, are stored only as hashes, are **single-use** (rotated on every
+  refresh, so a captured one dies as soon as the real client refreshes), and are **revocable**:
+  `POST /auth/logout` revokes the presented token, or every session with `allDevices`. All four
+  clients call it on sign-out, and all four silently refresh on a 401 so the short TTL is
+  invisible to users.
 - OTP codes are capped at 5 wrong attempts before being consumed.
 - The seeded super admin gets a random password unless one is supplied.
 
@@ -927,12 +935,19 @@ Two rounds of security review were completed; the fixes are in place.
 
 - Internal-only paths return 404 at the gateway.
 - WebSocket CONNECT is authenticated; location topics enforce participation on SUBSCRIBE.
+- **Rate limiting** ahead of the JWT check: 40 requests/minute per IP on sign-in and OTP
+  endpoints, 600/minute otherwise, answered with `429` and `Retry-After`. The limits are sized
+  to absorb carrier NAT (many Ghanaian subscribers share one address, so a per-person limit
+  would lock out a whole network); guessing one account's code is bounded far more tightly by
+  the 5-attempt OTP cap. Counting is in-memory per gateway instance — running more than one
+  instance means moving to the Redis-backed limiter.
 
-**Known remaining items** (documented, not hidden): rate limiting at the gateway, RS256 with
-issuer/audience claims, shorter access-token TTL with revocation, tighter CORS and TLS
-termination, and a dependency (SCA) scan. Login returns 404 for an unknown identifier — this is
-an intentional UX choice ("no account found — sign up") accepted as a minor enumeration
-trade-off.
+**Known remaining items** (documented, not hidden): **RS256** — signing is still HS512 with one
+shared secret, so every service holds what it would need to mint tokens, not just verify them;
+tighter CORS and TLS termination; a dependency (SCA) scan; and distributed rate limiting for a
+multi-instance gateway. Login returns 404 for an unknown identifier — an intentional UX choice
+("no account found — sign up") accepted as a minor enumeration trade-off.
+See **`docs/DEPLOYMENT.md`** for the full pre-launch checklist.
 
 ---
 
@@ -1123,8 +1138,8 @@ the passenger requests.
 
 - Set `OTP_LOG_CODES=false`, populate `GOOGLE_CLIENT_IDS`, restrict the Maps SDK keys to
   Android/iOS app signatures, and rotate every credential in `.env`.
-- Add gateway rate limiting, move to RS256 with issuer/audience validation, shorten the access
-  token TTL and add revocation.
+- Move to RS256 (issuer and audience validation, short access tokens with refresh-token
+  revocation, and gateway rate limiting are already in place — see `docs/DEPLOYMENT.md`).
 
 **Product backlog**
 
@@ -1140,6 +1155,7 @@ the passenger requests.
 | Document               | Contents                                                   |
 | ---------------------- | ---------------------------------------------------------- |
 | `docs/architecture.md` | Deeper architectural notes and diagrams                    |
+| `docs/DEPLOYMENT.md`   | Pre-launch checklist: credentials, TLS, keys, known gaps    |
 | `docs/demo-script.md`  | Step-by-step presentation walkthrough                      |
 | `docs/fr-coverage.md`  | Functional-requirement coverage matrix                     |
 | `docs/MANUAL.md`       | End-user manual                                            |

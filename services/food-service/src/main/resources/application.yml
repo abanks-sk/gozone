@@ -38,6 +38,8 @@ management:
 app:
   jwt:
     secret: ${JWT_SECRET}   # required — no default; inject via env/secrets (see .env.example)
+    issuer: ${JWT_ISSUER:gozone-auth}      # required on every token we accept
+    audience: ${JWT_AUDIENCE:gozone-apps}
   internal:
     key: ${INTERNAL_KEY}   # required — shared secret for wallet settlement calls (no default)
   auth-url: ${AUTH_SERVICE_URL:http://localhost:8081}   # delivery-rider availability check
