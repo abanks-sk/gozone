@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentLocation } from '../../src/lib/location';
 import { shopApi, Order, QueuePosition , LeaveTime } from '../../src/api/shop';
+import { clearPending, getPending, setPending } from '../../src/lib/pendingPayment';
 import { walletApi } from '../../src/api/wallet';
 import { wsClient } from '../../src/realtime/wsClient';
 import { useTheme } from '../../src/theme/ThemeProvider';
@@ -126,6 +127,33 @@ export default function OrderScreen() {
   }, [order?.paymentStatus, orderId]);
 
   // Wallet/cash pay in one tap; Paystack (added card/momo) opens the checkout, then verifies.
+
+  /**
+   * Finish an order paid for in the Paystack browser.
+   *
+   * Coming back from checkout usually means a cold start, so `payRef` is gone and the customer
+   * would be staring at an unpaid order they have already been charged for. payOrder re-verifies
+   * the reference server-side, so replaying one that never completed simply fails and leaves the
+   * Pay button where it was.
+   */
+  useEffect(() => {
+    if (!order || order.paymentStatus === 'PAID') return;
+    let active = true;
+    (async () => {
+      const p = await getPending('order');
+      if (!p || p.targetId !== orderId || !active) return;
+      try {
+        const o = await shopApi.payOrder(orderId, p.method ?? payMethod, p.reference);
+        if (!active) return;
+        setOrder(o); setPayRef(null);
+        await clearPending();
+      } catch {
+        if (active) setPayRef(p.reference);
+      }
+    })();
+    return () => { active = false; };
+  }, [order?.id, order?.paymentStatus]);
+
   async function pay() {
     if (!order) return;
     setPaying(true);
@@ -134,10 +162,17 @@ export default function OrderScreen() {
         const { reference, authorizationUrl } = await walletApi.payInitialize(Number(order.total));
         const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
         setPayRef(reference);
+        // Survive the browser hand-off: returning from Paystack routinely reloads the app, and a
+        // reference held only in React state dies with it — the customer pays and it stays unpaid.
+        await setPending({ kind: 'order', reference, amount: Number(order.total), targetId: orderId, method: payMethod });
         await Linking.openURL(url);
       } else {
-        setOrder(await shopApi.payOrder(orderId, payMethod, payRef ?? undefined));
+        const o = await shopApi.payOrder(orderId, payMethod, payRef ?? undefined);
+        setOrder(o);
+        // Paid by card through checkout — offer it as one tap next time.
+        if (payRef) walletApi.rememberCard(payRef, Number(order.total));
         setPayRef(null);
+        await clearPending();
       }
     } catch (e: any) {
       Alert.alert('Payment', e?.response?.data?.message ?? 'Please try again');

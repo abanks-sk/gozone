@@ -1591,8 +1591,8 @@ type-checked. Front-end changes type-check; those needing a device are flagged.
 - **Paystack could take money and never credit it.** The reference lived in React state and the browser
   hand-off reloads the JS context — the reload the user noticed *was* the bug. Nothing is banked until
   `/wallet/topup/verify` gets that string. Now persisted (`src/lib/pendingPayment.ts`) and redeemed on
-  return; verify is idempotent per reference. ⚠️ **Only wired into wallet top-up and `(rider)/live.tsx`**
-  — food checkout and `(parcel)/live.tsx` still have the flaw.
+  return; verify is idempotent per reference. Applied to **all four** Paystack payment points: wallet
+  top-up, ride, food order and parcel.
 - **Saved cards are real** (wallet V3 `payment_authorizations`). Paystack only issues a reusable
   authorization as the by-product of a successful charge, so a card saves itself after the first
   payment and every one after is a server-side tap. Stores an authorization code + brand/last4 —

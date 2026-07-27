@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { rideApi, Trip, BidOffer } from '../../src/api/ride';
+import { clearPending, getPending, setPending } from '../../src/lib/pendingPayment';
 import { walletApi } from '../../src/api/wallet';
 import { mapsApi, LatLng } from '../../src/api/maps';
 import { wsClient } from '../../src/realtime/wsClient';
@@ -191,6 +192,26 @@ export default function ParcelLiveScreen() {
     return () => clearInterval(poll);
   }, [completed, awaitingCash, requestId]);
 
+
+  /** Redeem a parcel fare paid for in the Paystack browser — see (rider)/live.tsx. */
+  useEffect(() => {
+    if (!completed || paid || !trip) return;
+    let active = true;
+    (async () => {
+      const p = await getPending('trip');
+      if (!p || p.targetId !== trip.id || !active) return;
+      try {
+        const t = await rideApi.payTrip(trip.id, p.method ?? payMethod, p.reference);
+        if (!active) return;
+        setTrip(t); setPayRef(null);
+        await clearPending();
+      } catch {
+        if (active) setPayRef(p.reference);
+      }
+    })();
+    return () => { active = false; };
+  }, [completed, paid, trip?.id]);
+
   async function pay() {
     if (!trip) return;
     setPaying(true);
@@ -199,10 +220,16 @@ export default function ParcelLiveScreen() {
         const { reference, authorizationUrl } = await walletApi.payInitialize(Number(trip.agreedFare));
         const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
         setPayRef(reference);
+        // Survive the browser hand-off: returning from Paystack routinely reloads the app, and a
+        // reference held only in React state dies with it — the customer pays and it stays unpaid.
+        await setPending({ kind: 'trip', reference, amount: Number(trip.agreedFare), targetId: trip.id, method: payMethod });
         await Linking.openURL(url);
       } else {
-        setTrip(await rideApi.payTrip(trip.id, payMethod, payRef ?? undefined));
+        const t = await rideApi.payTrip(trip.id, payMethod, payRef ?? undefined);
+        setTrip(t);
+        if (payRef) walletApi.rememberCard(payRef, Number(trip.agreedFare));
         setPayRef(null);
+        await clearPending();
       }
     } catch (e: any) {
       Alert.alert('Payment', e?.response?.data?.message ?? 'Please try again');
