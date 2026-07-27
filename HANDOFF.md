@@ -1502,6 +1502,28 @@ publishes its keys and the verifiers fetch them.
   `.env.example` (which was also missing the mandatory `openssl pkcs8 -topk8` step that DEPLOYMENT.md
   documents — the exact trap that cost a restart during the RS256 work).
 
+### Demo data cleared, and why it kept piling up (2026-07-27, DB state only — no code)
+The vendor orders board had **30 unfinished orders** on it. Cleared on the user's go-ahead; nothing
+deleted, all 30 moved to `CANCELLED` with the previous status in `orders_status_backup`, so the undo
+statements at the foot of `seed/99_clear_stale_demo_data.sql` still cover every one of them.
+- `seed/99_clear_stale_demo_data.sql` handled 21 (run against **both** DBs — each half errors
+  harmlessly in the database that lacks its tables; that's the documented `ON_ERROR_STOP off`
+  behaviour, not a failure). The other **9 were today's e2e residue**, which the script deliberately
+  spares (it only touches `created_at < CURRENT_DATE`, so a live demo is never broken) — cleared by
+  hand, backed up the same way.
+- ⚠️ **The script also cancels the curated demo delivery** (Ama Mensah, GH¢52.88, created 07-22):
+  it is older than today, so it is indistinguishable from cruft. **Restore it after every run** or
+  the vendor has no delivery order to advance —
+  `UPDATE orders SET status='PLACED' WHERE id='983e6ed4-a7ad-4d22-9fb1-d34219704983';`
+- ⚠️ **Root cause of the pile-up: re-staging created a new order each time.** There were **nine
+  identical copies** of the Kojo Rider walk-in (Waakye + Kelewele, GH¢25.20), one per session that
+  re-staged it after an e2e run consumed the queue entry. Kept the newest, cancelled the rest.
+  **Re-stage by flipping the existing entry back, not by placing a fresh order:**
+  `UPDATE queue_entries SET status='WAITING' WHERE order_id='7b223015-6710-4ac4-ac27-5db53843a9ff';`
+- **Demo state now** (verified): Kofi Kitchen has exactly two PLACED orders — walk-in GH¢25.20
+  (1 waiting in the Queue tab) and delivery GH¢52.88. `ride_db` has no unfinished trips or pending
+  requests.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
