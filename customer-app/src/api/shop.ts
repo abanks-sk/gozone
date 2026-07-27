@@ -1,3 +1,14 @@
+export interface LeaveTime {
+  orderId: string;
+  position: number | null;
+  peopleAhead: number;
+  readyInMinutes: number;
+  travelMinutes: number | null;
+  /** Negative or zero = set off now. Null when we had no location to work from. */
+  leaveInMinutes: number | null;
+  status: string;
+}
+
 import api from './client';
 
 export type VendorType = 'RESTAURANT' | 'PHARMACY' | 'GROCERY' | 'CONVENIENCE' | 'OTHER';
@@ -110,6 +121,12 @@ export const shopApi = {
     deliveryLng?: number;
     items: { menuItemId: string; qty: number; addonOptionIds?: string[] }[];
   }) => api.post<Order>('/food/orders', body).then(r => r.data),
+
+  /** When a walk-in customer should set off. Coordinates optional — omit for a ready time only. */
+  leaveTime: (orderId: string, lat?: number, lng?: number) =>
+    api.get<LeaveTime>(`/food/orders/${orderId}/leave-time`, {
+      params: lat != null && lng != null ? { lat, lng } : undefined,
+    }).then(r => r.data),
 
   getOrder: (orderId: string) =>
     api.get<Order>(`/food/orders/${orderId}`).then(r => r.data),

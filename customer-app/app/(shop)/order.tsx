@@ -3,7 +3,8 @@ import { ActivityIndicator, Alert, Linking, RefreshControl, ScrollView, TextInpu
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { shopApi, Order, QueuePosition } from '../../src/api/shop';
+import { getCurrentLocation } from '../../src/lib/location';
+import { shopApi, Order, QueuePosition , LeaveTime } from '../../src/api/shop';
 import { walletApi } from '../../src/api/wallet';
 import { wsClient } from '../../src/realtime/wsClient';
 import { useTheme } from '../../src/theme/ThemeProvider';
@@ -48,6 +49,7 @@ export default function OrderScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const [order, setOrder] = useState<Order | null>(null);
   const [queue, setQueue] = useState<QueuePosition | null>(null);
+  const [leave, setLeave] = useState<LeaveTime | null>(null);
   const [courierLoc, setCourierLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [isStale, setIsStale] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -64,7 +66,13 @@ export default function OrderScreen() {
     try {
       const o = await shopApi.getOrder(orderId);
       setOrder(o);
-      if (o.mode === 'WALKIN') setQueue(await shopApi.queuePosition(orderId).catch(() => null));
+      if (o.mode === 'WALKIN') {
+        setQueue(await shopApi.queuePosition(orderId).catch(() => null));
+        // Where they are NOW is what decides when to set off, so the position is read on each
+        // refresh rather than once. Best-effort: no permission still gives a ready time.
+        const here = await getCurrentLocation().catch(() => null);
+        setLeave(await shopApi.leaveTime(orderId, here?.lat, here?.lng).catch(() => null));
+      }
     } catch {}
   }
   useEffect(() => { load(); }, [orderId]);
@@ -201,6 +209,47 @@ export default function OrderScreen() {
             <Text style={{ fontSize: 13, fontWeight: '600', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Your position in the queue</Text>
             <Text style={{ fontSize: 56, fontWeight: '800', color: c.primary, textAlign: 'center', marginVertical: 6 }}>#{queue.position}</Text>
             <View style={{ alignItems: 'center' }}><Badge label={queue.status} /></View>
+          </Card>
+        )}
+
+        {/* When to set off. A walk-in is a place in a queue, so "your food is ready" arrives too
+            late to be useful — what the customer needs is the moment to leave. */}
+        {order.mode === 'WALKIN' && leave && order.status !== 'COMPLETED' && order.status !== 'CANCELLED' && (
+          <Card>
+            {leave.leaveInMinutes == null ? (
+              <>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Ready in</Text>
+                <Text style={{ fontSize: 30, fontWeight: '800', color: c.text, marginTop: 4 }}>
+                  about {leave.readyInMinutes} min
+                </Text>
+                <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 6 }}>
+                  Turn on location and we'll tell you exactly when to set off.
+                </Text>
+              </>
+            ) : leave.leaveInMinutes <= 0 ? (
+              <>
+                <Row style={{ gap: 8, alignItems: 'center' }}>
+                  <Ionicons name="walk" size={20} color={c.success} />
+                  <Text style={{ fontSize: 20, fontWeight: '800', color: c.success }}>Time to set off</Text>
+                </Row>
+                <Text style={{ fontSize: 13.5, color: c.textMuted, marginTop: 6 }}>
+                  About {leave.travelMinutes} min away · your order should be ready as you arrive.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Leave in</Text>
+                <Text style={{ fontSize: 34, fontWeight: '800', color: c.primary, marginTop: 2 }}>
+                  {leave.leaveInMinutes} min
+                </Text>
+                <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 6 }}>
+                  {leave.peopleAhead > 0
+                    ? `${leave.peopleAhead} ahead of you · ready in about ${leave.readyInMinutes} min`
+                    : `Ready in about ${leave.readyInMinutes} min`}
+                  {leave.travelMinutes != null ? ` · ${leave.travelMinutes} min away` : ''}
+                </Text>
+              </>
+            )}
           </Card>
         )}
 
