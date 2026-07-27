@@ -23,9 +23,24 @@ export default function VendorMenuScreen() {
   const [category, setCategory] = useState('');
   const [price, setPrice] = useState('');
   const [prep, setPrep] = useState('');
+  const [prepItem, setPrepItem] = useState<MenuItem | null>(null);
+  const [prepDraft, setPrepDraft] = useState('');
   type OptDraft = { label: string; price: string };
   type GroupDraft = { name: string; multi: boolean; required: boolean; options: OptDraft[] };
   const [groups, setGroups] = useState<GroupDraft[]>([]);
+
+  /** Save (or clear) a dish's prep time. Blank means "use the business default" — not zero. */
+  async function savePrep() {
+    if (!prepItem) return;
+    const n = parseInt(prepDraft, 10);
+    if (prepDraft.trim() && (!n || n <= 0)) return Alert.alert('Prep time', 'Enter a number of minutes, or leave it blank to use your default.');
+    try {
+      await foodApi.updateMenuItem(prepItem.id, { prepMinutes: prepDraft.trim() ? n : 0 });
+      setPrepItem(null); await load();
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.message ?? 'Could not save the prep time');
+    }
+  }
 
   const addGroup = () => setGroups((g) => [...g, { name: '', multi: false, required: false, options: [{ label: '', price: '' }] }]);
   const removeGroup = (i: number) => setGroups((g) => g.filter((_, x) => x !== i));
@@ -118,6 +133,17 @@ export default function VendorMenuScreen() {
                     {it.description ? <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 3, lineHeight: 17 }} numberOfLines={2}>{it.description}</Text> : null}
                     <Text style={{ fontSize: 14, fontWeight: '700', color: on ? c.primary : c.textMuted, marginTop: 4 }}>GH₵ {it.price.toFixed(2)}</Text>
                     <Text style={{ fontSize: 12, color: on ? c.success : c.danger, marginTop: 3 }}>{on ? 'Available' : 'Sold out'}</Text>
+                    {/* Editable here because every dish that existed before prep times were added
+                        has none, and the add-item form only helps with new ones. */}
+                    <TouchableOpacity onPress={() => { setPrepItem(it); setPrepDraft(it.prepMinutes != null ? String(it.prepMinutes) : ''); }}
+                      activeOpacity={0.7} style={{ marginTop: 8, alignSelf: 'flex-start' }}>
+                      <Row style={{ gap: 5, alignItems: 'center', backgroundColor: c.surfaceAlt, borderRadius: 999, paddingVertical: 5, paddingHorizontal: 10 }}>
+                        <Ionicons name="time-outline" size={13} color={c.textMuted} />
+                        <Text style={{ fontSize: 12, color: c.textMuted, fontWeight: '600' }}>
+                          {it.prepMinutes != null ? `${it.prepMinutes} min prep` : 'Set prep time'}
+                        </Text>
+                      </Row>
+                    </TouchableOpacity>
                   </View>
                   <View style={{ alignItems: 'flex-end', gap: 10 }}>
                     <Switch value={on} onValueChange={(v) => toggleAvailable(it, v)}
@@ -190,6 +216,30 @@ export default function VendorMenuScreen() {
                 <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{busy ? 'Adding…' : 'Add to catalogue'}</Text>
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Prep time for one dish */}
+      <Modal visible={!!prepItem} transparent animationType="fade" onRequestClose={() => setPrepItem(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: c.bg, borderRadius: 22, padding: 20, gap: 12 }}>
+            <Text style={{ fontSize: 17, fontWeight: '800', color: c.text }}>Prep time</Text>
+            <Text style={{ fontSize: 13, color: c.textMuted, lineHeight: 18 }}>
+              How long {prepItem?.name} takes to make. This is what tells a walk-in customer when to
+              set off. Leave it blank to use your business default.
+            </Text>
+            <TextInput value={prepDraft} onChangeText={setPrepDraft} keyboardType="number-pad"
+              placeholder="e.g. 20" placeholderTextColor={c.textMuted}
+              style={{ backgroundColor: c.surfaceAlt, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, color: c.text, fontSize: 16 }} />
+            <Row style={{ gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+              <TouchableOpacity onPress={() => setPrepItem(null)} style={{ paddingVertical: 12, paddingHorizontal: 16 }}>
+                <Text style={{ color: c.textMuted, fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={savePrep} style={{ backgroundColor: c.primary, borderRadius: 999, paddingVertical: 12, paddingHorizontal: 22 }}>
+                <Text style={{ color: '#fff', fontWeight: '800' }}>Save</Text>
+              </TouchableOpacity>
+            </Row>
           </View>
         </View>
       </Modal>

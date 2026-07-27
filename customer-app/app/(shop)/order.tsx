@@ -50,6 +50,9 @@ export default function OrderScreen() {
   const [order, setOrder] = useState<Order | null>(null);
   const [queue, setQueue] = useState<QueuePosition | null>(null);
   const [leave, setLeave] = useState<LeaveTime | null>(null);
+  // Fires once. Real push needs a development build, so until then the alert is what actually
+  // interrupts someone who is looking at the app — and being told twice is worse than not at all.
+  const leaveAlerted = useRef(false);
   const [courierLoc, setCourierLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [isStale, setIsStale] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -71,7 +74,15 @@ export default function OrderScreen() {
         // Where they are NOW is what decides when to set off, so the position is read on each
         // refresh rather than once. Best-effort: no permission still gives a ready time.
         const here = await getCurrentLocation().catch(() => null);
-        setLeave(await shopApi.leaveTime(orderId, here?.lat, here?.lng).catch(() => null));
+        const lt = await shopApi.leaveTime(orderId, here?.lat, here?.lng).catch(() => null);
+        setLeave(lt);
+        if (lt && lt.leaveInMinutes != null && lt.leaveInMinutes <= 0
+            && o.status !== 'COMPLETED' && o.status !== 'CANCELLED' && !leaveAlerted.current) {
+          leaveAlerted.current = true;
+          Alert.alert('Time to set off',
+            `Your order at ${o.restaurantName ?? 'the restaurant'} should be ready as you arrive`
+            + (lt.travelMinutes != null ? ` — you're about ${lt.travelMinutes} min away.` : '.'));
+        }
       }
     } catch {}
   }

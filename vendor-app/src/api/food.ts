@@ -15,6 +15,8 @@ export interface Restaurant {
 export interface MenuItem {
   id: string;
   name: string;
+  /** Minutes to prepare. Null = not set; the vendor's overall prep time applies. */
+  prepMinutes?: number | null;
   description?: string | null;
   /** Grouping within the catalogue; also what a CATEGORY promo targets. */
   category?: string | null;
@@ -103,7 +105,7 @@ export const foodApi = {
     groups?: { name: string; multi: boolean; required: boolean; options: { label: string; price: number }[] }[];
   }) => api.post<MenuItem>(`/food/restaurants/${restaurantId}/menu`, body).then(r => r.data),
 
-  updateMenuItem: (itemId: string, body: { name?: string; description?: string; category?: string; price?: number; available?: boolean }) =>
+  updateMenuItem: (itemId: string, body: { name?: string; description?: string; category?: string; price?: number; available?: boolean; prepMinutes?: number }) =>
     api.patch<MenuItem>(`/food/menu-items/${itemId}`, body).then(r => r.data),
 
   deleteMenuItem: (itemId: string) =>

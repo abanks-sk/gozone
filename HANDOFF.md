@@ -1577,6 +1577,88 @@ statements at the foot of `seed/99_clear_stale_demo_data.sql` still cover every 
   (1 waiting in the Queue tab) and delivery GH¢52.88. `ride_db` has no unfinished trips or pending
   requests.
 
+### Payments, notifications, shop fixes + design pass (latest session) — REBUILD food + wallet + ride
+Driven by device testing. Backend changes are **verified against the running stack**, not just
+type-checked. Front-end changes type-check; those needing a device are flagged.
+
+**Payments**
+- **Driver could never confirm a cash fare.** Backend was always right (curl-verified: cash → AWAITING,
+  wallet untouched, credited only on confirm). The dead end was the app: "Back to Home" cleared
+  `activeTrip`, the only handle on that trip, so when the customer then chose cash the Confirm button
+  was unreachable and the customer waited forever. The trip is now kept until the fare settles and the
+  feed banner leads back to it; a **COMPLETED trip no longer blocks the feed**, or holding it would
+  take the driver off the road. (The courier delivery screen already did this correctly.)
+- **Paystack could take money and never credit it.** The reference lived in React state and the browser
+  hand-off reloads the JS context — the reload the user noticed *was* the bug. Nothing is banked until
+  `/wallet/topup/verify` gets that string. Now persisted (`src/lib/pendingPayment.ts`) and redeemed on
+  return; verify is idempotent per reference. ⚠️ **Only wired into wallet top-up and `(rider)/live.tsx`**
+  — food checkout and `(parcel)/live.tsx` still have the flaw.
+- **Saved cards are real** (wallet V3 `payment_authorizations`). Paystack only issues a reusable
+  authorization as the by-product of a successful charge, so a card saves itself after the first
+  payment and every one after is a server-side tap. Stores an authorization code + brand/last4 —
+  **no PAN, no CVV**, far less than the old local form held. `POST /wallet/cards/{id}/charge` returns a
+  reference the *existing* verify paths confirm, so nothing gets a second trust path. **Momo lost its
+  add-a-number form**: Paystack has no reusable momo authorization, so it is a standard method that
+  goes to checkout. ⚠️ **Not exercised against real Paystack** (key is `mock`, where capture is
+  skipped) — the first live card payment is the real test (`docker logs gozone-wallet | grep CARD`).
+  ⚠️ One-tap is wired into the **ride** flow only; food checkout and top-up still redirect.
+
+**Notifications — nothing had ever been delivered to anyone**
+Two breaks hiding each other: no app ever called `/wallet/push-token`, so every notification fell to an
+`[SMS-STUB]` log line; and `NOTIFY_URL` omitted wallet-service's `/wallet` context path, so a dispatch
+would have 404'd anyway. Neither surfaced because **no service ever called notify**. Both fixed;
+`NotifyClient` added to ride **and** food (fail-soft — a notification outage must never fail the
+trip/order it rides on).
+- **`POST /rides/trips/{id}/arrived`** (driver-only, ENROUTE-only) + an "I've arrived" button.
+  Deliberately does **not** advance status — arriving is not starting, or the meter runs on someone
+  still in their doorway.
+- **Food ready**, worded by collection mode: pickup → "ready for collection"; walk-in → "head to the
+  counter"; delivery → nothing at READY (noise; they have tracking) but notified when the **courier
+  collects**, which is when the map starts meaning something.
+- ⚠️ **`expo-notifications` throws at IMPORT time on Android in Expo Go (SDK 53+)** — a lazy
+  `await import()` is still too late. `src/lib/push.ts` detects Expo Go via `expo-constants` and never
+  touches the module. **Real push needs a dev build**; records still reach the in-app list.
+
+**Shop fixes**
+- **Courier never saw deliveries:** the driver app hard-coded `isOkada ? available() : []`, so anyone
+  else got an empty feed indistinguishable from "no work" — and a **Car is class-null until an admin
+  approves it**. The backend never filtered by class at all. Okada/car/luxe can now deliver; an
+  unapproved vehicle is told exactly that.
+- **Pickup/walk-in were pushed through delivery statuses:** `NEXT` was one flat map ending
+  `READY → OUT_FOR_DELIVERY` for everything, so a pickup offered a button the backend refused. Now
+  mode-aware: pickup/walk-in go `READY → COMPLETED` ("Handed to customer" / "Served — complete").
+- **Walk-in "when to leave"** — `GET /food/orders/{id}/leave-time?lat=&lng=`. Location is a **query
+  param, not stored**: what matters is where they are when they ask. Queue position is **recomputed**
+  from who is still waiting, not read off the ticket number. Travel is haversine at 18 km/h (Accra
+  traffic), deliberately not the Directions proxy — it is polled, and road-route precision is unusable
+  against a 20-minute prep estimate. Customer card shows "Leave in N min" → "Time to set off", **plus a
+  one-shot `Alert`** standing in for push until there is a dev build.
+- **Prep time per dish** (food V9 `menu_items.prep_minutes`). An order's prep is the **slowest dish,
+  not the sum** — kitchens cook in parallel; summing would send someone off an hour early. Small capped
+  margin per extra dish. People ahead are still costed at the vendor's flat average (we cannot see
+  their orders; inventing detail would fake precision). **Null = unset → vendor's flat figure**, so all
+  17 existing items are unchanged. Settable when adding an item, and editable afterwards via a **prep
+  chip** on each catalogue row (blank clears it back to the default rather than meaning zero).
+
+**Design**
+- Splash: glow **2.1× → 2.6×** (now a `glowScale` prop) — the GZ was overhanging its own halo; mark
+  180→172; wordmark moved well down (marginTop 92, inDrive-style) and blue. Driver/vendor splashes say
+  **GoZone Driver** / **GoZone Vendor**. Logos deliberately left alone.
+- Ride greeting: **one colour in both themes** (`#0B1220`) at the user's direction — the map tiles are
+  light whichever theme is on, and flipping to white in dark mode drew a hard white-on-black seam that
+  read as two unrelated halves. A light scrim lifts the text off the tiles.
+- Map markers stopped blinking: `react-native-maps` defaults `tracksViewChanges` **true**, redrawing
+  custom marker children on every render (the picker re-renders every frame of a pan).
+  `useSettledTracking` tracks ~800ms after a real change then settles — turning it off outright would
+  freeze the rotating vehicle marker. Ported to driver-app.
+- Recents kept the placeholder name — `relabel(lat,lng,place)` matches on **coordinates**, since the
+  label is exactly what changed. Pickup label upgrades from "Current location" to the real street name.
+- **Destination no longer seeded with Osu.** ⚠️ Uses an **empty-place sentinel (`NO_DEST`/`hasDest`)
+  rather than `null`**, because ~8 files read `dest.lat`/`dest.label` directly; nullable is correct but
+  ripples through all of them. **Converting it properly is outstanding.**
+
+**Rebuild:** `docker compose build food-service wallet-service ride-service && docker compose up -d`
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
