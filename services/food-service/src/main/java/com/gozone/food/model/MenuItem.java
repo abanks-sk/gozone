@@ -35,6 +35,13 @@ public class MenuItem {
     @Column(length = 40)
     private String category;
 
+    /**
+     * Minutes this dish takes to prepare. Null = not set, so the vendor's flat prepMinutes is
+     * used instead — every item predates this column, and a zero would silently promise instant food.
+     */
+    @Column(name = "prep_minutes")
+    private Integer prepMinutes;
+
     @OneToMany(mappedBy = "menuItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @OrderBy("position ASC")
     private List<AddonGroup> groups = new ArrayList<>();
@@ -51,6 +58,8 @@ public class MenuItem {
     public void setPrice(BigDecimal price) { this.price = price; }
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }
+    public Integer getPrepMinutes() { return prepMinutes; }
+    public void setPrepMinutes(Integer prepMinutes) { this.prepMinutes = prepMinutes; }
     public boolean isAvailable() { return available; }
     public void setAvailable(boolean available) { this.available = available; }
 }

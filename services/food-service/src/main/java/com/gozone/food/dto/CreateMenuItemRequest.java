@@ -52,4 +52,9 @@ public class CreateMenuItemRequest {
     public void setAvailable(Boolean available) { this.available = available; }
     public List<GroupInput> getGroups() { return groups; }
     public void setGroups(List<GroupInput> groups) { this.groups = groups; }
+
+    /** Minutes to prepare this dish. Null leaves it unset and the vendor's flat time applies. */
+    private Integer prepMinutes;
+    public Integer getPrepMinutes() { return prepMinutes; }
+    public void setPrepMinutes(Integer prepMinutes) { this.prepMinutes = prepMinutes; }
 }

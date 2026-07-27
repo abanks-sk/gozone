@@ -99,6 +99,7 @@ export const foodApi = {
 
   createMenuItem: (restaurantId: string, body: {
     name: string; description?: string; category?: string; price: number; available?: boolean;
+    prepMinutes?: number;
     groups?: { name: string; multi: boolean; required: boolean; options: { label: string; price: number }[] }[];
   }) => api.post<MenuItem>(`/food/restaurants/${restaurantId}/menu`, body).then(r => r.data),
 

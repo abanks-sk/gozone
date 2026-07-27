@@ -22,6 +22,7 @@ export default function VendorMenuScreen() {
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
   const [price, setPrice] = useState('');
+  const [prep, setPrep] = useState('');
   type OptDraft = { label: string; price: string };
   type GroupDraft = { name: string; multi: boolean; required: boolean; options: OptDraft[] };
   const [groups, setGroups] = useState<GroupDraft[]>([]);
@@ -58,9 +59,11 @@ export default function VendorMenuScreen() {
       await foodApi.createMenuItem(vendor.id, {
         name: name.trim(), description: description.trim() || undefined,
         category: category.trim() || undefined, price: Math.round(p * 100) / 100,
+        // Blank leaves it unset, and the business's overall prep time applies to this dish.
+        prepMinutes: parseInt(prep, 10) > 0 ? parseInt(prep, 10) : undefined,
         groups: groupsPayload.length ? groupsPayload : undefined,
       });
-      setName(''); setDescription(''); setCategory(''); setPrice(''); setGroups([]); setAdding(false);
+      setName(''); setDescription(''); setCategory(''); setPrice(''); setPrep(''); setGroups([]); setAdding(false);
       await load();
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.message ?? 'Could not add the item');
@@ -143,6 +146,10 @@ export default function VendorMenuScreen() {
               <Field label="Description" value={description} onChangeText={setDescription} placeholder="Smoky party jollof with grilled chicken" multiline c={c} />
               <Field label="Category" value={category} onChangeText={setCategory} placeholder="Mains · Drinks · Sides — groups your items and lets you run a promo on just this group" c={c} />
               <Field label="Price (GH₵)" value={price} onChangeText={setPrice} placeholder="35.00" keyboardType="decimal-pad" c={c} />
+              {/* Drives how long a walk-in customer is told to wait, and when to set off for you.
+                  Optional — left blank, your overall prep time is used for this dish. */}
+              <Field label="Prep time (minutes, optional)" value={prep} onChangeText={setPrep}
+                     placeholder="e.g. 20" keyboardType="number-pad" c={c} />
 
               {/* Add-on groups */}
               <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>

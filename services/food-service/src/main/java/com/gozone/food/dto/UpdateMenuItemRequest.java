@@ -20,4 +20,9 @@ public class UpdateMenuItemRequest {
     public void setPrice(BigDecimal price) { this.price = price; }
     public Boolean getAvailable() { return available; }
     public void setAvailable(Boolean available) { this.available = available; }
+
+    /** Minutes to prepare this dish. Null leaves it unset and the vendor's flat time applies. */
+    private Integer prepMinutes;
+    public Integer getPrepMinutes() { return prepMinutes; }
+    public void setPrepMinutes(Integer prepMinutes) { this.prepMinutes = prepMinutes; }
 }

@@ -119,6 +119,7 @@ public class FoodService {
         item.setName(req.getName().trim());
         item.setDescription(req.getDescription() != null ? req.getDescription().trim() : null);
         item.setCategory(req.getCategory() != null && !req.getCategory().isBlank() ? req.getCategory().trim() : null);
+        item.setPrepMinutes(req.getPrepMinutes() != null && req.getPrepMinutes() > 0 ? req.getPrepMinutes() : null);
         item.setPrice(req.getPrice());
         item.setAvailable(req.getAvailable() == null || req.getAvailable());
         // Add-on groups + options (cascade-persisted with the item).
@@ -158,6 +159,7 @@ public class FoodService {
         if (req.getName() != null && !req.getName().isBlank()) item.setName(req.getName().trim());
         if (req.getDescription() != null) item.setDescription(req.getDescription().trim());
         if (req.getCategory() != null) item.setCategory(req.getCategory().isBlank() ? null : req.getCategory().trim());
+        if (req.getPrepMinutes() != null) item.setPrepMinutes(req.getPrepMinutes() > 0 ? req.getPrepMinutes() : null);
         if (req.getPrice() != null) item.setPrice(req.getPrice());
         if (req.getAvailable() != null) item.setAvailable(req.getAvailable());
         menuItemRepo.save(item);
@@ -845,12 +847,25 @@ public class FoodService {
                 .stream().filter(q -> q.getPosition() < entry.getPosition()).count();
         }
 
+        // This order's own prep time: the slowest dish on it, not the sum. A kitchen cooks in
+        // parallel, so three dishes do not take three times as long — but they do take a little
+        // longer than one, hence the small margin per extra dish. Items with no time of their own
+        // fall back to the vendor's flat figure.
+        int ownPrep = order.getItems().isEmpty() ? prep
+            : order.getItems().stream()
+                .mapToInt(li -> li.getMenuItem() != null && li.getMenuItem().getPrepMinutes() != null
+                    ? li.getMenuItem().getPrepMinutes() : prep)
+                .max().orElse(prep)
+              + Math.min(10, Math.max(0, order.getItems().size() - 1) * 2);
+
         // Already cooking means the queue no longer applies to them.
         boolean cooking = order.getStatus() == Order.Status.PREPARING
                        || order.getStatus() == Order.Status.READY;
+        // People ahead are queued with orders of their own, which we cannot see from here, so
+        // they are costed at the vendor's average rather than pretending to know their dishes.
         int readyIn = order.getStatus() == Order.Status.READY ? 0
-                    : cooking ? prep
-                    : (ahead + 1) * prep;
+                    : cooking ? ownPrep
+                    : ahead * prep + ownPrep;
 
         Integer travel = null;
         if (lat != null && lng != null && vendor.getLat() != null && vendor.getLng() != null) {
