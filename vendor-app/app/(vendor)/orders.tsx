@@ -9,14 +9,36 @@ import { useVendorStore } from '../../src/store/vendorStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Row } from '../../src/components/ui';
 
-const NEXT: Record<string, string> = {
-  PLACED: 'CONFIRMED', CONFIRMED: 'PREPARING', PREPARING: 'READY',
-  READY: 'OUT_FOR_DELIVERY', OUT_FOR_DELIVERY: 'COMPLETED',
-};
-const ACTION: Record<string, string> = {
-  PLACED: 'Confirm order', CONFIRMED: 'Start preparing', PREPARING: 'Mark ready',
-  READY: 'Out for delivery', OUT_FOR_DELIVERY: 'Complete',
-};
+/**
+ * The next status, which depends on how the order is being collected.
+ *
+ * This used to be one flat map ending READY -> OUT_FOR_DELIVERY for everything, so a pickup or
+ * walk-in order offered the vendor an "Out for delivery" button that the backend then refused as
+ * an invalid transition. Nobody is delivering a walk-in: the customer is standing there. Those
+ * go straight from READY to COMPLETED when the food is handed over.
+ */
+function nextStatus(order: Order): string | null {
+  const shared: Record<string, string> = {
+    PLACED: 'CONFIRMED', CONFIRMED: 'PREPARING', PREPARING: 'READY',
+  };
+  if (shared[order.status]) return shared[order.status];
+  if (order.status === 'READY') {
+    // A delivery leaves the kitchen with a courier and is theirs to advance from here.
+    return order.mode === 'DELIVERY' ? null : 'COMPLETED';
+  }
+  return null;
+}
+
+function actionLabel(order: Order): string | null {
+  const shared: Record<string, string> = {
+    PLACED: 'Confirm order', CONFIRMED: 'Start preparing', PREPARING: 'Mark ready',
+  };
+  if (shared[order.status]) return shared[order.status];
+  if (order.status === 'READY' && order.mode !== 'DELIVERY') {
+    return order.mode === 'WALKIN' ? 'Served — complete' : 'Handed to customer';
+  }
+  return null;
+}
 
 /**
  * A delivery order leaves the kitchen's hands once it's ready: a courier collects it and their
@@ -28,7 +50,7 @@ function vendorAction(order: Order): string | null {
   if (order.mode === 'DELIVERY' && (order.status === 'READY' || order.status === 'OUT_FOR_DELIVERY')) {
     return null;
   }
-  return NEXT[order.status] ? ACTION[order.status] : null;
+  return actionLabel(order);
 }
 
 /** What the vendor sees instead of a button while the courier has it. */
@@ -37,6 +59,14 @@ function courierNote(order: Order): string | null {
   if (order.status === 'READY') return 'Waiting for a courier to collect';
   if (order.status === 'OUT_FOR_DELIVERY') return 'Courier is on the way to the customer';
   return null;
+}
+
+/** Tell the vendor the customer has been told to come — so they know why they are waiting. */
+function collectNote(order: Order): string | null {
+  if (order.mode === 'DELIVERY' || order.status !== 'READY') return null;
+  return order.mode === 'WALKIN'
+    ? 'Customer notified — call them when their table is ready'
+    : 'Customer notified to come and collect';
 }
 const STATUS_COLOR = (c: any): Record<string, string> => ({
   PLACED: c.warning, CONFIRMED: c.warning, PREPARING: '#f97316',
@@ -93,7 +123,7 @@ export default function VendorOrdersScreen() {
   }, [vendor?.id]);
 
   async function advance(order: Order) {
-    const next = NEXT[order.status];
+    const next = nextStatus(order);
     if (!next) return;
     setAdvancingId(order.id);
     try { await foodApi.advanceStatus(order.id, next); await load(); }

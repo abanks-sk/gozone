@@ -38,13 +38,22 @@ export default function DriverDeliveriesScreen() {
   const vehicleClass = useAuthStore((s) => s.vehicleClass);
   const fetchMe = useAuthStore((s) => s.fetchMe);
   useEffect(() => { fetchMe(); }, []);
-  const isOkada = vehicleClass === 'OKADA';
+  /**
+   * Who may take a food delivery.
+   *
+   * This used to be Okada only, which silently produced an empty feed for everyone else — a
+   * driver with a car saw "no deliveries" forever and had no way to tell that from there being
+   * no work. A saloon car can carry a takeaway perfectly well; what cannot is a truck, and a
+   * car whose class an admin has not assigned yet is not approved for anything.
+   */
+  const canDeliver = vehicleClass === 'OKADA' || vehicleClass === 'STANDARD' || vehicleClass === 'LUXE';
 
   async function load() {
     try {
-      // Food deliveries go to Okada riders only; others still see their own active one.
+      // Ineligible drivers still see their own active delivery, so nothing is stranded if a
+      // class changes mid-job.
       const [avail, mine] = await Promise.all([
-        isOkada ? deliveryApi.available() : Promise.resolve([]),
+        canDeliver ? deliveryApi.available() : Promise.resolve([]),
         deliveryApi.mine(),
       ]);
       setAvailable(avail);
@@ -55,7 +64,7 @@ export default function DriverDeliveriesScreen() {
       ) ?? null);
     } catch {}
   }
-  useEffect(() => { load(); }, [isOkada]);
+  useEffect(() => { load(); }, [canDeliver]);
   // Poll the available feed while idle.
   useEffect(() => {
     if (active) return;
@@ -197,11 +206,13 @@ export default function DriverDeliveriesScreen() {
           /* Available feed */
           <>
             <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10 }}>Available now</Text>
-            {!isOkada ? (
+            {!canDeliver ? (
               <View style={{ alignItems: 'center', paddingVertical: 40, gap: 10 }}>
                 <Ionicons name="bicycle-outline" size={34} color={c.textMuted} />
                 <Text style={{ color: c.textMuted, fontSize: 14, textAlign: 'center', paddingHorizontal: 20 }}>
-                  Food deliveries go to Okada riders. Parcels for your class appear on the Home feed.
+                  {vehicleClass
+                    ? 'Food deliveries go to okada, car and luxe drivers. Parcels for your class appear on the Home feed.'
+                    : 'An admin still needs to approve your vehicle before you can take deliveries.'}
                 </Text>
               </View>
             ) : available.length === 0 ? (
