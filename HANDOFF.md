@@ -1391,6 +1391,24 @@ and a fix in `customer-app/src` does not reach `driver-app/src`.
   `npm install react-native-webview` in driver-app — flagged for the user's decision.
 - All four front-ends type-check (admin-web builds); e2e 118/118.
 
+### Driver app now has a real map on web (latest) — run `npm install` in driver-app
+`driver-app/src/components/GoogleMap.tsx` was a placeholder card ("Map is available on the mobile
+app") because `react-native-maps` has no web build — so in a browser the driver saw nothing while
+the customer saw a live map.
+- **Added dep `react-native-webview@13.15.0`** (`npx expo install`, same version as customer-app) —
+  ⚠️ **anyone pulling this needs `npm install` in `driver-app`**.
+- Ported the customer's proven Leaflet implementation into `GoogleMap.tsx`, adapted to the driver
+  app's shared `MapProps` contract (its `.native.tsx` already used it) and re-exported as
+  `GoogleMap`, so **no call site changed** — `trip.tsx` and `deliveries.tsx` just work.
+- **Verified, not assumed:** `expo export --platform web` bundles clean (1.8 MB); the old
+  placeholder string is **gone** from the bundle and `unpkg.com/leaflet`, the carto tiles and the
+  vehicle `GLYPH` table are **present**; a diff against the customer's file shows the only
+  differences are the type import, the export name and the header comment — the map logic is
+  identical to the one already working on web. All apps type-check; e2e 118/118.
+- *Attempted a full browser click-through of the driver trip screen; React Native Web touchables
+  don't respond to synthetic DOM events and the preview pane wouldn't composite frames for real
+  clicks, so the bundle-level verification above stands in. Worth a human glance in a browser.*
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
