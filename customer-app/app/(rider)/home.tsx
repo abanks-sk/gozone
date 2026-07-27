@@ -7,7 +7,8 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { rideApi } from '../../src/api/ride';
 import { useTheme } from '../../src/theme/ThemeProvider';
-import { useRideDraft } from '../../src/store/rideDraft';
+import { useRideDraft, hasDest } from '../../src/store/rideDraft';
+import { reverseGeocode } from '../../src/lib/geocode';
 import { useProfileStore, initial } from '../../src/store/profileStore';
 import { useRecents } from '../../src/store/recentsStore';
 import { haversineKm, rideFare } from '../../src/lib/pricing';
@@ -27,13 +28,15 @@ export default function RiderHomeScreen() {
   const insets = useSafeAreaInsets();
   const { colors: c, scheme } = useTheme();
 
-  // The greeting sits on the map, and the map is light in light mode. White-on-white was
-  // unreadable; white-on-dark is right only in dark mode. So the overlay follows the map:
-  // dark ink over light tiles, light ink over dark ones, with the scrim flipped to match.
-  const onMapDark = scheme === 'dark';
-  const onMapText = onMapDark ? '#FFFFFF' : '#0B1220';
-  const onMapMuted = onMapDark ? 'rgba(255,255,255,0.72)' : 'rgba(11,18,32,0.66)';
-  const scrimColor = onMapDark ? '#000000' : '#FFFFFF';
+  // One colour in both themes, on purpose: the map tiles stay light whichever theme is on, so
+  // the greeting is always sitting on white and always wants dark ink. Flipping it to white in
+  // dark mode also drew a hard white-on-black seam across the middle of the screen, which read
+  // as two unrelated halves rather than one screen.
+  const onMapText = '#0B1220';
+  const onMapMuted = 'rgba(11,18,32,0.66)';
+  // The scrim stays light for the same reason — it lifts dark text off the tiles instead of
+  // fighting it. In dark mode it doubles as a soft edge between the map and the UI below.
+  const scrimColor = '#FFFFFF';
   const origin = useRideDraft((s) => s.origin);
   const dest = useRideDraft((s) => s.dest);
   const setDest = useRideDraft((s) => s.setDest);
@@ -64,7 +67,18 @@ export default function RiderHomeScreen() {
       // than silently proposing the airport.
       const o = untouchedOrigin.current;
       if (origin.lat === o.lat && origin.lng === o.lng) {
+        // Set the coordinates straight away so the map and any quote can move, then upgrade the
+        // label once the name arrives. Defaulting someone's pickup is only helpful if it tells
+        // them WHERE it is — "Current location" is not a place they can check.
         setOrigin({ label: 'Current location', sub: `${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}`, lat: l.lat, lng: l.lng });
+        reverseGeocode(l.lat, l.lng).then((geo) => {
+          if (!active || !geo) return;
+          const cur = useRideDraft.getState().origin;
+          // Only rename if the rider has not picked somewhere else in the meantime.
+          if (cur.lat === l.lat && cur.lng === l.lng) {
+            setOrigin({ label: geo.label, sub: geo.sub, lat: l.lat, lng: l.lng });
+          }
+        }).catch(() => {});
       }
     }).catch(() => {});
     return () => { active = false; };
@@ -72,12 +86,12 @@ export default function RiderHomeScreen() {
   }, []);
 
   // Frame the route once there's a destination; otherwise sit on the pickup.
-  const mapCenter: LatLng = dest
+  const mapCenter: LatLng = hasDest(dest)
     ? { lat: (origin.lat + dest.lat) / 2, lng: (origin.lng + dest.lng) / 2 }
     : { lat: origin.lat, lng: origin.lng };
   const mapMarkers = [
     { lat: origin.lat, lng: origin.lng, kind: 'pickup' as const, label: origin.label },
-    ...(dest && (dest.lat !== origin.lat || dest.lng !== origin.lng)
+    ...(hasDest(dest) && (dest.lat !== origin.lat || dest.lng !== origin.lng)
       ? [{ lat: dest.lat, lng: dest.lng, kind: 'dest' as const, label: dest.label }]
       : []),
   ];
@@ -95,6 +109,9 @@ export default function RiderHomeScreen() {
 
   // Fetch server quotes for every ride type whenever the route changes.
   useEffect(() => {
+    // No destination yet — nothing to price. Quoting the sentinel would ask the server for a
+    // fare from Accra to 0,0 in the Atlantic.
+    if (!hasDest(dest)) return;
     let cancelled = false;
     (async () => {
       try {
@@ -192,7 +209,7 @@ export default function RiderHomeScreen() {
                 </Text>
               </View>
               <TouchableOpacity onPress={() => router.push('/profile' as any)} activeOpacity={0.8}>
-                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.primary, borderWidth: 1, borderColor: onMapDark ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(0,0,0,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{initial(name)}</Text>
                 </View>
               </TouchableOpacity>
@@ -294,7 +311,11 @@ export default function RiderHomeScreen() {
               </Row>
             )}
 
-            <Btn label={scheduledFuture ? 'Schedule ride' : typeMeta.bargain ? 'Request ride' : `Book ${typeMeta.label}`} onPress={requestRide} loading={loading} />
+            <Btn label={!hasDest(dest) ? 'Choose a destination'
+                        : scheduledFuture ? 'Schedule ride'
+                        : typeMeta.bargain ? 'Request ride' : `Book ${typeMeta.label}`}
+                 onPress={() => (hasDest(dest) ? requestRide() : router.push('/search?field=dest' as any))}
+                 loading={loading} />
           </Card>
 
           {/* ── Recents — empty for new accounts ── */}

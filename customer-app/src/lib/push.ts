@@ -1,5 +1,16 @@
 import { Platform } from 'react-native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { walletApi } from '../api/wallet';
+
+/**
+ * Expo Go cannot do remote push, and finding out is destructive.
+ *
+ * Since SDK 53 the module throws on Android the moment it is loaded — not when you call it.
+ * `DevicePushTokenAutoRegistration.fx.js` runs at import time, so a lazy `await import()` is
+ * still too late: the error is raised by the import itself. The only safe move is to never
+ * touch the module in Expo Go at all.
+ */
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 /**
  * Register this device for push notifications.
@@ -16,13 +27,9 @@ import { walletApi } from '../api/wallet';
  * ride. Every failure here is swallowed and logged.
  */
 export async function registerForPush(): Promise<string | null> {
+  if (Platform.OS === 'web' || isExpoGo) return null;
   try {
-    // Loaded lazily: importing expo-notifications at module scope has crashed startup in Expo Go
-    // before, and this must never be on the path between opening the app and using it.
     const Notifications = await import('expo-notifications');
-
-    // Push tokens are a physical-device feature; simulators cannot mint one.
-    if (Platform.OS === 'web') return null;
 
     const existing = await Notifications.getPermissionsAsync();
     let status = existing.status;
@@ -45,8 +52,8 @@ export async function registerForPush(): Promise<string | null> {
     await walletApi.registerPushToken(token);
     return token;
   } catch (e) {
-    // Expo Go on SDK 53+ cannot always issue a token, and that is not an error worth surfacing:
-    // the in-app notifications list still fills in from the same records.
+    // Not an error worth surfacing: the in-app notifications list is fed by the same records
+    // whether or not a banner ever appears.
     console.log('[push] not registered:', (e as Error)?.message);
     return null;
   }
@@ -54,6 +61,7 @@ export async function registerForPush(): Promise<string | null> {
 
 /** Show notifications while the app is in the foreground, instead of dropping them silently. */
 export async function configureForegroundPush(): Promise<void> {
+  if (Platform.OS === 'web' || isExpoGo) return;
   try {
     const Notifications = await import('expo-notifications');
     Notifications.setNotificationHandler({
