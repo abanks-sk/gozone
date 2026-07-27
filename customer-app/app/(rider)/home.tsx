@@ -25,7 +25,15 @@ const RIDE_TYPES = [
 export default function RiderHomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors: c } = useTheme();
+  const { colors: c, scheme } = useTheme();
+
+  // The greeting sits on the map, and the map is light in light mode. White-on-white was
+  // unreadable; white-on-dark is right only in dark mode. So the overlay follows the map:
+  // dark ink over light tiles, light ink over dark ones, with the scrim flipped to match.
+  const onMapDark = scheme === 'dark';
+  const onMapText = onMapDark ? '#FFFFFF' : '#0B1220';
+  const onMapMuted = onMapDark ? 'rgba(255,255,255,0.72)' : 'rgba(11,18,32,0.66)';
+  const scrimColor = onMapDark ? '#000000' : '#FFFFFF';
   const origin = useRideDraft((s) => s.origin);
   const dest = useRideDraft((s) => s.dest);
   const setDest = useRideDraft((s) => s.setDest);
@@ -168,8 +176,8 @@ export default function RiderHomeScreen() {
           <Svg width={screenW} height={140} style={{ position: 'absolute', top: 0 }} pointerEvents="none">
             <Defs>
               <SvgGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
-                <Stop offset="0" stopColor="#000000" stopOpacity="0.78" />
-                <Stop offset="1" stopColor="#000000" stopOpacity="0" />
+                <Stop offset="0" stopColor={scrimColor} stopOpacity="0.82" />
+                <Stop offset="1" stopColor={scrimColor} stopOpacity="0" />
               </SvgGradient>
             </Defs>
             <Rect x="0" y="0" width={screenW} height={140} fill="url(#scrim)" />
@@ -178,13 +186,13 @@ export default function RiderHomeScreen() {
           <View style={{ paddingTop: insets.top + 14, paddingHorizontal: 22 }} pointerEvents="box-none">
             <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <View>
-                <Text style={{ color: 'rgba(255,255,255,0.72)', fontSize: 14 }}>Good to see you</Text>
-                <Text style={{ color: '#fff', fontSize: 25, fontWeight: '800', letterSpacing: -0.6, marginTop: 3 }}>
+                <Text style={{ color: onMapMuted, fontSize: 14 }}>Good to see you</Text>
+                <Text style={{ color: onMapText, fontSize: 25, fontWeight: '800', letterSpacing: -0.6, marginTop: 3 }}>
                   Where to, {firstName}?
                 </Text>
               </View>
               <TouchableOpacity onPress={() => router.push('/profile' as any)} activeOpacity={0.8}>
-                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(0,0,0,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)', alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.primary, borderWidth: 1, borderColor: onMapDark ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{initial(name)}</Text>
                 </View>
               </TouchableOpacity>

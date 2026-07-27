@@ -41,8 +41,10 @@ export function GzMark({
 // ── GzHero ────────────────────────────────────────────────────────────────────
 // Splash/onboarding hero: the GZ mark in white, floating on the signature glow.
 
-export function GzHero({ size = 170, style }: { size?: number; style?: ViewStyle }) {
-  const canvas = size * 2.1;
+export function GzHero({ size = 170, glowScale = 2.6, style }: { size?: number; glowScale?: number; style?: ViewStyle }) {
+  // How far the glow spreads beyond the mark. At the old 2.1 the mark overhung its own halo and
+  // read as sitting in front of the light rather than lit by it; a wider orb puts the GZ inside it.
+  const canvas = size * glowScale;
   return (
     <View
       pointerEvents="none"
