@@ -65,6 +65,8 @@ export default function DriverTripScreen() {
   const [rating, setRating] = useState(0);
   const [rated, setRated] = useState(false);
   const [pay, setPay] = useState<{ status?: string; method?: string | null }>({});
+  const [arrived, setArrived] = useState(false);
+  const [arriving, setArriving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [routePts, setRoutePts] = useState<{ lat: number; lng: number }[]>([]);
@@ -171,6 +173,21 @@ export default function DriverTripScreen() {
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.message ?? 'Status update failed');
     } finally { setLoading(false); }
+  }
+
+  /**
+   * Tell the customer we are here.
+   *
+   * Separate from the status flow on purpose: arriving is not starting. The driver taps this when
+   * they pull up, and still taps Start once the passenger is actually in the car — collapsing the
+   * two would start the meter on someone standing in their doorway.
+   */
+  async function announceArrival() {
+    if (!trip || arrived) return;
+    setArriving(true);
+    try { await rideApi.announceArrival(trip.id); setArrived(true); }
+    catch (e: any) { Alert.alert('Error', e?.response?.data?.message ?? 'Could not notify the customer'); }
+    finally { setArriving(false); }
   }
 
   async function rate(score: number) {
@@ -363,6 +380,21 @@ export default function DriverTripScreen() {
             <Text style={{ fontSize: 12.5, color: c.textMuted, fontWeight: '600' }}>Sharing live location with {isParcel ? 'the customer' : 'the passenger'}</Text>
           </Row>
         ) : null}
+
+        {trip.status === 'ENROUTE' && (
+          <TouchableOpacity onPress={announceArrival} disabled={arriving || arrived} activeOpacity={0.9}
+            style={{ marginBottom: 12, borderRadius: 999, paddingVertical: 14, alignItems: 'center',
+                     backgroundColor: arrived ? `${c.success}1A` : c.surfaceAlt,
+                     borderWidth: 1, borderColor: arrived ? c.success : c.border }}>
+            <Row style={{ gap: 8 }}>
+              <Ionicons name={arrived ? 'checkmark-circle' : 'notifications-outline'} size={18}
+                        color={arrived ? c.success : c.text} />
+              <Text style={{ fontWeight: '800', fontSize: 15, color: arrived ? c.success : c.text }}>
+                {arriving ? 'Notifying…' : arrived ? 'Customer notified' : "I've arrived"}
+              </Text>
+            </Row>
+          </TouchableOpacity>
+        )}
 
         {!done ? (
           <TouchableOpacity onPress={advance} disabled={loading} activeOpacity={0.9}

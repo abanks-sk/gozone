@@ -3,6 +3,7 @@ import { Alert, KeyboardAvoidingView, Platform, Text, TouchableOpacity, View } f
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
+import { registerForPush } from '../../src/lib/push';
 import { useProfileStore } from '../../src/store/profileStore';
 import { clearUserData } from '../../src/lib/session';
 import { roleHome } from '../../src/lib/routes';
@@ -41,6 +42,9 @@ export default function VerifyOtpScreen() {
         // app isn't nameless; the account screen refreshes from the server on open.
         setProfile({ name: name ?? '', ...(username ? { username } : {}), ...contact });
       }
+      // Register this device for push now that we have a session — the token is stored against
+      // the signed-in user. Not awaited: a permission prompt must not hold up the sign-in.
+      registerForPush();
       const newRole = useAuthStore.getState().role;
       router.replace(roleHome(newRole) as any);
     } catch (e: any) {

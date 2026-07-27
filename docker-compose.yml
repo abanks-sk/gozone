@@ -111,7 +111,7 @@ services:
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       AUTH_SERVICE_URL: http://auth-service:8081
       WALLET_SERVICE_URL: http://wallet-service:8084
-      NOTIFY_URL: http://wallet-service:8084/notify
+      NOTIFY_URL: http://wallet-service:8084/wallet/notify
       GOOGLE_MAPS_SERVER_KEY: ${GOOGLE_MAPS_SERVER_KEY:-}
     depends_on:
       postgres:
@@ -142,7 +142,7 @@ services:
       JWKS_URL: http://auth-service:8081/auth/.well-known/jwks.json
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       WALLET_SERVICE_URL: http://wallet-service:8084
-      NOTIFY_URL: http://wallet-service:8084/notify
+      NOTIFY_URL: http://wallet-service:8084/wallet/notify
       AUTH_SERVICE_URL: http://auth-service:8081
     depends_on:
       postgres:

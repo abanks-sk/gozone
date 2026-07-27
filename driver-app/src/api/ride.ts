@@ -92,6 +92,10 @@ export const rideApi = {
   confirmCash: (tripId: string) =>
     api.post<Trip>(`/rides/trips/${tripId}/confirm-cash`).then(r => r.data),
 
+  /** Tell the customer we're at the pickup point — sends them a push notification. */
+  announceArrival: (tripId: string) =>
+    api.post<Trip>(`/rides/trips/${tripId}/arrived`).then(r => r.data),
+
   pushLocation: (lat: number, lng: number) =>
     api.post('/rides/locations', { lat, lng }),
 

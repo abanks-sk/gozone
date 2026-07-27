@@ -42,6 +42,7 @@ public class RideService {
     private final SosIncidentRepository sosRepo;
     private final SimpMessagingTemplate messaging;
     private final WalletClient walletClient;
+    private final NotifyClient notifyClient;
 
     @Value("${app.pooling.max-distance-km:3.0}")
     private double maxPoolDistanceKm;
@@ -69,7 +70,8 @@ public class RideService {
                        RideRatingRepository ratingRepo,
                        SosIncidentRepository sosRepo,
                        SimpMessagingTemplate messaging,
-                       WalletClient walletClient) {
+                       WalletClient walletClient,
+                       NotifyClient notifyClient) {
         this.requestRepo  = requestRepo;
         this.bidRepo      = bidRepo;
         this.tripRepo     = tripRepo;
@@ -79,6 +81,7 @@ public class RideService {
         this.sosRepo      = sosRepo;
         this.messaging    = messaging;
         this.walletClient = walletClient;
+        this.notifyClient = notifyClient;
     }
 
     /** Rider creates a ride request. */
@@ -444,6 +447,33 @@ public class RideService {
         tripRepo.save(trip);
         settleIfPaid(trip); // pays out the driver once the (completed) trip is paid
         log.info("[PAY] trip={} method={} status={}", tripId, method, trip.getPaymentStatus());
+        return TripResponse.from(trip);
+    }
+
+    /**
+     * Driver signals they have reached the pickup point.
+     *
+     * <p>Push, not a screen change: the customer is outside looking for a car, not watching the
+     * tracking map. The trip status is untouched — arriving is not the same as starting, and the
+     * driver still taps Start when the passenger is actually in.
+     */
+    public TripResponse driverArrived(UUID tripId, String driverId) {
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        if (!trip.getDriverId().equals(UUID.fromString(driverId))) {
+            throw new IllegalStateException("Not your trip");
+        }
+        if (trip.getStatus() != Trip.Status.ENROUTE) {
+            throw new IllegalStateException("You can only arrive while en route to the pickup");
+        }
+        boolean parcel = trip.getRequest().getKind() == RideRequest.Kind.PARCEL;
+        notifyClient.send(
+            trip.getRequest().getRiderId(),
+            parcel ? "Your courier has arrived" : "Your driver has arrived",
+            parcel
+                ? "Your courier is at the pickup point for your parcel."
+                : "Your driver is waiting at your pickup point.");
+        log.info("[ARRIVED] trip={} driver={}", tripId, driverId);
         return TripResponse.from(trip);
     }
 

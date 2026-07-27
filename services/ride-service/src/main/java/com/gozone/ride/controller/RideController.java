@@ -138,6 +138,14 @@ public class RideController {
             id, riderId, body.getOrDefault("method", "wallet"), body.get("reference")));
     }
 
+    /** Driver has reached the pickup point — pushes a notification to the customer. */
+    @PostMapping("/trips/{id}/arrived")
+    public ResponseEntity<TripResponse> arrived(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String driverId) {
+        return ResponseEntity.ok(rideService.driverArrived(id, driverId));
+    }
+
     @PostMapping("/trips/{id}/confirm-cash")
     public ResponseEntity<TripResponse> confirmCash(
             @PathVariable UUID id,

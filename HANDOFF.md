@@ -1502,6 +1502,33 @@ publishes its keys and the verifiers fetch them.
   `.env.example` (which was also missing the mandatory `openssl pkcs8 -topk8` step that DEPLOYMENT.md
   documents — the exact trap that cost a restart during the RS256 work).
 
+### Arrival notification — and why NO notification ever worked (latest) — REBUILD ride-service
+User asked for a real notification when the driver reaches the pickup. Building it uncovered that
+**the notification pipeline had never delivered anything to anyone.**
+- **Two dead links, both invisible:** (1) *no app ever registered a push token* — nothing called
+  `POST /wallet/push-token`, so `findByUserId` was always empty and every notification the platform
+  ever sent took the fallback path and died as an `[SMS-STUB]` log line; (2) **`NOTIFY_URL` was wrong
+  in compose** — `http://wallet-service:8084/notify`, missing wallet-service's `/wallet` context path,
+  so a dispatch would have 404'd anyway. Nothing caught it because **no service ever called notify**:
+  ride-service had no notify client at all, and food-service references it only through config.
+  Fixed both (`/wallet/notify` in compose + both ymls; `registerForPush()` in the customer app).
+- **ride-service:** new `NotifyClient` (fail-soft — a notification outage must never fail the trip)
+  and **`POST /rides/trips/{id}/arrived`** (driver-only, ENROUTE-only). Deliberately does **not**
+  change trip status: arriving is not starting, and the driver still taps Start when the passenger
+  is actually in, or the meter runs on someone still in their doorway. Parcel-aware wording.
+- **Customer app:** new `src/lib/push.ts` — permission + Expo token + register, called after
+  verify-otp and on app start for an already-signed-in device, plus a foreground handler so
+  notifications show while the app is open. `expo-notifications` was already installed (the earlier
+  note in this file claiming it was removed is stale); it is imported **lazily** because a top-level
+  import has crashed Expo Go startup before. Entirely best-effort — a device that refuses permission
+  still books rides, and the in-app notifications list fills from the same records either way.
+- **Driver app:** an **"I've arrived"** button on the trip screen while ENROUTE (`announceArrival`).
+- **Verified live:** refused while MATCHED · 200 while ENROUTE · another driver refused · the customer
+  now has the notification record ("Your driver has arrived"). Channel reads `SMS_STUB` under curl
+  because a test has no device token — on a phone it should read `PUSH`.
+- ⚠️ **Not device-verified.** Expo Go on SDK 53+ cannot always mint a push token; if it refuses, the
+  record still appears in the in-app list but no banner shows, and a dev build would be needed.
+
 ### Device-testing fixes: stale recents + blinking map markers (latest — frontend only, no rebuild)
 Two bugs the user found tapping through on a real phone. Both are follow-on damage from the
 "make current location instant" change, and both are ⚠️ **fixed but not device-verified by me** —

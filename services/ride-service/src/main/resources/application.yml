@@ -52,7 +52,7 @@ app:
     key: ${INTERNAL_KEY}   # required — shared secret for wallet settlement calls (no default)
   services:
     wallet-url: ${WALLET_SERVICE_URL:http://localhost:8084}
-    notify-url: ${NOTIFY_URL:http://localhost:8084/notify}
+    notify-url: ${NOTIFY_URL:http://localhost:8084/wallet/notify}
   pooling:
     max-distance-km: 3.0       # Reject pool candidates beyond this from the route
     rule-version: v1

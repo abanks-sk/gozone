@@ -53,7 +53,7 @@ app:
   auth-url: ${AUTH_SERVICE_URL:http://localhost:8081}   # delivery-rider availability check
   services:
     wallet-url: ${WALLET_SERVICE_URL:http://localhost:8084}
-    notify-url: ${NOTIFY_URL:http://localhost:8084/notify}
+    notify-url: ${NOTIFY_URL:http://localhost:8084/wallet/notify}
   delivery:
     base-fee: 2.00       # GH₵ base delivery fee
     per-km-fee: 1.50     # GH₵ per km (haversine)

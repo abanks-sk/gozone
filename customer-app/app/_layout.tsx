@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider as NavThemeProvider, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
 import { useAuthStore } from '../src/store/authStore';
+import { configureForegroundPush, registerForPush } from '../src/lib/push';
 import { usePaymentStore } from '../src/store/paymentStore';
 import { useProfileStore } from '../src/store/profileStore';
 import { useRecents } from '../src/store/recentsStore';
@@ -24,6 +25,14 @@ export default function RootLayout() {
   // Rehydrate stored tokens + local prefs on cold start. Routing is handled
   // declaratively by app/index.tsx (<Redirect>).
   useEffect(() => { hydrate(); hydratePayment(); hydrateProfile(); hydrateRecents(); hydrateSaved(); hydrateFavs(); }, []);
+
+  // Push: show notifications that arrive while the app is open, and make sure a device that is
+  // already signed in has a token registered (verify-otp only covers a fresh sign-in, and until
+  // now nobody registered at all — see src/lib/push.ts).
+  useEffect(() => {
+    configureForegroundPush();
+    if (useAuthStore.getState().accessToken) registerForPush();
+  }, []);
 
   return (
     <SafeAreaProvider>
