@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -800,6 +801,73 @@ public class FoodService {
         queueRepo.save(entry);
         log.info("[QUEUE] entry pos={} restaurant={} order={}", nextPos, restaurant.getId(), order.getId());
         broadcastQueueUpdate(restaurant.getId());
+    }
+
+    // ── Walk-in: when should I leave? ────────────────────────────────────────────
+
+    /** Average city speed used to turn distance into minutes. Accra traffic, not open road. */
+    private static final double CITY_KMH = 18.0;
+    /** Padding so "leave now" is not the exact second you would arrive late. */
+    private static final int BUFFER_MINUTES = 5;
+
+    /**
+     * How long until a walk-in customer's food is ready, and when they should set off.
+     *
+     * <p>A walk-in is closer to a table booking than a takeaway: people are queued behind them,
+     * and arriving too early means standing about while arriving late costs them their place. The
+     * useful answer is not "your food is ready" — by then they are already late — but "leave now".
+     *
+     * <p>Location is passed in rather than stored, because it is the customer's location *now*
+     * that matters; where they were when they ordered is beside the point. It is optional: with
+     * no coordinates the travel leg is simply left out and they still get a ready time.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> walkInLeaveTime(UUID orderId, String customerId, Double lat, Double lng) {
+        Order order = orderRepo.findById(orderId)
+            .orElseThrow(() -> new IllegalStateException("Order not found"));
+        if (!order.getCustomerId().equals(UUID.fromString(customerId))) {
+            throw new IllegalStateException("Not your order");
+        }
+        if (order.getMode() != Order.Mode.WALKIN) {
+            throw new IllegalStateException("Only walk-in orders have a queue");
+        }
+
+        QueueEntry entry = queueRepo.findByOrderId(orderId).orElse(null);
+        Vendor vendor = order.getRestaurant();
+        int prep = Math.max(1, vendor.getPrepMinutes());
+
+        // How many are genuinely in front of them right now — not their original ticket number,
+        // which stops being true the moment somebody ahead is served or cancels.
+        int ahead = 0;
+        if (entry != null && entry.getStatus() == QueueEntry.Status.WAITING) {
+            ahead = (int) queueRepo
+                .findByRestaurantIdAndStatusOrderByPosition(vendor.getId(), QueueEntry.Status.WAITING)
+                .stream().filter(q -> q.getPosition() < entry.getPosition()).count();
+        }
+
+        // Already cooking means the queue no longer applies to them.
+        boolean cooking = order.getStatus() == Order.Status.PREPARING
+                       || order.getStatus() == Order.Status.READY;
+        int readyIn = order.getStatus() == Order.Status.READY ? 0
+                    : cooking ? prep
+                    : (ahead + 1) * prep;
+
+        Integer travel = null;
+        if (lat != null && lng != null && vendor.getLat() != null && vendor.getLng() != null) {
+            double km = haversineKm(lat, lng, vendor.getLat().doubleValue(), vendor.getLng().doubleValue());
+            travel = (int) Math.ceil((km / CITY_KMH) * 60);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("orderId", orderId.toString());
+        out.put("position", entry != null ? entry.getPosition() : null);
+        out.put("peopleAhead", ahead);
+        out.put("readyInMinutes", readyIn);
+        out.put("travelMinutes", travel);
+        // Negative means they are already late to set off — the app should say "leave now".
+        out.put("leaveInMinutes", travel == null ? null : readyIn - travel - BUFFER_MINUTES);
+        out.put("status", order.getStatus().name());
+        return out;
     }
 
     private void broadcastQueueUpdate(UUID restaurantId) {

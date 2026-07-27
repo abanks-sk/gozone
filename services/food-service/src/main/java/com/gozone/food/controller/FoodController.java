@@ -92,6 +92,22 @@ public class FoodController {
             .body(foodService.placeOrder(customerId, req));
     }
 
+    /**
+     * When a walk-in customer should set off, given where they are now.
+     *
+     * <p>Coordinates are query params, not stored on the order: what matters is where they are
+     * when they ask, not where they were when they ordered. Both optional — without them the
+     * caller still gets a ready time, just no travel leg.
+     */
+    @GetMapping("/orders/{id}/leave-time")
+    public ResponseEntity<Map<String, Object>> leaveTime(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String userId,
+            @RequestParam(required = false) Double lat,
+            @RequestParam(required = false) Double lng) {
+        return ResponseEntity.ok(foodService.walkInLeaveTime(id, userId, lat, lng));
+    }
+
     @GetMapping("/orders/{id}")
     public ResponseEntity<OrderResponse> getOrder(
             @PathVariable UUID id,
