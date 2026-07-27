@@ -27,7 +27,7 @@ function buildHtml(opts: {
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
-  html,body,#map{height:100%;margin:0;padding:0;background:#0a0f1c}
+  html,body,#map{height:100%;margin:0;padding:0;background:#000}
   .leaflet-control-attribution{font-size:9px}
   #pin{position:absolute;left:50%;top:50%;transform:translate(-50%,-100%);z-index:500;pointer-events:none}
   #pin svg{filter:drop-shadow(0 4px 5px rgba(0,0,0,.4))}

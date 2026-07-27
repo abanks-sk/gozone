@@ -1409,6 +1409,29 @@ the customer saw a live map.
   don't respond to synthetic DOM events and the preview pane wouldn't composite frames for real
   clicks, so the bundle-level verification above stands in. Worth a human glance in a browser.*
 
+### Black dark mode + map on the GoRide home screen (latest — frontend only, no rebuild)
+Both from the evaluation feedback.
+1. **Dark mode is now true black** (`#000000`) instead of the deep navy `#0A0F1C` — the evaluator
+   read the blue tint as a colour choice rather than "dark mode". Changed in `darkPalette` in **all
+   three** Expo apps, so it propagates to every themed screen at once. Surfaces step up in neutral
+   greys (`#0E0E11` / `#17171C`) so cards still separate on OLED black, and `border` warmed to
+   `#26262D` to stay visible. The **brand surface** (splash / welcome / onboarding — always dark,
+   ignores the toggle) went black too, keeping the blue glow, which reads better against black.
+   Also blacked the map's own backdrop (`background:#0a0f1c` → `#000`) so there's no navy flash
+   while tiles load.
+2. **GoRide home now opens on a live map**, like the rest of the category. The deep-gradient hero
+   is replaced by a `LeafletMap` filling the top ~34% of the screen (min 240pt), with the greeting
+   and avatar floating over it behind a top scrim for legibility. Pickup/destination markers show
+   on it, and the rider's own blue dot. Everything below (search bar, Ride/Shop/Parcel circles,
+   composer) is unchanged.
+   - **Pickup now defaults to where you are.** `rideDraft.origin` seeds to **Kotoka Airport** and is
+     never null, so the map would have opened on the airport forever and the composer proposed it
+     as everyone's pickup. On first location fix, if the origin is still the untouched default, it's
+     replaced with the rider's current location. This is why the map centring is written against
+     `dest` rather than `origin ? …` — origin always exists.
+- All three apps type-check clean. **Not visually verified** — RN Web touchables resist synthetic
+  clicks (see the earlier note), so the map hero and the black theme want a look on a device.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.

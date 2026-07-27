@@ -41,18 +41,21 @@ export const lightPalette: Palette = {
 export const darkPalette: Palette = {
   primary: '#3B82F6',
   primaryStrong: '#60A5FA',
-  primarySoft: '#1B2A4A',
+  primarySoft: '#152238',
   onPrimary: '#FFFFFF',
   accent: '#38BDF8',
   success: '#22C55E',
   danger: '#F87171',
   warning: '#FBBF24',
-  bg: '#0A0F1C',
-  surface: '#141B2D',
-  surfaceAlt: '#1C2740',
-  text: '#E8EDF6',
-  textMuted: '#94A3B8',
-  border: '#273248',
+  // True black rather than the old deep navy (#0A0F1C): the evaluator read the blue tint as a
+  // colour choice rather than "dark mode", and on OLED black is what the rest of the category
+  // looks like. Surfaces step up in neutral greys so cards still separate from the background.
+  bg: '#000000',
+  surface: '#0E0E11',
+  surfaceAlt: '#17171C',
+  text: '#F2F4F8',
+  textMuted: '#9BA1AC',
+  border: '#26262D',
   shadow: '#000000',
 };
 
@@ -66,8 +69,8 @@ export const brand = {
   primary: '#2563EB',
   primaryBright: '#3B82F6',
   glow: '#2F6DF5',
-  bg: '#070B18',
-  bgElevated: '#0E1526',
+  bg: '#000000',
+  bgElevated: '#0B0B0F',
   text: '#FFFFFF',
   textMuted: '#8A97B2',
   border: '#222B44',
