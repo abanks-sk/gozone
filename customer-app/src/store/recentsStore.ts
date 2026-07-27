@@ -7,6 +7,8 @@ import { Place } from '../data/places';
 interface RecentsState {
   recents: Place[];
   add: (p: Place) => void;
+  /** Rename the entry at these coordinates — see the note on `relabel` below. */
+  relabel: (lat: number, lng: number, p: Place) => void;
   reset: () => Promise<void>;
   hydrate: () => Promise<void>;
 }
@@ -21,6 +23,28 @@ export const useRecents = create<RecentsState>((set, get) => ({
     if (p.label === 'Home' || p.label === 'Work') return;
     const deduped = get().recents.filter((r) => !(r.label === p.label && r.sub === p.sub));
     const next = [p, ...deduped].slice(0, MAX);
+    set({ recents: next });
+    storage.set(KEY, JSON.stringify(next)).catch(() => {});
+  },
+  /**
+   * Replace the entry sitting at these coordinates.
+   *
+   * "Use current location" has to record the place before it knows its name — the whole point of
+   * that change was to stop making the user wait on a reverse-geocode. It writes a placeholder
+   * ("Current location") and upgrades it a second later. Without this the recent stayed frozen on
+   * the placeholder forever, so the list filled up with entries all called "Current location"
+   * pointing at different places — useless as a shortcut, which is the only reason recents exist.
+   *
+   * Matched on coordinates rather than label, because the label is precisely what changed.
+   */
+  relabel: (lat, lng, p) => {
+    const at = (r: Place) => r.lat === lat && r.lng === lng;
+    if (!get().recents.some(at)) return;
+    const next = get().recents
+      .map((r) => (at(r) ? p : r))
+      // The new name may already be in the list (you've been here before) — collapse the pair
+      // rather than showing the same place twice.
+      .filter((r, i, all) => i === all.findIndex((o) => o.label === r.label && o.sub === r.sub));
     set({ recents: next });
     storage.set(KEY, JSON.stringify(next)).catch(() => {});
   },

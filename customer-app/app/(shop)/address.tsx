@@ -20,6 +20,7 @@ export default function AddressScreen() {
   const setDeliveryPlace = useShopCart((s) => s.setDeliveryPlace);
   const recents = useRecents((s) => s.recents);
   const addRecent = useRecents((s) => s.add);
+  const relabelRecent = useRecents((s) => s.relabel);
   const home = useSavedPlaces((s) => s.home);
   const work = useSavedPlaces((s) => s.work);
   const custom = useSavedPlaces((s) => s.custom);
@@ -80,7 +81,10 @@ export default function AddressScreen() {
     // "Current location" is no use to a courier looking for the door.
     reverseGeocode(loc.lat, loc.lng).then((geo) => {
       if (!geo) return;
-      setDeliveryPlace({ label: geo.label, sub: geo.sub, lat: loc.lat, lng: loc.lng });
+      const named = { label: geo.label, sub: geo.sub, lat: loc.lat, lng: loc.lng };
+      setDeliveryPlace(named);
+      // Rename the recent too — it was filed under the placeholder a moment ago.
+      relabelRecent(loc.lat, loc.lng, named);
     }).catch(() => {});
   }
 

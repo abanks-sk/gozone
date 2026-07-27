@@ -31,6 +31,26 @@ function Dot({ color }: { color: string }) {
   return <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: color, borderWidth: 2, borderColor: '#fff' }} />;
 }
 
+/**
+ * Whether a marker should currently be re-rasterising its custom child view.
+ *
+ * `react-native-maps` defaults `tracksViewChanges` to true, which makes it redraw a marker's
+ * child on *every* render of this component — the markers visibly blink whenever anything moves,
+ * and it burns CPU redrawing views that have not changed. Turning it off outright would freeze
+ * the vehicle marker on its first frame instead of letting it rotate, so: track for a moment
+ * whenever the marker actually moves or turns, then settle. Pass a signature that changes
+ * exactly when the marker's appearance should.
+ */
+function useSettledTracking(signature: string) {
+  const [tracking, setTracking] = useState(true);
+  useEffect(() => {
+    setTracking(true);
+    const t = setTimeout(() => setTracking(false), 800);
+    return () => clearTimeout(t);
+  }, [signature]);
+  return tracking;
+}
+
 /** Top-down car marker (points "up" at 0°; the wrapper rotates it to the heading). */
 /** Top-down motorbike — an okada courier is what most GoShop deliveries actually arrive on. */
 function BikeMarker({ color }: { color: string }) {
@@ -81,6 +101,11 @@ export function GoogleMap({
     prevDriver.current = { lat: driver.lat, lng: driver.lng };
   }, [driver?.lat, driver?.lng]);
 
+  // Each marker group re-rasterises only while its own content is actually changing.
+  const trackDots = useSettledTracking(markers.map((m) => `${m.lat},${m.lng},${m.kind}`).join('|'));
+  const trackDriver = useSettledTracking(`${driver?.lat},${driver?.lng},${heading},${vehicleKind}`);
+  const trackUser = useSettledTracking(`${userLocation?.lat},${userLocation?.lng}`);
+
   const initialRegion = useMemo<Region>(() => ({
     latitude: center.lat, longitude: center.lng, ...zoomToDelta(zoom),
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -124,13 +149,13 @@ export function GoogleMap({
         }
       >
         {markers.filter((m: MapMarker) => m.kind !== 'driver').map((m, i) => (
-          <Marker key={`m${i}`} coordinate={{ latitude: m.lat, longitude: m.lng }} title={m.label} anchor={{ x: 0.5, y: 0.5 }}>
+          <Marker key={`m${i}`} coordinate={{ latitude: m.lat, longitude: m.lng }} title={m.label} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={trackDots}>
             <Dot color={DOT_COLOR[m.kind ?? 'plain'] ?? DOT_COLOR.plain} />
           </Marker>
         ))}
 
         {driver && (
-          <Marker coordinate={{ latitude: driver.lat, longitude: driver.lng }} anchor={{ x: 0.5, y: 0.5 }} flat>
+          <Marker coordinate={{ latitude: driver.lat, longitude: driver.lng }} anchor={{ x: 0.5, y: 0.5 }} flat tracksViewChanges={trackDriver}>
             <View style={{ transform: [{ rotate: `${heading}deg` }] }}>
               {vehicleKind === 'bike'
                 ? <BikeMarker color={colors.primary} />
@@ -140,7 +165,7 @@ export function GoogleMap({
         )}
 
         {userLocation && (
-          <Marker coordinate={{ latitude: userLocation.lat, longitude: userLocation.lng }} anchor={{ x: 0.5, y: 0.5 }}>
+          <Marker coordinate={{ latitude: userLocation.lat, longitude: userLocation.lng }} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={trackUser}>
             <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#2563EB', borderWidth: 3, borderColor: '#fff' }} />
           </Marker>
         )}

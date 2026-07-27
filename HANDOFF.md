@@ -1502,6 +1502,32 @@ publishes its keys and the verifiers fetch them.
   `.env.example` (which was also missing the mandatory `openssl pkcs8 -topk8` step that DEPLOYMENT.md
   documents — the exact trap that cost a restart during the RS256 work).
 
+### Device-testing fixes: stale recents + blinking map markers (latest — frontend only, no rebuild)
+Two bugs the user found tapping through on a real phone. Both are follow-on damage from the
+"make current location instant" change, and both are ⚠️ **fixed but not device-verified by me** —
+they need another tap-through.
+1. **Recents were saved under the placeholder name.** "Use current location" deliberately files the
+   place and navigates away *before* the reverse-geocode returns, then upgrades the label a second
+   later. It upgraded `rideDraft`/`deliveryPlace` but **not the recents entry**, so the recents list
+   filled with rows all called "Current location" pointing at different places — worthless as a
+   shortcut, which is the only reason recents exist. New **`recentsStore.relabel(lat, lng, place)`**,
+   called from the same background `.then()` in `search.tsx` and `(shop)/address.tsx`. Matched on
+   **coordinates, not label** — the label is precisely what changed — and it collapses the pair if
+   the resolved name is already in the list. `map-picker.tsx` does **not** have this bug (it resolves
+   the name while you drag, before you confirm), so it was left alone.
+2. **The blue "you are here" dot blinked constantly.** Not a location-update artefact:
+   `react-native-maps` defaults **`tracksViewChanges` to true**, so it re-rasterises a marker's
+   custom child view on *every* render of the map component. The map-picker re-renders on every
+   frame of a pan, hence the profuse blinking — and it burns CPU redrawing views that never change.
+   The stock advice ("just set it false") would freeze the vehicle marker on its first frame instead
+   of letting it rotate to its heading, so: new **`useSettledTracking(signature)`** hook — track for
+   800ms whenever the marker's content actually changes, then settle. Applied to all three marker
+   groups (plain dots / vehicle / user dot). The static dots settle permanently; the vehicle still
+   re-renders while it is moving, which it must.
+   **Ported to `driver-app/src/components/GoogleMap.native.tsx` too** — separate copies, same bug.
+   Web (Leaflet `circleMarker`) was never affected.
+- Customer + driver type-check clean. **Splash screen feedback still to come from the user.**
+
 ### Demo data cleared, and why it kept piling up (2026-07-27, DB state only — no code)
 The vendor orders board had **30 unfinished orders** on it. Cleared on the user's go-ahead; nothing
 deleted, all 30 moved to `CANCELLED` with the previous status in `orders_status_backup`, so the undo

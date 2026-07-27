@@ -27,6 +27,7 @@ export default function SearchScreen() {
   const setDest = useRideDraft((s) => s.setDest);
   const recents = useRecents((s) => s.recents);
   const addRecent = useRecents((s) => s.add);
+  const relabelRecent = useRecents((s) => s.relabel);
   const home = useSavedPlaces((s) => s.home);
   const work = useSavedPlaces((s) => s.work);
   const custom = useSavedPlaces((s) => s.custom);
@@ -94,12 +95,15 @@ export default function SearchScreen() {
     });
 
     // …then fill in the real place name behind the scenes, so it doesn't stay reading
-    // "Current location" once we know it's, say, Patrice Lumumba Road. Writes to the store, not
+    // "Current location" once we know it's, say, Patrice Lumumba Road. Writes to the stores, not
     // local state, because this screen has already closed by now.
     reverseGeocode(loc.lat, loc.lng).then((geo) => {
       if (!geo) return;
       const named = { label: geo.label, sub: geo.sub, lat: loc.lat, lng: loc.lng };
       if (target === 'origin') setOrigin(named); else setDest(named);
+      // The recent was filed under the placeholder a moment ago — rename it too, or the list
+      // ends up full of entries called "Current location" that all point somewhere different.
+      relabelRecent(loc.lat, loc.lng, named);
     }).catch(() => {});
   }
 
