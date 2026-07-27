@@ -51,7 +51,7 @@ export async function forwardSearch(query: string): Promise<Place[]> {
  * Naming a coordinate is a nicety, never a blocker: both lookups are bounded so a slow or
  * unreachable geocoder can't leave the UI waiting on a label it doesn't need.
  */
-const GEOCODE_TIMEOUT_MS = 5000;
+const GEOCODE_TIMEOUT_MS = 9000;
 
 function bounded<T>(p: Promise<T>, ms = GEOCODE_TIMEOUT_MS): Promise<T | null> {
   return Promise.race([

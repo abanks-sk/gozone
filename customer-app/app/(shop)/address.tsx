@@ -67,15 +67,21 @@ export default function AddressScreen() {
       return Alert.alert('Location unavailable', 'Turn on location access to use your current position.');
     }
 
-    // The coordinates ARE the answer — the street name is decoration. Set the field and leave
-    // immediately instead of holding the user on a spinner while a geocoder is consulted:
-    // waiting on the name is what made this button look like it never finished.
+    // Set the address and close immediately; waiting on a name lookup is what made this button
+    // look like it never finished.
     setLocating(false);
     pick({
       label: 'Current location',
       sub: `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`,
       lat: loc.lat, lng: loc.lng,
     });
+
+    // Then upgrade it to the real place name in the background — a delivery address reading
+    // "Current location" is no use to a courier looking for the door.
+    reverseGeocode(loc.lat, loc.lng).then((geo) => {
+      if (!geo) return;
+      setDeliveryPlace({ label: geo.label, sub: geo.sub, lat: loc.lat, lng: loc.lng });
+    }).catch(() => {});
   }
 
   return (

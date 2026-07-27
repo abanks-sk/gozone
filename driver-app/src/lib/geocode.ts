@@ -1,4 +1,10 @@
-// Free OSM reverse-geocoding (Nominatim) — turn coords into a readable place name.
+// Coordinate -> readable place name.
+//
+// Goes through our backend proxy first (Google when its key works, OpenStreetMap otherwise —
+// the server sends the User-Agent Nominatim requires). Calling Nominatim straight from the app
+// is refused, which is why place names quietly stopped appearing.
+import { mapsApi } from '../api/maps';
+
 const BASE = 'https://nominatim.openstreetmap.org';
 
 /**
@@ -6,7 +12,7 @@ const BASE = 'https://nominatim.openstreetmap.org';
  * unreachable geocoder leaves the caller waiting indefinitely on a label it can manage without —
  * the same trap that left the customer app's "use current location" spinning forever.
  */
-const GEOCODE_TIMEOUT_MS = 5000;
+const GEOCODE_TIMEOUT_MS = 9000;
 
 function bounded<T>(p: Promise<T>, ms = GEOCODE_TIMEOUT_MS): Promise<T | null> {
   return Promise.race([
@@ -16,6 +22,14 @@ function bounded<T>(p: Promise<T>, ms = GEOCODE_TIMEOUT_MS): Promise<T | null> {
 }
 
 export async function reverseGeocode(lat: number, lng: number): Promise<{ label: string; sub: string } | null> {
+  try {
+    const g = await bounded(mapsApi.reverseGeocode(lat, lng));
+    if (g?.address) {
+      const parts = String(g.address).split(',').map((s) => s.trim());
+      return { label: g.name || parts[0], sub: parts.slice(0, 2).join(', ') };
+    }
+  } catch { /* fall through to a direct OSM attempt (works on web, refused on device) */ }
+
   try {
     const r = await bounded(fetch(
       `${BASE}/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=16&addressdetails=1`,

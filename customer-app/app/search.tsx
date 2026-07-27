@@ -83,15 +83,24 @@ export default function SearchScreen() {
       return Alert.alert('Location unavailable', 'Turn on location access to use your current position.');
     }
 
-    // The coordinates ARE the answer — the street name is decoration. Set the field and leave
-    // immediately instead of holding the user on a spinner while a geocoder is consulted:
-    // waiting on the name is what made this button look like it never finished.
+    // Set the field and leave immediately — waiting on a name lookup is what made this button
+    // look like it never finished. The coordinates are what the ride actually needs.
     setLocating(false);
+    const target = field;
     pick({
       label: 'Current location',
       sub: `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`,
       lat: loc.lat, lng: loc.lng,
     });
+
+    // …then fill in the real place name behind the scenes, so it doesn't stay reading
+    // "Current location" once we know it's, say, Patrice Lumumba Road. Writes to the store, not
+    // local state, because this screen has already closed by now.
+    reverseGeocode(loc.lat, loc.lng).then((geo) => {
+      if (!geo) return;
+      const named = { label: geo.label, sub: geo.sub, lat: loc.lat, lng: loc.lng };
+      if (target === 'origin') setOrigin(named); else setDest(named);
+    }).catch(() => {});
   }
 
   return (

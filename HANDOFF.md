@@ -1432,6 +1432,30 @@ Both from the evaluation feedback.
 - All three apps type-check clean. **Not visually verified** — RN Web touchables resist synthetic
   clicks (see the earlier note), so the map hero and the black theme want a look on a device.
 
+### Place names + search suggestions restored (latest) — REBUILD ride-service
+User reported: current location shows as "Current location", a dropped pin shows as "Pinned
+location", and search returns no suggestions. **Two causes stacked**, and both fallbacks were dead:
+1. **Google is IP-blocked** (the key restriction found earlier) — `places/search` and
+   `geocode/reverse` return empty.
+2. **Nominatim refuses the apps.** Its usage policy requires an identifying `User-Agent`; a plain
+   `fetch` from the app gets **`Access denied`** (verified with curl: with a UA it returns data,
+   without one it's denied). So the OSM fallback the apps relied on had never been working on
+   device — it only looked fine on web, where the browser sends a real UA.
+**Fix — do the OSM lookup server-side**, where the header can be set (mirrors the OSRM routing
+fallback): `MapsService` gained `osmSearch()` + `osmReverse()` with a configurable
+`app.maps.osm-user-agent`, used whenever Google is unset or fails. Apps now talk only to our own
+gateway for geocoding. Verified live: reverse of 5.6037,-0.187 → **"Patrice Lumumba Road"**
+(was empty), search "Osu" → real suggestions.
+- **Third symptom was mine:** when I made "use current location" return instantly, I dropped the
+  name lookup entirely, so the label stayed "Current location" forever. Restored as a *background*
+  refinement — navigate immediately, then upgrade the label in the store once the name arrives
+  (writes to the store, not local state, since the screen has already closed). Applied to ride
+  search and the GoShop address screen.
+- **Driver app had the same latent bug** (its `geocode.ts` called Nominatim directly, so the feed's
+  area name never resolved on device) — now routed through the backend too.
+- Geocode timeout raised 5s → 9s to allow for the extra hop on a mobile network.
+- e2e 118/118; all three apps type-check clean.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.

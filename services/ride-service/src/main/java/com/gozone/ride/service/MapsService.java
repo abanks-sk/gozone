@@ -8,6 +8,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -30,6 +31,10 @@ public class MapsService {
     private String key;
 
     private final RestTemplate rest = new RestTemplate();
+
+    /** Sent to Nominatim, whose policy requires an app-identifying User-Agent. */
+    @Value("${app.maps.osm-user-agent:GoZone/1.0 (support@gozone.app)}")
+    private String osmUserAgent;
 
     public boolean enabled() {
         return key != null && !key.isBlank();
@@ -153,7 +158,8 @@ public class MapsService {
 
     /** Free-text place search → [{name, address, lat, lng}] in one call (Places New searchText). */
     public List<Map<String, Object>> searchPlaces(String query) {
-        if (!enabled() || query == null || query.isBlank()) return List.of();
+        if (query == null || query.isBlank()) return List.of();
+        if (!enabled()) return osmSearch(query);
         try {
             HttpHeaders h = new HttpHeaders();
             h.setContentType(MediaType.APPLICATION_JSON);
@@ -177,8 +183,8 @@ public class MapsService {
             return out;
         } catch (Exception e) {
             log.error("[MAPS] searchPlaces failed: {}", e.getMessage());
-            return List.of();
         }
+        return osmSearch(query);
     }
 
     /** True for Google "plus codes" like MC4R+72C, which are not useful place names. */
@@ -191,7 +197,7 @@ public class MapsService {
      * (a hostel, a shop) win; falls back to Geocoding, skipping plus-code results.
      */
     public Map<String, Object> reverseGeocode(double lat, double lng) {
-        if (!enabled()) return Map.of();
+        if (!enabled()) return osmReverse(lat, lng);
 
         // 1) Nearest named place (this is what gives you "X Hostel" instead of a code).
         try {
@@ -261,7 +267,96 @@ public class MapsService {
         } catch (Exception e) {
             log.error("[MAPS] reverseGeocode failed: {}", e.getMessage());
         }
-        return Map.of();
+        return osmReverse(lat, lng);
+    }
+
+    // ── OpenStreetMap fallback ───────────────────────────────────────────────────
+    //
+    // Why this lives on the server rather than in the apps: Nominatim's usage policy requires a
+    // real User-Agent identifying the application, and it answers a plain browser/RN `fetch` with
+    // "Access denied". The apps used to call it directly, so when the Google key stopped working
+    // (IP restriction) both the primary and the fallback were dead at once — no place names, no
+    // search suggestions. Calling it from here lets us send the required header, keeps the apps
+    // talking only to our own gateway, and means one place to fix if the policy changes again.
+
+    /** Nominatim demands an identifying UA; requests without one are refused. */
+    private HttpHeaders osmHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.set("User-Agent", osmUserAgent);
+        h.set("Accept", "application/json");
+        return h;
+    }
+
+    /** Free-text search → the same {name, address, lat, lng} shape the Google path returns. */
+    private List<Map<String, Object>> osmSearch(String query) {
+        try {
+            String url = UriComponentsBuilder.fromHttpUrl("https://nominatim.openstreetmap.org/search")
+                .queryParam("format", "jsonv2")
+                .queryParam("q", query)
+                .queryParam("countrycodes", "gh")   // Ghana-biased, like the app's own search was
+                .queryParam("limit", 8)
+                .queryParam("addressdetails", 1)
+                .encode()
+                .toUriString();
+            ResponseEntity<JsonNode> resp = rest.exchange(url, HttpMethod.GET,
+                new HttpEntity<>(osmHeaders()), JsonNode.class);
+            JsonNode root = resp.getBody();
+            List<Map<String, Object>> out = new ArrayList<>();
+            if (root != null && root.isArray()) {
+                for (JsonNode r : root) {
+                    String display = r.path("display_name").asText("");
+                    if (display.isBlank()) continue;
+                    String name = r.path("name").asText("");
+                    if (name.isBlank()) name = display.split(",")[0].trim();
+                    out.add(Map.of(
+                        "name", name,
+                        "address", display,
+                        "lat", r.path("lat").asDouble(),
+                        "lng", r.path("lon").asDouble()));
+                }
+            }
+            log.info("[MAPS] OSM search '{}' -> {} result(s)", query, out.size());
+            return out;
+        } catch (Exception e) {
+            log.error("[MAPS] OSM search failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** Coordinate → place name, so a dropped pin reads as a road or area, not "Pinned location". */
+    private Map<String, Object> osmReverse(double lat, double lng) {
+        try {
+            String url = UriComponentsBuilder.fromHttpUrl("https://nominatim.openstreetmap.org/reverse")
+                .queryParam("format", "jsonv2")
+                .queryParam("lat", lat)
+                .queryParam("lon", lng)
+                .queryParam("zoom", 17)
+                .queryParam("addressdetails", 1)
+                .toUriString();
+            ResponseEntity<JsonNode> resp = rest.exchange(url, HttpMethod.GET,
+                new HttpEntity<>(osmHeaders()), JsonNode.class);
+            JsonNode root = resp.getBody();
+            if (root == null || root.path("display_name").asText("").isBlank()) return Map.of();
+
+            JsonNode a = root.path("address");
+            String name = firstNonBlank(
+                root.path("name").asText(""),
+                a.path("amenity").asText(""), a.path("building").asText(""),
+                a.path("road").asText(""), a.path("suburb").asText(""),
+                a.path("neighbourhood").asText(""), a.path("city").asText(""));
+            String address = root.path("display_name").asText("");
+            if (name.isBlank()) name = address.split(",")[0].trim();
+            log.info("[MAPS] OSM reverse {},{} -> {}", lat, lng, name);
+            return Map.of("address", address, "name", name);
+        } catch (Exception e) {
+            log.error("[MAPS] OSM reverse failed: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private static String firstNonBlank(String... vals) {
+        for (String v : vals) if (v != null && !v.isBlank()) return v;
+        return "";
     }
 
     /** Decode a Google encoded polyline into a list of {lat, lng}. */
