@@ -11,13 +11,6 @@ import { useTheme } from '../src/theme/ThemeProvider';
 import { usePaymentStore, PAY_METHODS, PayMethodMeta } from '../src/store/paymentStore';
 import { Empty, Row } from '../src/components/ui';
 
-function cardBrand(digits: string): string {
-  if (digits.startsWith('4')) return 'Visa';
-  if (digits.startsWith('5')) return 'Mastercard';
-  if (digits.startsWith('3')) return 'Amex';
-  return 'Card';
-}
-
 const TYPE_LABEL: Record<string, string> = {
   PAYMENT: 'Paid', DELIVERY_FEE: 'Delivery fee', CASH_COLLECTED: 'Cash collected',
   FARE_CREDIT: 'Ride credit', COMMISSION_DEBIT: 'Commission', PAYOUT: 'Payout',
@@ -33,52 +26,19 @@ export default function PaymentScreen() {
   const selected = usePaymentStore((s) => s.selected);
   const setSelected = usePaymentStore((s) => s.setSelected);
   const cards = usePaymentStore((s) => s.cards);
-  const addCard = usePaymentStore((s) => s.addCard);
   const removeCard = usePaymentStore((s) => s.removeCard);
   const [balance, setBalance] = useState<number | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [num, setNum] = useState('');
-  const [exp, setExp] = useState('');
-  const [holder, setHolder] = useState('');
   // Top-up (Paystack) flow state
   const [topUp, setTopUp] = useState(false);
   const [topAmt, setTopAmt] = useState('');
   const [topRef, setTopRef] = useState<string | null>(null);
   const [topBusy, setTopBusy] = useState(false);
   const [topVerifying, setTopVerifying] = useState(false);
-  const [momoOpen, setMomoOpen] = useState(false);
-  const [momoNum, setMomoNum] = useState('');
 
   const methods: PayMethodMeta[] = [...PAY_METHODS, ...cards];
-
-  function submitCard() {
-    const digits = num.replace(/\D/g, '');
-    if (digits.length < 13) return Alert.alert('Card number', 'Enter a valid card number.');
-    if (!/^\d{2}\/\d{2}$/.test(exp.trim())) return Alert.alert('Expiry', 'Enter the expiry as MM/YY.');
-    addCard({
-      key: `card_${Date.now()}`,
-      label: holder.trim() ? `${cardBrand(digits)} · ${holder.trim()}` : cardBrand(digits),
-      sub: `•••• ${digits.slice(-4)}`,
-      icon: 'card-outline',
-    });
-    setNum(''); setExp(''); setHolder(''); setAdding(false);
-  }
-
-  // Add a mobile-money number as a Paystack-routed method.
-  function submitMomo() {
-    const digits = momoNum.replace(/\D/g, '');
-    if (digits.length < 9) return Alert.alert('Mobile money', 'Enter a valid mobile money number.');
-    addCard({
-      key: `momo_${Date.now()}`,
-      label: 'Mobile Money',
-      sub: `•••• ${digits.slice(-4)}`,
-      icon: 'phone-portrait-outline',
-    });
-    setMomoNum(''); setMomoOpen(false);
-  }
 
   function confirmRemoveCard(m: PayMethodMeta) {
     Alert.alert('Remove card', `Remove ${m.label} (${m.sub})?`, [
@@ -232,16 +192,14 @@ export default function PaymentScreen() {
               </TouchableOpacity>
             );
           })}
-          <TouchableOpacity onPress={() => setMomoOpen(true)} activeOpacity={0.7}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 4 }}>
-            <Ionicons name="add-circle-outline" size={20} color={c.primary} />
-            <Text style={{ fontSize: 14.5, fontWeight: '600', color: c.primary }}>Add mobile money</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setAdding(true)} activeOpacity={0.7}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 4 }}>
-            <Ionicons name="add-circle-outline" size={20} color={c.primary} />
-            <Text style={{ fontSize: 14.5, fontWeight: '600', color: c.primary }}>Add debit / credit card</Text>
-          </TouchableOpacity>
+          <Row style={{ gap: 8, alignItems: 'flex-start', paddingHorizontal: 4, paddingTop: 10 }}>
+            <Ionicons name="information-circle-outline" size={17} color={c.textMuted} style={{ marginTop: 1 }} />
+            <Text style={{ fontSize: 12.5, color: c.textMuted, flex: 1, lineHeight: 18 }}>
+              Pay by card once and it appears here, ready to charge in one tap. Mobile money is
+              confirmed on Paystack each time — that is how the networks work, so there is nothing
+              to save.
+            </Text>
+          </Row>
           <Text style={{ fontSize: 11.5, color: c.textMuted, paddingHorizontal: 4, marginTop: 2 }}>
             Cards and mobile money are charged securely via Paystack.
           </Text>
@@ -292,37 +250,6 @@ export default function PaymentScreen() {
       </ScrollView>
 
       {/* Add card modal */}
-      <Modal visible={adding} transparent animationType="slide" onRequestClose={() => setAdding(false)}>
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
-          <View style={{ backgroundColor: c.bg, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: insets.bottom + 20, gap: 14 }}>
-            <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 19, fontWeight: '800', color: c.text }}>Add a card</Text>
-              <TouchableOpacity onPress={() => setAdding(false)} hitSlop={8}>
-                <Ionicons name="close" size={24} color={c.textMuted} />
-              </TouchableOpacity>
-            </Row>
-
-            <Field label="Card number" value={num} onChangeText={setNum} placeholder="1234 5678 9012 3456" keyboardType="number-pad" c={c} />
-            <Row style={{ gap: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Field label="Expiry (MM/YY)" value={exp} onChangeText={setExp} placeholder="08/27" keyboardType="numbers-and-punctuation" c={c} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Field label="Name on card" value={holder} onChangeText={setHolder} placeholder="A. Mensah" c={c} />
-              </View>
-            </Row>
-
-            <Text style={{ fontSize: 11.5, color: c.textMuted, lineHeight: 17 }}>
-              Demo only — cards are stored on your device and not charged (no real payment provider yet).
-            </Text>
-            <TouchableOpacity onPress={submitCard} activeOpacity={0.9}
-              style={{ backgroundColor: c.primary, borderRadius: 999, paddingVertical: 15, alignItems: 'center' }}>
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Add card</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {/* Top-up (Paystack) modal */}
       <Modal visible={topUp} transparent animationType="slide" onRequestClose={() => setTopUp(false)}>
         <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
@@ -374,26 +301,6 @@ export default function PaymentScreen() {
       </Modal>
 
       {/* Add mobile money modal */}
-      <Modal visible={momoOpen} transparent animationType="slide" onRequestClose={() => setMomoOpen(false)}>
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
-          <View style={{ backgroundColor: c.bg, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: insets.bottom + 20, gap: 14 }}>
-            <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 19, fontWeight: '800', color: c.text }}>Add mobile money</Text>
-              <TouchableOpacity onPress={() => setMomoOpen(false)} hitSlop={8}>
-                <Ionicons name="close" size={24} color={c.textMuted} />
-              </TouchableOpacity>
-            </Row>
-            <Field label="Mobile money number" value={momoNum} onChangeText={setMomoNum} placeholder="024 123 4567" keyboardType="phone-pad" c={c} />
-            <Text style={{ fontSize: 11.5, color: c.textMuted, lineHeight: 17 }}>
-              You’ll approve each payment on the secure Paystack checkout — your number isn’t charged without consent.
-            </Text>
-            <TouchableOpacity onPress={submitMomo} activeOpacity={0.9}
-              style={{ backgroundColor: c.primary, borderRadius: 999, paddingVertical: 15, alignItems: 'center' }}>
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Add mobile money</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }

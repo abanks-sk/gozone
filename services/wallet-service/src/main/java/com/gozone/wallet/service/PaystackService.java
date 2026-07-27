@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Paystack gateway: money in (top-ups, ride/food payments) and money out (payouts).
@@ -199,6 +200,97 @@ public class PaystackService {
         int end = body.indexOf('"', start);
         if (end <= start) return "Transfer refused — queued for manual payout";
         return "Paystack: " + body.substring(start, end) + " — queued for manual payout";
+    }
+
+    /** What a verified transaction told us about the card that paid, if it can be reused. */
+    public record CardAuthorization(String code, String signature, String last4, String brand,
+                                    String bank, String expMonth, String expYear, String email) {}
+
+    /**
+     * Verify a transaction and, if it was paid by a reusable card, return its authorization.
+     *
+     * <p>This is the only moment Paystack ever hands over a reusable code — it comes back attached
+     * to a successful charge, not from any "save a card" call. Which is why a saved card can only
+     * ever be the by-product of a real payment, and why the app's old card form could never have
+     * worked however it was wired up.
+     */
+    public CardAuthorization verifyAndExtractCard(String reference, BigDecimal expected) {
+        if (isMock() || reference == null || reference.isBlank()) return null;
+        try {
+            HttpHeaders h = new HttpHeaders();
+            h.setBearerAuth(secretKey);
+            ResponseEntity<Map> resp = rest.exchange(
+                "https://api.paystack.co/transaction/verify/" + reference,
+                HttpMethod.GET, new HttpEntity<>(h), Map.class);
+            Map<?, ?> body = resp.getBody();
+            if (!resp.getStatusCode().is2xxSuccessful() || body == null || !Boolean.TRUE.equals(body.get("status"))) return null;
+            Map<?, ?> data = (Map<?, ?>) body.get("data");
+            if (data == null || !"success".equalsIgnoreCase(String.valueOf(data.get("status")))) return null;
+
+            Map<?, ?> auth = (Map<?, ?>) data.get("authorization");
+            if (auth == null) return null;
+            // Only cards come back reusable. Mobile money authorizations are single-use, so momo
+            // goes through checkout every time — there is nothing to store for it.
+            if (!Boolean.TRUE.equals(auth.get("reusable"))) return null;
+            String code = str(auth.get("authorization_code"));
+            if (code == null) return null;
+
+            Map<?, ?> customer = (Map<?, ?>) data.get("customer");
+            String email = customer == null ? null : str(customer.get("email"));
+            if (email == null) return null;
+
+            return new CardAuthorization(code, str(auth.get("signature")), str(auth.get("last4")),
+                str(auth.get("card_type")), str(auth.get("bank")),
+                str(auth.get("exp_month")), str(auth.get("exp_year")), email);
+        } catch (Exception e) {
+            log.warn("[PAYSTACK] could not read the card authorization for {}: {}", reference, e.getMessage());
+            return null;
+        }
+    }
+
+    /** Result of charging a stored card: a reference the normal verify path can then confirm. */
+    public record ChargeResult(boolean success, String reference, String failureReason) {}
+
+    /**
+     * Charge a stored authorization — the whole point of saving one. No browser, no re-entering
+     * a card number: the customer taps once and the charge happens server-side.
+     */
+    public ChargeResult chargeAuthorization(String authorizationCode, String email, BigDecimal amount) {
+        String reference = "GZ-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        if (isMock()) return new ChargeResult(true, reference, null);
+        try {
+            HttpHeaders h = new HttpHeaders();
+            h.setBearerAuth(secretKey);
+            h.setContentType(MediaType.APPLICATION_JSON);
+            Map<String, Object> payload = Map.of(
+                "authorization_code", authorizationCode,
+                "email", email,
+                "amount", amount.multiply(KOBO).longValueExact(),
+                "reference", reference);
+            ResponseEntity<Map> resp = rest.exchange("https://api.paystack.co/transaction/charge_authorization",
+                HttpMethod.POST, new HttpEntity<>(payload, h), Map.class);
+            Map<?, ?> body = resp.getBody();
+            if (resp.getStatusCode().is2xxSuccessful() && body != null && Boolean.TRUE.equals(body.get("status"))) {
+                Map<?, ?> data = (Map<?, ?>) body.get("data");
+                String status = data == null ? null : String.valueOf(data.get("status"));
+                if ("success".equalsIgnoreCase(status)) {
+                    return new ChargeResult(true, str(data.get("reference")) != null ? str(data.get("reference")) : reference, null);
+                }
+                // A card can need the customer back (3-D Secure, insufficient funds, expired).
+                // Say so plainly rather than pretending the payment worked.
+                return new ChargeResult(false, reference,
+                    data != null && data.get("gateway_response") != null
+                        ? String.valueOf(data.get("gateway_response")) : "The card was declined.");
+            }
+            return new ChargeResult(false, reference, providerMessage(String.valueOf(body)));
+        } catch (Exception e) {
+            log.error("[PAYSTACK] charge_authorization failed: {}", e.getMessage());
+            return new ChargeResult(false, reference, "Could not reach the payment provider.");
+        }
+    }
+
+    private static String str(Object o) {
+        return o == null || String.valueOf(o).isBlank() || "null".equals(String.valueOf(o)) ? null : String.valueOf(o);
     }
 
     public boolean verify(String reference, BigDecimal expected) {

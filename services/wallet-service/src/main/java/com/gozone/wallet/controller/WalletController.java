@@ -20,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -86,6 +87,9 @@ public class WalletController {
         String reference = body.get("reference") != null ? String.valueOf(body.get("reference")) : null;
         String ownerType = body.get("ownerType") != null ? String.valueOf(body.get("ownerType")) : "RIDER";
         BigDecimal balance = walletService.topUp(UUID.fromString(userId), amount, reference, ownerType);
+        // If a card paid for this, remember it so the next payment is one tap. Never fails the
+        // top-up — the money is already credited by this point.
+        walletService.rememberCard(UUID.fromString(userId), reference, amount);
         return ResponseEntity.ok(Map.of("balance", balance, "status", "credited"));
     }
 
@@ -220,6 +224,66 @@ public class WalletController {
         String refType = body.get("refType") != null ? String.valueOf(body.get("refType")) : null;
         BigDecimal balance = walletService.charge(userId, amount, refId, refType);
         return ResponseEntity.ok(Map.of("status", "charged", "balance", balance));
+    }
+
+    // ── Saved cards ──────────────────────────────────────────────────────────────
+
+    /**
+     * Cards this customer can pay with in one tap.
+     *
+     * <p>Never returns an authorization code — the client has no use for one and it is the only
+     * part with any value. Just enough to recognise the card: brand and last four.
+     */
+    @GetMapping("/cards")
+    public ResponseEntity<List<Map<String, Object>>> cards(@AuthenticationPrincipal String userId) {
+        List<Map<String, Object>> out = walletService.listCards(UUID.fromString(userId)).stream()
+            .map(cd -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", cd.getId().toString());
+                m.put("brand", cd.getBrand() != null ? cd.getBrand() : "Card");
+                m.put("last4", cd.getLast4());
+                m.put("bank", cd.getBank());
+                m.put("expMonth", cd.getExpMonth());
+                m.put("expYear", cd.getExpYear());
+                return m;
+            })
+            .toList();
+        return ResponseEntity.ok(out);
+    }
+
+    /**
+     * Remember the card behind a payment the customer just completed elsewhere (a ride or an
+     * order). Those go through the internal /pay/verify, which has no user context by design, so
+     * the app tells us afterwards. Safe to call for any payment: it re-verifies with Paystack and
+     * simply does nothing when the payment was not a reusable card.
+     */
+    @PostMapping("/cards/remember")
+    public ResponseEntity<Void> rememberCard(
+            @AuthenticationPrincipal String userId,
+            @RequestBody Map<String, Object> body) {
+        String reference = body.get("reference") != null ? String.valueOf(body.get("reference")) : null;
+        walletService.rememberCard(UUID.fromString(userId), reference, parseAmount(body.get("amount")));
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/cards/{id}")
+    public ResponseEntity<Void> removeCard(@AuthenticationPrincipal String userId, @PathVariable UUID id) {
+        walletService.deleteCard(UUID.fromString(userId), id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Charge a saved card. Returns a reference the caller then verifies through the existing
+     * paths (/topup/verify, or the ride/food pay endpoint) — no new trust in a second route.
+     */
+    @PostMapping("/cards/{id}/charge")
+    public ResponseEntity<Map<String, String>> chargeCard(
+            @AuthenticationPrincipal String userId,
+            @PathVariable UUID id,
+            @RequestBody Map<String, Object> body) {
+        BigDecimal amount = parseAmount(body.get("amount"));
+        String reference = walletService.chargeSavedCard(UUID.fromString(userId), id, amount);
+        return ResponseEntity.ok(Map.of("reference", reference, "status", "charged"));
     }
 
     // ── Push token registration ────────────────────────────────────────────────

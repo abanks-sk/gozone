@@ -9,7 +9,7 @@ import { mapsApi, LatLng } from '../../src/api/maps';
 import { wsClient } from '../../src/realtime/wsClient';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useRideDraft } from '../../src/store/rideDraft';
-import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
+import { usePaymentStore, PAY_METHODS, isPaystack, isSavedCard, cardIdOf } from '../../src/store/paymentStore';
 import { useProfileStore } from '../../src/store/profileStore';
 import { apiBaseUrl } from '../../src/lib/host';
 import { clearPending, getPending, setPending } from '../../src/lib/pendingPayment';
@@ -184,7 +184,14 @@ export default function LiveRideScreen() {
     if (!trip) return;
     setPaying(true);
     try {
-      if (viaPaystack && !payRef) {
+      // A saved card charges server-side — no browser, no re-entering anything. That is the
+      // whole point of having saved it. The reference it returns goes through exactly the same
+      // verification as a checkout payment.
+      if (isSavedCard(payMethod) && !payRef) {
+        const { reference } = await walletApi.chargeCard(cardIdOf(payMethod), Number(trip.agreedFare));
+        setTrip(await rideApi.payTrip(trip.id, 'card', reference));
+        await clearPending();
+      } else if (viaPaystack && !payRef) {
         const { reference, authorizationUrl } = await walletApi.payInitialize(Number(trip.agreedFare));
         const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
         setPayRef(reference);
@@ -194,7 +201,10 @@ export default function LiveRideScreen() {
         await setPending({ kind: 'trip', reference, amount: Number(trip.agreedFare), targetId: trip.id, method: payMethod });
         await Linking.openURL(url);
       } else {
-        setTrip(await rideApi.payTrip(trip.id, payMethod, payRef ?? undefined));
+        const t = await rideApi.payTrip(trip.id, payMethod, payRef ?? undefined);
+        setTrip(t);
+        // Paid by card through checkout — offer it as one tap next time.
+        if (payRef) walletApi.rememberCard(payRef, Number(trip.agreedFare));
         setPayRef(null);
         await clearPending();
       }

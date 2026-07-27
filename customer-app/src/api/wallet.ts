@@ -1,3 +1,12 @@
+export interface SavedCard {
+  id: string;
+  brand: string;
+  last4: string | null;
+  bank: string | null;
+  expMonth: string | null;
+  expYear: string | null;
+}
+
 import api from './client';
 
 export interface LedgerEntry {
@@ -18,6 +27,19 @@ export interface Notification {
 }
 
 export const walletApi = {
+  /** Cards Paystack has authorised us to charge again — no card number ever leaves the server. */
+  listCards: () => api.get<SavedCard[]>('/wallet/cards').then(r => r.data),
+
+  removeCard: (id: string) => api.delete(`/wallet/cards/${id}`),
+
+  /** One-tap charge. Returns a reference the normal verify paths then confirm. */
+  chargeCard: (id: string, amount: number) =>
+    api.post<{ reference: string }>(`/wallet/cards/${id}/charge`, { amount }).then(r => r.data),
+
+  /** Ask the server to remember the card behind a payment that just succeeded. Best-effort. */
+  rememberCard: (reference: string, amount: number) =>
+    api.post('/wallet/cards/remember', { reference, amount }).catch(() => {}),
+
   getBalance: (ownerType = 'RIDER') =>
     api.get<{ balance: number; ownerType: string }>(`/wallet/balance?ownerType=${ownerType}`)
       .then(r => r.data),

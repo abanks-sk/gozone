@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -36,6 +37,7 @@ public class WalletService {
     private final WithdrawalRepository withdrawalRepo;
     private final NotificationService notificationService;
     private final PaystackService paystackService;
+    private final PaymentAuthorizationRepository cardRepo;
 
     /** Floor for a cash out — keeps payout fees from swallowing the transfer. */
     @Value("${app.payout.min-amount:10.00}")
@@ -46,13 +48,15 @@ public class WalletService {
                          CommissionConfigRepository commissionRepo,
                          WithdrawalRepository withdrawalRepo,
                          NotificationService notificationService,
-                         PaystackService paystackService) {
+                         PaystackService paystackService,
+                         PaymentAuthorizationRepository cardRepo) {
         this.walletRepo       = walletRepo;
         this.ledgerRepo       = ledgerRepo;
         this.commissionRepo   = commissionRepo;
         this.withdrawalRepo   = withdrawalRepo;
         this.notificationService = notificationService;
         this.paystackService  = paystackService;
+        this.cardRepo         = cardRepo;
     }
 
     // ── Wallet funding (Paystack top-up) ─────────────────────────────────────────
@@ -122,6 +126,76 @@ public class WalletService {
     public boolean verifyPayment(String reference, BigDecimal amount) {
         if (reference == null || reference.isBlank() || amount == null) return false;
         return paystackService.verify(reference, amount);
+    }
+
+    // ── Saved cards ──────────────────────────────────────────────────────────────
+
+    /**
+     * Remember the card behind a successful payment, so the next one is a single tap.
+     *
+     * <p>Called after any verified Paystack payment. Silent by design: saving a card is a
+     * convenience the customer did not ask for on this journey, so nothing here may fail their
+     * payment. Cards only — Paystack does not make mobile-money authorizations reusable.
+     */
+    public void rememberCard(UUID userId, String reference, BigDecimal amount) {
+        try {
+            PaystackService.CardAuthorization auth = paystackService.verifyAndExtractCard(reference, amount);
+            if (auth == null) return;
+            // Same card paying again comes back with the same signature — update rather than
+            // stacking a third identical "Visa ••1234" in the customer's list.
+            PaymentAuthorization card = (auth.signature() == null ? Optional.<PaymentAuthorization>empty()
+                : cardRepo.findByUserIdAndSignature(userId, auth.signature())).orElseGet(PaymentAuthorization::new);
+            card.setUserId(userId);
+            card.setAuthorizationCode(auth.code());
+            card.setSignature(auth.signature());
+            card.setLast4(auth.last4());
+            card.setBrand(auth.brand());
+            card.setBank(auth.bank());
+            card.setExpMonth(auth.expMonth());
+            card.setExpYear(auth.expYear());
+            card.setEmail(auth.email());
+            cardRepo.save(card);
+            log.info("[CARD] saved for userId={} brand={} last4={}", userId, auth.brand(), auth.last4());
+        } catch (Exception e) {
+            log.warn("[CARD] could not save the card for userId={}: {}", userId, e.getMessage());
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public List<PaymentAuthorization> listCards(UUID userId) {
+        return cardRepo.findByUserIdOrderByCreatedAtDesc(userId);
+    }
+
+    public void deleteCard(UUID userId, UUID cardId) {
+        PaymentAuthorization card = cardRepo.findByIdAndUserId(cardId, userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found"));
+        cardRepo.delete(card);
+    }
+
+    /**
+     * Charge a saved card and hand back the reference.
+     *
+     * <p>The reference is the join to everything that already exists: the caller passes it to
+     * /wallet/topup/verify, or to the ride/food pay endpoint, which verify it server-side exactly
+     * as they verify a checkout payment. So a one-tap card payment reuses the same proven path
+     * instead of getting a second, less-tested one of its own.
+     */
+    public String chargeSavedCard(UUID userId, UUID cardId, BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount must be greater than 0");
+        }
+        PaymentAuthorization card = cardRepo.findByIdAndUserId(cardId, userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found"));
+
+        PaystackService.ChargeResult res =
+            paystackService.chargeAuthorization(card.getAuthorizationCode(), card.getEmail(), amount);
+        if (!res.success()) {
+            // 402: the request was fine, the card refused. The app offers checkout as the way out.
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,
+                res.failureReason() != null ? res.failureReason() : "The card was declined.");
+        }
+        log.info("[CARD] charged userId={} amount={} ref={}", userId, amount, res.reference());
+        return res.reference();
     }
 
     /** Get or create a wallet for an owner. */
