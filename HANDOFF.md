@@ -1456,6 +1456,52 @@ gateway for geocoding. Verified live: reverse of 5.6037,-0.187 → **"Patrice Lu
 - Geocode timeout raised 5s → 9s to allow for the extra hop on a mobile network.
 - e2e 118/118; all three apps type-check clean.
 
+### JWKS — rotating a signing key no longer means redeploying everything (latest) — REBUILD ALL 5
+The RS256 change left one thread hanging: the public key was still *configuration*, so replacing the
+pair meant editing five services' environments and restarting all five together. Now auth-service
+publishes its keys and the verifiers fetch them.
+- **auth-service publishes `GET /auth/.well-known/jwks.json`** (public — a verification key cannot
+  sign, which is the whole premise of RS256) and stamps every token with a **`kid`**. The kid is the
+  key's **RFC 7638 thumbprint**, computed from the key material, so all five services derive the same
+  name for the same key independently — there is no key *label* to keep in step, and two different
+  keys can never collide under one name.
+- **`JwkCache`** (copied into gateway/ride/food/wallet, like `RsaKeys`) fetches the document on a
+  **background daemon thread** and caches it by kid; `Jwts.parser().keyLocator(...)` picks the key per
+  token. Never fetches on the request path — the gateway is reactive and a blocking call there would
+  stall the event loop. `JwtProperties` in the three verifiers lost its key handling entirely so
+  there is one owner of the key, not two that can drift.
+- **`JWT_PREVIOUS_PUBLIC_KEYS`** (auth only) keeps retired keys published and accepted, which is what
+  makes rotation gapless. **Procedure is in `docs/DEPLOYMENT.md` §3** — two auth restarts, no verifier
+  redeploy at any point.
+- **Does not break the "never call auth to validate a token" rule** (`CLAUDE.md`): signatures are
+  still checked locally against a cached key. What crosses the network is the key, once per refresh
+  interval. `JWT_PUBLIC_KEY` stays configured as the fallback, so every service boots and keeps
+  verifying with auth-service down — verified by watching a verifier start before auth was listening.
+- **Verified live by actually rotating** (not just type-checks): generated a second RSA pair, pointed
+  auth at it with the old key as previous, restarted **auth-service only** → JWKS served both kids →
+  all four verifiers logged picking both up on their next refresh **without being restarted** → a
+  token signed with the new key returned 200 from auth/ride/food/wallet. Then a third, never-published
+  key to exercise the unknown-kid path. Original keys restored afterwards; JWKS back to the single
+  original kid and all four services 200.
+- ⚠️ **Bug found by doing it rather than assuming:** `JWT_PREVIOUS_PUBLIC_KEYS` was wired into
+  `application.yml` and `.env.example` but **not into `docker-compose.yml`**, so the JWKS published
+  only one key and the documented rotation would have silently failed at exactly the wrong moment.
+  Fixed. Two other defects in the first draft, also found live: a fetch failure logged `failed: null`
+  (connection exceptions have a null message — now logs the exception type), and a boot-time failure
+  waited a full 5-minute interval before retrying (now 15s until the first success). A successful
+  no-change refresh was silent, making "working" indistinguishable from "never ran" — now the first
+  success logs.
+- **Measured, not assumed:** the safety net for a *one-step* rotation is that an unrecognised kid
+  triggers a background re-fetch, so the **first** request to reach each service fails and later ones
+  succeed — per service, independently. Recorded in DEPLOYMENT.md as a backstop, not a plan.
+- **e2e now 121/121** (was 118): JWKS publishes an RS256 key with a kid · the token's kid matches a
+  published key · all four verifiers logged loading the JWKS. The middle one is the real guard — if
+  the kid ever stops matching, every verifier silently falls back to its configured key and rotation
+  quietly stops working with nothing else going red.
+- Docs swept: README §14 + roadmap, DEPLOYMENT §3 (new rotation procedure) and its known-gaps list,
+  `.env.example` (which was also missing the mandatory `openssl pkcs8 -topk8` step that DEPLOYMENT.md
+  documents — the exact trap that cost a restart during the RS256 work).
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.

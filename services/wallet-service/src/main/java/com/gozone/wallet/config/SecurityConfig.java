@@ -28,9 +28,11 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtProperties jwtProps;
+    private final JwkCache jwks;
 
-    public SecurityConfig(JwtProperties jwtProps) {
+    public SecurityConfig(JwtProperties jwtProps, JwkCache jwks) {
         this.jwtProps = jwtProps;
+        this.jwks = jwks;
     }
 
     @Bean
@@ -71,7 +73,9 @@ public class SecurityConfig {
                     try {
                         String token = header.substring(7);
                         Claims claims = Jwts.parser()
-                            .verifyWith(jwtProps.verificationKey())
+                            // Key chosen by the token's kid, from the set fetched from
+                            // auth-service's JWKS - so a rotated key needs no redeploy here.
+                            .keyLocator(h -> jwks.resolve(h.get("kid")))
                             .requireIssuer(jwtProps.getIssuer())
                             .requireAudience(jwtProps.getAudience())
                             .build()

@@ -83,6 +83,28 @@ eq "only auth-service holds the signing key"   "$(for c in gozone-gateway gozone
      done | tr '
 ' ' ' | sed 's/ $//')" "gozone-auth"
 
+# The JWKS is what lets a key be rotated by restarting auth-service alone. Three things have
+# to hold for that: the document is published, the token names its key, and the name matches a
+# key in the document. If the kid ever stops matching, every verifier silently falls back to
+# its statically configured key and rotation quietly stops working.
+eq "JWKS publishes an RS256 signing key" "$(curl -s $GW/auth/.well-known/jwks.json | python -c "
+import sys,json
+k=json.load(sys.stdin)['keys'][0]
+print(k['kty']+k['alg']+('kid' if k.get('kid') else ''))")" "RSARS256kid"
+
+eq "token kid matches a published key" "$(python -c "
+import base64,json,sys,urllib.request
+h='$RIDER'.split('.')[0]; h+='='*(-len(h)%4)
+kid=json.loads(base64.urlsafe_b64decode(h)).get('kid')
+ks=json.load(urllib.request.urlopen('$GW/auth/.well-known/jwks.json'))['keys']
+print('yes' if kid and any(k['kid']==kid for k in ks) else 'no')")" "yes"
+
+# Every verifier must actually be fetching the set, not quietly living on its configured key —
+# otherwise a rotation would need all five services redeployed again, which is the whole point.
+eq "all four verifiers loaded the JWKS" "$(for c in gozone-gateway gozone-ride gozone-food gozone-wallet; do
+       docker logs $c 2>&1 | grep -q 'JWKS loaded' && echo ok;
+     done | wc -l | tr -d ' ')" "4"
+
 eq "rider role"    "$(GET /auth/me $RIDER   | jq_ "d['role']")" "RIDER"
 eq "driver role"   "$(GET /auth/me $DRIVER  | jq_ "d['role']")" "DRIVER"
 eq "driver class"  "$(GET /auth/me $DRIVER  | jq_ "d['vehicleClass']")" "STANDARD"

@@ -67,6 +67,9 @@ Current settings (`app.jwt` in auth-service, overridable by env):
 | `JWT_REFRESH_EXPIRY_MS` | 7 days         | Revocable, single-use, rotated on every refresh.                   |
 | `JWT_ISSUER`            | `gozone-auth`  | Required by the gateway and all four services.                     |
 | `JWT_AUDIENCE`          | `gozone-apps`  | Required likewise.                                                 |
+| `JWT_PREVIOUS_PUBLIC_KEYS` | *(empty)*   | auth-service only. Retired keys still published and accepted during a rotation. |
+| `JWKS_URL`              | internal URL   | The four verifiers. Where they fetch keys from; blank = configured key only. |
+| `JWKS_REFRESH_MS`       | 5 minutes      | How often they re-fetch. Also the worst-case lag on picking up a new key. |
 
 `POST /auth/logout` revokes the refresh token (all sessions with `allDevices: true`). All four
 clients call it on sign-out.
@@ -76,9 +79,40 @@ token; the gateway, ride, food and wallet hold only the public key, so a break i
 cannot produce a valid session. Generate a fresh pair for production (section 1) and give the
 private key to auth-service alone — Compose already wires it that way.
 
-What is still missing is **rotation without downtime**: the public key is configuration, so
-replacing the pair means redeploying every service. Serving it from a JWKS endpoint that the
-verifiers fetch and cache is the usual answer, and is the remaining piece of this story.
+### Rotating the key pair
+
+Verifiers fetch their keys from **`GET /auth/.well-known/jwks.json`** and cache them by `kid`
+(the key's RFC 7638 thumbprint, derived from the key itself — there is no key *name* to keep in
+step across services). So a rotation touches auth-service only. Note that this does not make the
+services depend on auth to validate tokens: signatures are still checked locally against the
+cached key, and `JWT_PUBLIC_KEY` remains configured as a fallback, so a verifier boots and keeps
+working with auth-service down.
+
+Rotate in two restarts of auth-service, so no token in the wild is invalidated:
+
+1. **Publish the new key alongside the old one.** Generate a new pair. Set
+   `JWT_PREVIOUS_PUBLIC_KEYS` to the **new** public key, leave `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`
+   on the old pair, restart auth-service. Both keys are now in the JWKS. Wait one
+   `JWKS_REFRESH_MS` (5 min) for the verifiers to pick the new one up — confirm with
+   `docker logs gozone-ride | grep JWKS`.
+2. **Switch signing over.** Set `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY` to the new pair and
+   `JWT_PREVIOUS_PUBLIC_KEYS` to the **old** public key, restart auth-service. New tokens are
+   signed with the new key, which every verifier already holds; tokens issued minutes ago still
+   verify against the old one.
+3. **Drop the old key** once every token signed with it has expired — one `JWT_EXPIRY_MS`, so an
+   hour. Clear `JWT_PREVIOUS_PUBLIC_KEYS` and restart auth-service.
+
+Doing it in one step instead would 401 everyone holding an access token — up to an hour of
+users, who only find out when a request fails. There is a safety net, but it is not free: a
+token whose `kid` a service does not recognise makes that service fetch the JWKS again in the
+background, so the **first** request to reach it after a surprise rotation fails and requests a
+second later succeed. Per service, independently — measured, not assumed. Fine as a backstop,
+not something to plan a rotation around.
+
+Also update `JWT_PUBLIC_KEY` in the verifiers'
+environment at your leisure afterwards: it is only the fallback now, but leaving it on a dead key
+means an auth-service outage during a later rotation degrades to failing verification rather than
+to the last known good key.
 
 ---
 
@@ -156,9 +190,6 @@ verifiers fetch and cache is the usual answer, and is the remaining piece of thi
 ## Known gaps, stated plainly
 
 These are unfinished rather than decided against:
-
-- **Key rotation without downtime** — the public key is configuration, so rotating the pair means
-  redeploying every service. A JWKS endpoint would fix it (section 3).
 
 - **Google Sign-In in the apps** — backend verification is done; the button needs OAuth client
   ids and a development build, since Google rejects Expo Go's `exp://` redirect.

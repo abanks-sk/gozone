@@ -47,13 +47,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         Pattern.compile("^/topic/delivery/([0-9a-fA-F-]{36})/location$");
 
     private final JwtProperties jwtProps;
+    private final JwkCache jwks;
     private final OrderRepository orderRepo;
     private final DeliveryRepository deliveryRepo;
 
     public WebSocketConfig(JwtProperties jwtProps,
+                           JwkCache jwks,
                            OrderRepository orderRepo,
                            DeliveryRepository deliveryRepo) {
         this.jwtProps = jwtProps;
+        this.jwks = jwks;
         this.orderRepo = orderRepo;
         this.deliveryRepo = deliveryRepo;
     }
@@ -85,7 +88,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     if (token == null) token = accessor.getFirstNativeHeader("token");
                     if (token == null) throw new IllegalArgumentException("Missing auth token");
                     try {
-                        Claims claims = Jwts.parser().verifyWith(jwtProps.verificationKey())
+                        Claims claims = Jwts.parser().keyLocator(h -> jwks.resolve(h.get("kid")))
                             .requireIssuer(jwtProps.getIssuer())
                             .requireAudience(jwtProps.getAudience())
                             .build().parseSignedClaims(token).getPayload();

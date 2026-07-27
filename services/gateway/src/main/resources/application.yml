@@ -60,6 +60,12 @@ app:
     # Verify only: the public key can check a signature but never create one, so a
     # break here does not hand over the ability to mint tokens.
     public-key: ${JWT_PUBLIC_KEY}   # required — base64 DER (see RsaKeys)
+    # Where the verification keys actually come from. Fetched on a background thread and cached
+    # by kid, so rotating the key pair is a restart of auth-service alone rather than of all five
+    # services. The public-key above stays as the fallback: if auth is unreachable or this URL is
+    # blank, verification still works with the configured key.
+    jwks-url: ${JWKS_URL:}
+    jwks-refresh-ms: ${JWKS_REFRESH_MS:300000}   # 5 minutes
     issuer: ${JWT_ISSUER:gozone-auth}      # must match auth-service; tokens without it are rejected
     audience: ${JWT_AUDIENCE:gozone-apps}
   ratelimit:
@@ -74,7 +80,10 @@ app:
   gateway:
     # Paths that bypass the JWT check at the gateway edge (pre-login flows).
     # Comma-separated so it binds cleanly to a List<String> via @Value.
-    public-paths: /auth/google,/auth/register,/auth/register-email,/auth/login,/auth/login-email,/auth/login-email-password,/auth/verify-otp,/auth/refresh,/auth/admin/login,/wallet/mock-checkout,/actuator
+    # /auth/.well-known/jwks.json is here because a JWKS is public by definition — it carries
+    # verification keys, which cannot sign. Services fetch it over the internal network, but
+    # exposing it is standard and makes the key set inspectable from outside.
+    public-paths: /auth/google,/auth/register,/auth/register-email,/auth/login,/auth/login-email,/auth/login-email-password,/auth/verify-otp,/auth/refresh,/auth/admin/login,/auth/.well-known/,/wallet/mock-checkout,/actuator
 
 logging:
   level:

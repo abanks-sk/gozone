@@ -1,7 +1,11 @@
 package com.gozone.food.config;
 
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
+import java.security.MessageDigest;
 import java.security.PublicKey;
+import java.security.interfaces.RSAPublicKey;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 
@@ -39,5 +43,40 @@ public final class RsaKeys {
             .replaceAll("-----[A-Z ]+-----", "")
             .replaceAll("\\s", "");
         return Base64.getDecoder().decode(cleaned);
+    }
+
+    /**
+     * The key's <b>RFC 7638 JWK thumbprint</b>, used as its {@code kid}.
+     *
+     * <p>Derived from the key material rather than configured, so this service computes the same
+     * kid for a key as auth-service does without either being told what to call it. That is what
+     * lets the statically configured key and a key fetched from the JWKS be recognised as the
+     * same key, and keeps a rotation from needing a shared "key name" kept in step across five
+     * services.
+     */
+    public static String thumbprint(PublicKey key) {
+        RSAPublicKey rsa = (RSAPublicKey) key;
+        // RFC 7638: SHA-256 over the required members only, in lexicographic order, no whitespace.
+        String canonical = "{\"e\":\"" + b64url(rsa.getPublicExponent())
+            + "\",\"kty\":\"RSA\",\"n\":\"" + b64url(rsa.getModulus()) + "\"}";
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(canonical.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (Exception e) {
+            throw new IllegalStateException("cannot compute JWK thumbprint: " + e.getMessage(), e);
+        }
+    }
+
+    /** base64url of the unsigned big-endian magnitude, as JWK requires (no sign byte, no padding). */
+    private static String b64url(BigInteger value) {
+        byte[] bytes = value.toByteArray();
+        // BigInteger.toByteArray() prefixes a zero byte when the high bit is set; JWK must not.
+        if (bytes.length > 1 && bytes[0] == 0) {
+            byte[] trimmed = new byte[bytes.length - 1];
+            System.arraycopy(bytes, 1, trimmed, 0, trimmed.length);
+            bytes = trimmed;
+        }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 }

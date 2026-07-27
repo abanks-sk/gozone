@@ -64,6 +64,10 @@ app:
     # Both values are base64 of the DER bytes (single line — see RsaKeys).
     private-key: ${JWT_PRIVATE_KEY}   # required — auth-service only, never share
     public-key: ${JWT_PUBLIC_KEY}     # required — safe to distribute; cannot sign
+    # Retired public keys (comma-separated) still published in the JWKS and still accepted,
+    # so a rotation doesn't invalidate the access tokens already in people's hands.
+    # Empty in steady state; see docs/DEPLOYMENT.md for the rotation procedure.
+    previous-public-keys: ${JWT_PREVIOUS_PUBLIC_KEYS:}
     # Access tokens can't be revoked, so they expire quickly; clients swap the 7-day refresh
     # token (which CAN be revoked — see /auth/logout) for a new one.
     expiry-ms: ${JWT_EXPIRY_MS:3600000}            # 1 hour

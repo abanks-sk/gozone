@@ -48,6 +48,9 @@ public class SecurityConfig {
                     "/login-email-password",
                     "/verify-otp", "/refresh", "/admin/login", "/google",
                     "/actuator/**", "/error",
+                    // JWKS — the other services fetch their verification key from here, and they
+                    // have no token to present when they do. A public key is safe to publish.
+                    "/.well-known/jwks.json",
                     // Internal service-to-service call, guarded by X-Internal-Key in the controller.
                     "/delivery-riders/availability"
                 ).permitAll()

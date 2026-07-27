@@ -1,17 +1,13 @@
-package com.gozone.auth.config;
+package com.gozone.gateway.config;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
-import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 /**
  * Decodes the RSA signing keys from configuration.
@@ -21,27 +17,12 @@ import java.util.Map;
  * multi-line values in .env files and Compose interpolation are a reliable source of
  * "works on my machine" breakage; one long base64 string travels through env vars intact.
  *
- * Generate a pair with:
- * <pre>
- * openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -outform DER -out priv.der
- * openssl rsa -inform DER -in priv.der -pubout -outform DER -out pub.der
- * base64 -w0 priv.der    # JWT_PRIVATE_KEY  (auth-service only)
- * base64 -w0 pub.der     # JWT_PUBLIC_KEY   (every service)
- * </pre>
+ * This service only ever verifies, so it only ever holds the public key — it is not given the
+ * private key and therefore cannot mint a token even if it is compromised.
  */
 public final class RsaKeys {
 
     private RsaKeys() {}
-
-    public static PrivateKey privateKey(String base64Der) {
-        try {
-            byte[] der = decode(base64Der, "JWT_PRIVATE_KEY");
-            return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(der));
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                "JWT_PRIVATE_KEY is not a base64-encoded PKCS#8 RSA key: " + e.getMessage(), e);
-        }
-    }
 
     public static PublicKey publicKey(String base64Der) {
         try {
@@ -53,13 +34,25 @@ public final class RsaKeys {
         }
     }
 
+    private static byte[] decode(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException(name + " is not set — see .env.example");
+        }
+        // Tolerate a pasted PEM block: strip the header/footer and any line breaks.
+        String cleaned = value
+            .replaceAll("-----[A-Z ]+-----", "")
+            .replaceAll("\\s", "");
+        return Base64.getDecoder().decode(cleaned);
+    }
+
     /**
      * The key's <b>RFC 7638 JWK thumbprint</b>, used as its {@code kid}.
      *
-     * <p>Derived from the key material itself rather than configured, which is the point: auth
-     * stamps a {@code kid} on every token and each verifier derives the same {@code kid} for the
-     * same key independently. There is no shared "key name" to keep in sync across five services,
-     * and a key can never be confused with a different one that happens to share a label.
+     * <p>Derived from the key material rather than configured, so this service computes the same
+     * kid for a key as auth-service does without either being told what to call it. That is what
+     * lets the statically configured key and a key fetched from the JWKS be recognised as the
+     * same key, and keeps a rotation from needing a shared "key name" kept in step across five
+     * services.
      */
     public static String thumbprint(PublicKey key) {
         RSAPublicKey rsa = (RSAPublicKey) key;
@@ -75,19 +68,6 @@ public final class RsaKeys {
         }
     }
 
-    /** The key as a JWK object, ready to be serialised into a JWKS document. */
-    public static Map<String, String> toJwk(PublicKey key) {
-        RSAPublicKey rsa = (RSAPublicKey) key;
-        Map<String, String> jwk = new LinkedHashMap<>();
-        jwk.put("kty", "RSA");
-        jwk.put("use", "sig");
-        jwk.put("alg", "RS256");
-        jwk.put("kid", thumbprint(key));
-        jwk.put("n", b64url(rsa.getModulus()));
-        jwk.put("e", b64url(rsa.getPublicExponent()));
-        return jwk;
-    }
-
     /** base64url of the unsigned big-endian magnitude, as JWK requires (no sign byte, no padding). */
     private static String b64url(BigInteger value) {
         byte[] bytes = value.toByteArray();
@@ -98,16 +78,5 @@ public final class RsaKeys {
             bytes = trimmed;
         }
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private static byte[] decode(String value, String name) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " is not set — see .env.example");
-        }
-        // Tolerate a pasted PEM block: strip the header/footer and any line breaks.
-        String cleaned = value
-            .replaceAll("-----[A-Z ]+-----", "")
-            .replaceAll("\\s", "");
-        return Base64.getDecoder().decode(cleaned);
     }
 }

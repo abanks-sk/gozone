@@ -40,6 +40,12 @@ app:
     # Verify only: the public key can check a signature but never create one, so a
     # break here does not hand over the ability to mint tokens.
     public-key: ${JWT_PUBLIC_KEY}   # required — base64 DER (see RsaKeys)
+    # Where the verification keys actually come from. Fetched on a background thread and cached
+    # by kid, so rotating the key pair is a restart of auth-service alone rather than of all five
+    # services. The public-key above stays as the fallback: if auth is unreachable or this URL is
+    # blank, verification still works with the configured key.
+    jwks-url: ${JWKS_URL:}
+    jwks-refresh-ms: ${JWKS_REFRESH_MS:300000}   # 5 minutes
     issuer: ${JWT_ISSUER:gozone-auth}      # required on every token we accept
     audience: ${JWT_AUDIENCE:gozone-apps}
   internal:

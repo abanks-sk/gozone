@@ -947,6 +947,18 @@ Two rounds of security review were completed; the fixes are in place.
 - Keys are supplied as single-line base64 of the DER bytes (`JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`)
   rather than PEM, because multi-line values do not survive `.env` and Compose interpolation
   reliably. Compose passes the private key to auth-service **only**.
+- **Keys are distributed by JWKS**, not by configuration. auth-service publishes them at
+  `GET /auth/.well-known/jwks.json` and stamps each token with a `kid` (the key's RFC 7638
+  thumbprint, derived from the key itself, so nobody has to keep a key *name* in step across five
+  services). The four verifiers fetch that document on a background thread and cache it by `kid`,
+  which is what makes rotating the pair a restart of **auth-service alone** instead of a
+  coordinated redeploy of everything. `JWT_PREVIOUS_PUBLIC_KEYS` keeps a retired key published
+  and accepted through a rotation, so tokens already in people's hands are not invalidated —
+  the procedure is in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §3.
+  This does **not** mean asking auth-service to validate a token — the rule in `CLAUDE.md` still
+  holds. Signatures are checked locally, in-process, with no network call on the request path;
+  what crosses the network is the key, once per refresh interval. The configured `JWT_PUBLIC_KEY`
+  stays as the fallback, so every service boots and keeps verifying with auth-service down.
 - **Access tokens live 1 hour** — they cannot be revoked, so a short life is what ends them.
   Refresh tokens live 7 days, are stored only as hashes, are **single-use** (rotated on every
   refresh, so a captured one dies as soon as the real client refreshes), and are **revocable**:
@@ -983,8 +995,8 @@ Two rounds of security review were completed; the fixes are in place.
   instance means moving to the Redis-backed limiter.
 
 **Known remaining items** (documented, not hidden): tighter CORS and TLS termination; a
-dependency (SCA) scan; distributed rate limiting for a multi-instance gateway; and key rotation
-served through a JWKS endpoint rather than a redeploy. Login returns 404 for an unknown identifier — an intentional UX choice
+dependency (SCA) scan; and distributed rate limiting for a multi-instance gateway.
+Login returns 404 for an unknown identifier — an intentional UX choice
 ("no account found — sign up") accepted as a minor enumeration trade-off.
 See **`docs/DEPLOYMENT.md`** for the full pre-launch checklist.
 
@@ -1178,9 +1190,9 @@ the passenger requests.
 
 - Set `OTP_LOG_CODES=false`, populate `GOOGLE_CLIENT_IDS`, restrict the Maps SDK keys to
   Android/iOS app signatures, and rotate every credential in `.env`.
-- Publish the public key at a JWKS endpoint so keys can be rotated without redeploying every
-  service (RS256, issuer/audience validation, short access tokens with refresh-token revocation,
-  and gateway rate limiting are all in place — see `docs/DEPLOYMENT.md`).
+- RS256, issuer/audience validation, JWKS key distribution, short access tokens with
+  refresh-token revocation, and gateway rate limiting are all in place — see
+  `docs/DEPLOYMENT.md`, and follow its §3 procedure when rotating the signing keys.
 
 **Product backlog**
 

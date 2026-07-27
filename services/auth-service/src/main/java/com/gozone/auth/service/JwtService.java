@@ -6,6 +6,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import org.springframework.stereotype.Service;
 
+import java.security.Key;
 import java.util.Date;
 
 /**
@@ -27,6 +28,9 @@ public class JwtService {
 
     public String generateAccessToken(User user) {
         return Jwts.builder()
+            // Names the key that signed this token, so a verifier holding several published keys
+            // knows which to check it with — the thing that lets us rotate without a flag day.
+            .header().keyId(props.signingKeyId()).and()
             .subject(user.getId().toString())
             .issuer(props.getIssuer())
             .audience().add(props.getAudience()).and()
@@ -41,7 +45,13 @@ public class JwtService {
 
     public Claims validateAndParseClaims(String token) {
         return Jwts.parser()
-            .verifyWith(props.verificationKey())
+            // Resolve by kid so tokens signed with a key we have since retired still verify
+            // until they expire (see JwtProperties.previousPublicKeys).
+            .keyLocator(header -> {
+                Object kid = header.get("kid");
+                Key key = kid == null ? null : props.verificationKeys().get(kid.toString());
+                return key != null ? key : props.verificationKey();
+            })
             .requireIssuer(props.getIssuer())
             .requireAudience(props.getAudience())
             .build()
