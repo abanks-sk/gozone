@@ -180,7 +180,23 @@ export default function DriverTripScreen() {
     catch (e: any) { Alert.alert('Error', e?.response?.data?.message ?? 'Could not submit rating'); }
   }
 
-  function finish() { stopGps(); setActiveTrip(null); setActiveReq(null); router.replace('/(driver)/feed'); }
+  /**
+   * Leave the trip screen.
+   *
+   * Dropping `activeTrip` is what ends the job, so it must not happen while the fare is still
+   * outstanding. A cash fare sits at AWAITING until the driver confirms they took the money, and
+   * the driver used to clear the trip on the way back to the feed — after which there was no
+   * route back to it, "Confirm cash received" was unreachable, and the customer sat on "waiting
+   * for them to confirm" forever. Keeping the trip means the feed's active-trip banner leads back
+   * here. (A completed trip no longer blocks the feed, so holding it costs the driver nothing —
+   * see feed.tsx.)
+   */
+  function finish() {
+    stopGps();
+    if (done && pay.status !== 'PAID') { router.replace('/(driver)/feed'); return; }
+    setActiveTrip(null); setActiveReq(null);
+    router.replace('/(driver)/feed');
+  }
 
   if (!trip) {
     return (
@@ -393,9 +409,16 @@ export default function DriverTripScreen() {
             </Row>
 
             <TouchableOpacity onPress={finish} activeOpacity={0.9}
-              style={{ marginTop: 22, backgroundColor: c.primary, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 40 }}>
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Back to Home</Text>
+              style={{ marginTop: 22, backgroundColor: pay.status === 'PAID' ? c.primary : c.surfaceAlt, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 40 }}>
+              <Text style={{ color: pay.status === 'PAID' ? '#fff' : c.text, fontWeight: '800', fontSize: 15 }}>
+                {pay.status === 'PAID' ? 'Back to Home' : 'Take more requests'}
+              </Text>
             </TouchableOpacity>
+            {pay.status !== 'PAID' && (
+              <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 8, textAlign: 'center' }}>
+                This trip stays on your home screen until the fare is settled.
+              </Text>
+            )}
           </View>
         )}
 

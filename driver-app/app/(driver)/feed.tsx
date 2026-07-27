@@ -77,9 +77,15 @@ export default function DriverFeedScreen() {
   }
   useEffect(() => { locate(); }, []);
 
+  // A trip the driver is still driving blocks new work; one that is finished but waiting on the
+  // fare does not. The trip is deliberately kept after completion so the driver can come back and
+  // confirm a cash payment (see trip.tsx finish()) — that must not also take them off the road,
+  // which could be a long wait on a customer who has not opened their app.
+  const onTheRoad = !!activeTrip && activeTrip.status !== 'COMPLETED';
+
   // Poll nearby requests while online, not on a trip and not awaiting an offer answer.
   useEffect(() => {
-    if (!online || activeTrip || pendingOffer) { setRequests([]); return; }
+    if (!online || onTheRoad || pendingOffer) { setRequests([]); return; }
     let active = true;
     const tick = async () => {
       try {
@@ -93,7 +99,7 @@ export default function DriverFeedScreen() {
     tick();
     const poll = setInterval(tick, 5000);
     return () => { active = false; clearInterval(poll); };
-  }, [online, activeTrip, pendingOffer, pos.lat, pos.lng, vehicleClass, serviceMode]);
+  }, [online, onTheRoad, pendingOffer, pos.lat, pos.lng, vehicleClass, serviceMode]);
 
   // Offering no longer starts the trip — it sends an offer the passenger picks from
   // (several drivers can offer; they compare price + distance). Poll the bid until
@@ -234,10 +240,16 @@ export default function DriverFeedScreen() {
         {activeTrip && (
           <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/(driver)/trip')}
             style={{ marginHorizontal: 16, marginTop: 18, borderRadius: 18, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <Ionicons name="navigate-circle" size={26} color={c.primary} />
+            <Ionicons name={onTheRoad ? 'navigate-circle' : 'cash-outline'} size={26} color={c.primary} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 15, fontWeight: '800', color: c.text }}>Trip in progress</Text>
-              <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 1 }}>{activeTrip.status} · GH₵ {activeTrip.agreedFare} — tap to manage</Text>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: c.text }}>
+                {onTheRoad ? 'Trip in progress' : 'Payment outstanding'}
+              </Text>
+              <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 1 }}>
+                {onTheRoad
+                  ? `${activeTrip.status} · GH₵ ${activeTrip.agreedFare} — tap to manage`
+                  : `GH₵ ${activeTrip.agreedFare} — tap to confirm you were paid`}
+              </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={c.primary} />
           </TouchableOpacity>
@@ -247,7 +259,7 @@ export default function DriverFeedScreen() {
         <View style={{ paddingHorizontal: 16, marginTop: 22 }}>
           {!online ? (
             <Offline c={c} onGoOnline={() => setOnline(true)} />
-          ) : activeTrip ? (
+          ) : onTheRoad ? (
             <Text style={{ color: c.textMuted, fontSize: 14, textAlign: 'center', paddingVertical: 24 }}>
               Finish your current trip to receive new requests.
             </Text>

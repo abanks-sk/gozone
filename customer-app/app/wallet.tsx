@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Linking, Modal, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import Svg, { Defs, LinearGradient as SvgGradient, Stop, Rect } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { walletApi, LedgerEntry, Notification } from '../src/api/wallet';
 import { apiBaseUrl } from '../src/lib/host';
+import { clearPending, getPending, setPending } from '../src/lib/pendingPayment';
 import { useTheme } from '../src/theme/ThemeProvider';
 import { usePaymentStore, PAY_METHODS, PayMethodMeta } from '../src/store/paymentStore';
 import { Empty, Row } from '../src/components/ui';
@@ -47,6 +48,7 @@ export default function PaymentScreen() {
   const [topAmt, setTopAmt] = useState('');
   const [topRef, setTopRef] = useState<string | null>(null);
   const [topBusy, setTopBusy] = useState(false);
+  const [topVerifying, setTopVerifying] = useState(false);
   const [momoOpen, setMomoOpen] = useState(false);
   const [momoNum, setMomoNum] = useState('');
 
@@ -110,6 +112,9 @@ export default function PaymentScreen() {
       const { reference, authorizationUrl } = await walletApi.initializeTopUp(amount);
       const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
       setTopRef(reference);
+      // Persist before leaving: the browser hand-off often reloads the app, and a reference that
+      // only exists in React state dies with it — taking the customer's money with it.
+      await setPending({ kind: 'topup', reference, amount });
       await Linking.openURL(url);
     } catch (e: any) {
       Alert.alert('Top-up', e?.response?.data?.message ?? 'Could not start the top-up. Please try again.');
@@ -125,12 +130,44 @@ export default function PaymentScreen() {
       const { balance: newBal } = await walletApi.verifyTopUp(amount, topRef);
       setBalance(newBal);
       setTopUp(false);
+      await clearPending();
       await load();
       Alert.alert('Wallet funded', `GH₵ ${amount.toFixed(2)} added to your wallet.`);
     } catch (e: any) {
       Alert.alert('Not yet confirmed', e?.response?.data?.message ?? 'Could not verify the payment yet. If you completed it, tap Verify again.');
     } finally { setTopBusy(false); }
   }
+
+  /**
+   * Redeem a top-up that was paid for while the app was in the browser.
+   *
+   * Runs on every focus, because returning from Paystack usually means a cold start — there is no
+   * in-memory state left to resume from, only the stored reference. Verify is idempotent per
+   * reference, so a duplicate attempt cannot double-credit. Stays silent when the payment simply
+   * was not completed (the customer backed out), and only speaks up when money actually landed.
+   */
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    (async () => {
+      const p = await getPending('topup');
+      if (!p || !active) return;
+      setTopVerifying(true);
+      try {
+        const { balance: newBal } = await walletApi.verifyTopUp(p.amount, p.reference);
+        if (!active) return;
+        await clearPending();
+        setBalance(newBal);
+        setTopUp(false); setTopRef(null);
+        await load();
+        Alert.alert('Wallet funded', `GH₵ ${p.amount.toFixed(2)} added to your wallet.`);
+      } catch {
+        // Not paid (or not yet settled at Paystack). Keep the reference and offer the manual
+        // Verify button rather than nagging — re-opening the sheet is enough of a prompt.
+        if (active) { setTopAmt(String(p.amount)); setTopRef(p.reference); setTopUp(true); }
+      } finally { if (active) setTopVerifying(false); }
+    })();
+    return () => { active = false; };
+  }, []));
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>

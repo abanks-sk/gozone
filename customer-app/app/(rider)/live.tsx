@@ -12,6 +12,7 @@ import { useRideDraft } from '../../src/store/rideDraft';
 import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
 import { useProfileStore } from '../../src/store/profileStore';
 import { apiBaseUrl } from '../../src/lib/host';
+import { clearPending, getPending, setPending } from '../../src/lib/pendingPayment';
 import { getCurrentLocation } from '../../src/lib/location';
 import { LeafletMap } from '../../src/components/LeafletMap';
 import { vehicleKindOf } from '../../src/components/mapTypes';
@@ -187,15 +188,47 @@ export default function LiveRideScreen() {
         const { reference, authorizationUrl } = await walletApi.payInitialize(Number(trip.agreedFare));
         const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
         setPayRef(reference);
+        // Survive the browser hand-off: returning from Paystack usually reloads the app, and a
+        // reference kept only in React state dies with it — the customer pays and the fare stays
+        // unpaid. See src/lib/pendingPayment.ts.
+        await setPending({ kind: 'trip', reference, amount: Number(trip.agreedFare), targetId: trip.id, method: payMethod });
         await Linking.openURL(url);
       } else {
         setTrip(await rideApi.payTrip(trip.id, payMethod, payRef ?? undefined));
         setPayRef(null);
+        await clearPending();
       }
     } catch (e: any) {
       Alert.alert('Payment', e?.response?.data?.message ?? 'Please try again');
     } finally { setPaying(false); }
   }
+
+  /**
+   * Finish a fare that was paid for in the Paystack browser.
+   *
+   * Coming back from checkout usually means a cold start, so `payRef` is gone and the customer
+   * would be looking at an unpaid trip they have already been charged for. The stored reference
+   * is redeemed here instead. payTrip re-verifies the reference server-side and is idempotent, so
+   * running this on a payment that never completed simply fails and leaves the Pay button.
+   */
+  useEffect(() => {
+    if (!completed || paid || !trip) return;
+    let active = true;
+    (async () => {
+      const p = await getPending('trip');
+      if (!p || p.targetId !== trip.id || !active) return;
+      try {
+        const t = await rideApi.payTrip(trip.id, p.method ?? payMethod, p.reference);
+        if (!active) return;
+        setTrip(t); setPayRef(null);
+        await clearPending();
+      } catch {
+        // Not completed at Paystack — restore the reference so the Verify button works.
+        if (active) setPayRef(p.reference);
+      }
+    })();
+    return () => { active = false; };
+  }, [completed, paid, trip?.id]);
 
   // Live driver location over WS.
   useEffect(() => {
