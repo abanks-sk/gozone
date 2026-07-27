@@ -33,6 +33,7 @@ public class FoodService {
     private final PromoRepository promoRepo;
     private final SimpMessagingTemplate messaging;
     private final WalletClient walletClient;
+    private final NotifyClient notifyClient;
     private final AuthClient authClient;
 
     @Value("${app.delivery.base-fee:2.00}")
@@ -51,6 +52,7 @@ public class FoodService {
                        PromoRepository promoRepo,
                        SimpMessagingTemplate messaging,
                        WalletClient walletClient,
+                       NotifyClient notifyClient,
                        AuthClient authClient) {
         this.vendorRepo = vendorRepo;
         this.menuItemRepo   = menuItemRepo;
@@ -62,6 +64,7 @@ public class FoodService {
         this.promoRepo      = promoRepo;
         this.messaging      = messaging;
         this.walletClient   = walletClient;
+        this.notifyClient   = notifyClient;
         this.authClient     = authClient;
     }
 
@@ -439,6 +442,13 @@ public class FoodService {
             }
         }
 
+        // Tell the customer, because for everything except a delivery the next move is theirs and
+        // they are not sitting in the app waiting to be told. A pickup customer has to set off; a
+        // walk-in customer is holding a place in a queue they cannot see.
+        if (newStatus == Order.Status.READY) {
+            notifyOrderReady(order);
+        }
+
         if (newStatus == Order.Status.COMPLETED) {
             onOrderCompleted(order);
         }
@@ -461,6 +471,27 @@ public class FoodService {
         }
 
         return OrderResponse.from(order);
+    }
+
+    /**
+     * "Your food is ready" — worded for how the customer actually gets it.
+     *
+     * Fail-soft via NotifyClient: a notification outage must never fail the vendor's status
+     * update, which is the thing the kitchen is standing there waiting on.
+     */
+    private void notifyOrderReady(Order order) {
+        String vendor = order.getRestaurant().getName();
+        switch (order.getMode()) {
+            case PICKUP -> notifyClient.send(order.getCustomerId(),
+                "Your order is ready",
+                "Your order from " + vendor + " is ready for collection.");
+            case WALKIN -> notifyClient.send(order.getCustomerId(),
+                "Your table is ready",
+                "Your order at " + vendor + " is ready — head to the counter.");
+            // A delivery customer is not going anywhere; the courier is. They already have live
+            // tracking, and telling them the kitchen is done is noise.
+            case DELIVERY -> { }
+        }
     }
 
     // ── Payment ─────────────────────────────────────────────────────────────────
@@ -608,6 +639,10 @@ public class FoodService {
         if (newStatus == Delivery.Status.PICKED_UP && order.getStatus() == Order.Status.READY) {
             order.setStatus(Order.Status.OUT_FOR_DELIVERY);
             orderRepo.save(order);
+            // The moment worth telling a delivery customer about is the food leaving, not the
+            // kitchen finishing — this is when the tracking map starts meaning something.
+            notifyClient.send(order.getCustomerId(), "Your order is on the way",
+                "Your order from " + order.getRestaurant().getName() + " has left and is on its way to you.");
             log.info("[FOOD] order={} out for delivery — collected by courier {}", order.getId(), courierId);
         }
 
