@@ -6,9 +6,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { rideApi } from '../../src/api/ride';
 import { mapsApi } from '../../src/api/maps';
 import { useDriverStore } from '../../src/store/driverStore';
+import { useAuthStore } from '../../src/store/authStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Row } from '../../src/components/ui';
 import { GoogleMap } from '../../src/components/GoogleMap';
+import { vehicleKindOf } from '../../src/components/mapTypes';
 
 const FLOW = ['MATCHED', 'ENROUTE', 'STARTED', 'COMPLETED'] as const;
 const stepsFor = (parcel: boolean) => [
@@ -53,6 +55,8 @@ export default function DriverTripScreen() {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const trip = useDriverStore((s) => s.activeTrip);
+  // Draw yourself as what you actually ride, matching what the customer sees of you.
+  const myVehicle = vehicleKindOf(useAuthStore.getState().vehicleClass);
   const req = useDriverStore((s) => s.activeReq);
   const myPos = useDriverStore((s) => s.myPos);
   const setActiveTrip = useDriverStore((s) => s.setActiveTrip);
@@ -241,6 +245,7 @@ export default function DriverTripScreen() {
               markers={legMarkers}
               route={legRoute}
               driver={driverPos}
+              vehicleKind={myVehicle}
             />
           );
         })()}

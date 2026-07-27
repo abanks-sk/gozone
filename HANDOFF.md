@@ -1367,6 +1367,30 @@ pickup/destination dots. If the driver app wasn't pushing location, it never app
   Windows cp1252). Recovered with `git checkout --`; the lesson is to use the Edit tool for files
   with non-ASCII content rather than Python read/modify/write.
 
+### Cross-app audit of recent work — driver app had missed three map fixes (latest)
+Checked every recent change against all four front-ends, because the apps are **separate copies**
+and a fix in `customer-app/src` does not reach `driver-app/src`.
+- **Already consistent everywhere** (verified, not assumed): logout revoking server-side,
+  `updateProfile`/backend profile, add-phone flow, `session.ts` clearing the profile cache, the new
+  ledger labels (PAYMENT/DELIVERY_FEE/CASH_COLLECTED) — all three Expo apps; admin-web has the
+  refresh-on-401, the payouts board and revoking sign-out.
+- **Gaps found and closed in `driver-app`:** it still had the **unbounded** `location.ts` (no
+  last-known-position shortcut, no timeout — the same iOS hang the customer app had, and the driver
+  feed calls it on load and on tap) and the **unbounded** `geocode.ts` fetch. Both synced. Also
+  ported the **vehicle-aware marker**: `mapTypes.ts` synced (`vehicleKindOf`), `BikeMarker` added to
+  `GoogleMap.native.tsx`, and `trip.tsx`/`deliveries.tsx` pass `vehicleKind` from the driver's own
+  `vehicleClass`, so an okada courier sees a motorbike for themselves, matching what the customer sees.
+- **Routing fix needs no porting** — both apps call the same `/rides/maps/directions` proxy, so the
+  OSRM fallback covers them together (verified both clients hit the same endpoint).
+- **vendor-app has no maps at all** — deliberate: it has no tracking surface (orders, queue,
+  catalogue, earnings). Nothing missing there.
+- ⚠️ **Known gap, not fixed:** the driver app's **web** map is still a placeholder card
+  ("Map is available on the mobile app") because `react-native-maps` has no web build and
+  `react-native-webview` isn't installed in `driver-app`. On a phone the driver map is fine; on web
+  the driver sees no map while the customer does. Porting the customer's Leaflet web map needs
+  `npm install react-native-webview` in driver-app — flagged for the user's decision.
+- All four front-ends type-check (admin-web builds); e2e 118/118.
+
 ### Next
 1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.

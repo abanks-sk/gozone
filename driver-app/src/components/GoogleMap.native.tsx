@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Rect } from 'react-native-svg';
+import Svg, { Circle, Rect } from 'react-native-svg';
 import { useTheme } from '../theme/ThemeProvider';
 import { MapMarker, MapProps } from './mapTypes';
 
@@ -32,6 +32,23 @@ function Dot({ color }: { color: string }) {
 }
 
 /** Top-down car marker (points "up" at 0°; the wrapper rotates it to the heading). */
+/** Top-down motorbike — an okada courier is what most GoShop deliveries actually arrive on. */
+function BikeMarker({ color }: { color: string }) {
+  return (
+    <Svg width={34} height={34} viewBox="0 0 32 32">
+      {/* wheels */}
+      <Circle cx="16" cy="7" r="3.4" fill="#111827" />
+      <Circle cx="16" cy="25" r="3.4" fill="#111827" />
+      {/* frame + body */}
+      <Rect x="13.5" y="8" width="5" height="16" rx="2.5" fill={color} stroke="#fff" strokeWidth="1.2" />
+      {/* handlebars */}
+      <Rect x="9.5" y="10" width="13" height="2.6" rx="1.3" fill="#fff" />
+      {/* rider seat */}
+      <Rect x="12.8" y="16" width="6.4" height="4.5" rx="2" fill="#111827" opacity={0.75} />
+    </Svg>
+  );
+}
+
 function CarMarker({ color }: { color: string }) {
   return (
     <Svg width={34} height={34} viewBox="0 0 32 32">
@@ -48,7 +65,7 @@ function CarMarker({ color }: { color: string }) {
 
 export function GoogleMap({
   style, center, zoom = 14, mode = 'view', markers = [],
-  driver = null, userLocation = null, flyTo = null, route = [], onCenterChange, onReady,
+  driver = null, vehicleKind = 'car', userLocation = null, flyTo = null, route = [], onCenterChange, onReady,
 }: MapProps) {
   const { colors } = useTheme();
   const mapRef = useRef<MapView>(null);
@@ -115,7 +132,9 @@ export function GoogleMap({
         {driver && (
           <Marker coordinate={{ latitude: driver.lat, longitude: driver.lng }} anchor={{ x: 0.5, y: 0.5 }} flat>
             <View style={{ transform: [{ rotate: `${heading}deg` }] }}>
-              <CarMarker color={colors.primary} />
+              {vehicleKind === 'bike'
+                ? <BikeMarker color={colors.primary} />
+                : <CarMarker color={colors.primary} />}
             </View>
           </Marker>
         )}

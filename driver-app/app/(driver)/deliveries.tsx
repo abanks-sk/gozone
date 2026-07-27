@@ -7,6 +7,7 @@ import { useAuthStore } from '../../src/store/authStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Row } from '../../src/components/ui';
 import { GoogleMap } from '../../src/components/GoogleMap';
+import { vehicleKindOf } from '../../src/components/mapTypes';
 
 const NEXT: Record<string, string> = { ASSIGNED: 'PICKED_UP', PICKED_UP: 'ENROUTE', ENROUTE: 'DELIVERED' };
 const ACTION: Record<string, string> = {
@@ -134,6 +135,7 @@ export default function DriverDeliveriesScreen() {
                   lng: (WAYPOINTS[0].lng + WAYPOINTS[WAYPOINTS.length - 1].lng) / 2,
                 }}
                 zoom={13}
+                vehicleKind={vehicleKindOf(vehicleClass)}
                 markers={[
                   { ...WAYPOINTS[0], kind: 'pickup', label: active.vendorName },
                   { ...WAYPOINTS[WAYPOINTS.length - 1], kind: 'dest', label: 'Customer' },
