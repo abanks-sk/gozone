@@ -1,0 +1,132 @@
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, Keyboard, KeyboardEvent, Platform, TextInput, ViewStyle } from 'react-native';
+
+/**
+ * Lifts the screen just enough to keep the focused text field above the keyboard.
+ *
+ * Applied once at the root of each app rather than per screen. Doing it per screen is how this
+ * stayed broken: four auth screens had a `KeyboardAvoidingView`, every other form in the app had
+ * nothing, and each new form had to remember to opt in.
+ *
+ * ## Why not the usual options
+ *
+ * - **`react-native-keyboard-controller`** is the better library, but it ships native code and so
+ *   needs a development build. Everything here has to run in **Expo Go** — the same constraint
+ *   that ruled out `react-native-maps`.
+ * - **`KeyboardAvoidingView`** was already in use and still didn't work, for two reasons. Every
+ *   call site passed `behavior={Platform.OS === 'ios' ? 'padding' : undefined}`, and `undefined`
+ *   on Android means *do nothing* — it defers to the window resizing instead. Under SDK 54's
+ *   edge-to-edge the window does **not** resize; the app draws behind the keyboard. So Android,
+ *   which is what the tester was using, got no keyboard handling at all.
+ *
+ * ## What this does instead
+ *
+ * Measures the real keyboard (`endCoordinates.screenY` is its top edge on the device, not a
+ * guess) and the real position of the focused input, then shifts by **exactly the overlap** plus
+ * a small gap.
+ *
+ * Shifting by the overlap rather than by the keyboard height is what makes this safe to apply
+ * globally: a field that already clears the keyboard produces an overlap of zero, so the screen
+ * does not move. A full-screen map with a search bar at the top stays put; only a form with a
+ * field down near the bottom actually lifts.
+ *
+ * ## Known limits
+ *
+ * `Modal` renders in its own native view hierarchy, so a wrapper at the app root cannot move it.
+ * Modals with fields near the bottom wrap their own content in this component — see the vendor
+ * add-item sheet and `CashOutSheet`.
+ *
+ * No-op on web, where the browser scrolls the focused field into view by itself.
+ */
+
+/** Breathing room between the bottom of the field and the top of the keyboard. */
+const GAP = 18;
+
+export function KeyboardAvoider({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: ViewStyle;
+}) {
+  const shift = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    // Top of the keyboard in screen coordinates; null while it is closed.
+    let keyboardTop: number | null = null;
+    // The input we last measured against — the focused component itself, compared by identity,
+    // so that moving focus between fields can be noticed.
+    let lastInput: unknown = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+
+    const animateTo = (value: number, duration: number) => {
+      Animated.timing(shift, {
+        toValue: value,
+        duration: duration || 220,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start();
+    };
+
+    const reposition = (duration = 220) => {
+      if (keyboardTop == null) return;
+      const input = TextInput.State.currentlyFocusedInput?.();
+      if (!input) { animateTo(0, duration); return; }
+      // measureInWindow can fire after the view has gone; guard against nonsense values.
+      input.measureInWindow((_x: number, y: number, _w: number, h: number) => {
+        if (typeof y !== 'number' || typeof h !== 'number') return;
+        const overlap = y + h + GAP - keyboardTop!;
+        animateTo(overlap > 0 ? -overlap : 0, duration);
+      });
+    };
+
+    const onShow = (e: KeyboardEvent) => {
+      keyboardTop = e.endCoordinates.screenY;
+      reposition(e.duration);
+      // Neither platform fires a keyboard event when focus moves between two fields while the
+      // keyboard is already open, and in a form those fields are at different heights — so
+      // without this the screen would stay lifted for the previous one. Cheap native read, only
+      // while the keyboard is actually up, and it only re-measures when the field really changed.
+      if (!poll) {
+        poll = setInterval(() => {
+          const current: unknown = TextInput.State.currentlyFocusedInput?.() ?? null;
+          if (current !== lastInput) { lastInput = current; reposition(140); }
+        }, 250);
+      }
+    };
+
+    const onHide = (e: KeyboardEvent) => {
+      keyboardTop = null;
+      lastInput = null;
+      if (poll) { clearInterval(poll); poll = null; }
+      animateTo(0, e?.duration);
+    };
+
+    // iOS gets the "will" events so the lift runs with the keyboard rather than after it.
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const subs = [
+      Keyboard.addListener(showEvent, onShow),
+      Keyboard.addListener(hideEvent, onHide),
+      // Fired when the keyboard changes size in place — switching to an emoji or number pad, or
+      // a autocorrect bar appearing. The top edge moves, so the lift has to be recomputed.
+      Keyboard.addListener('keyboardDidChangeFrame', (e: KeyboardEvent) => {
+        keyboardTop = e.endCoordinates.screenY;
+        reposition(e.duration);
+      }),
+    ];
+
+    return () => {
+      subs.forEach((s) => s.remove());
+      if (poll) clearInterval(poll);
+    };
+  }, [shift]);
+
+  return (
+    <Animated.View style={[{ flex: 1 }, style, { transform: [{ translateY: shift }] }]}>
+      {children}
+    </Animated.View>
+  );
+}

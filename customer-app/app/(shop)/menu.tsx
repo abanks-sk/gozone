@@ -3,7 +3,7 @@ import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'reac
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { shopApi, MenuItem } from '../../src/api/shop';
+import { shopApi, MenuItem, Restaurant } from '../../src/api/shop';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useShopCart, cartCount, cartTotal } from '../../src/store/shopCart';
 import { useFavourites } from '../../src/store/favouritesStore';
@@ -35,7 +35,19 @@ export default function MenuScreen() {
 
   useEffect(() => { shopApi.getMenu(restaurantId).then(setMenu).catch(() => {}); }, [restaurantId]);
 
+  // The vendor's own storefront, if they have set one. Everything the vendor has filled in wins
+  // over the app's bundled metadata; anything they've left blank keeps the old look, so the
+  // seeded restaurants are unchanged and a real vendor is no longer stuck with stock food photos.
+  const [store, setStore] = useState<Restaurant | null>(null);
+  useEffect(() => {
+    shopApi.listRestaurants()
+      .then((list) => setStore(list.find((r) => r.id === restaurantId) ?? null))
+      .catch(() => {});
+  }, [restaurantId]);
+
   const meta = restaurantMeta(name);
+  const banner = store?.imageUrl?.trim() || meta.banner;
+  const addressLine = store?.address?.trim() || meta.address;
   const dist = lat && lng ? distanceKm(Number(lat), Number(lng)) : null;
   const myLines = cartRestId === restaurantId ? lines : [];
   const count = cartCount(myLines);
@@ -90,7 +102,7 @@ export default function MenuScreen() {
 
         {/* 0 — cover + info + Menu title */}
         <View>
-          <Image source={{ uri: meta.banner }} style={{ width: '100%', height: 200, backgroundColor: c.surfaceAlt }} />
+          <Image source={{ uri: banner }} style={{ width: '100%', height: 200, backgroundColor: c.surfaceAlt }} />
           <TouchableOpacity onPress={() => router.back()} activeOpacity={0.8}
             style={[coverBtn, { position: 'absolute', top: insets.top + 8, left: 16 }]}>
             <Ionicons name="chevron-back" size={22} color="#fff" />
@@ -120,10 +132,17 @@ export default function MenuScreen() {
                 </Row>
                 <Row style={{ gap: 5, marginTop: 4 }}>
                   <Ionicons name="location-outline" size={13} color={c.textMuted} />
-                  <Text style={{ fontSize: 13, color: c.textMuted, flex: 1 }} numberOfLines={1}>{meta.address}</Text>
+                  <Text style={{ fontSize: 13, color: c.textMuted, flex: 1 }} numberOfLines={1}>{addressLine}</Text>
                 </Row>
               </View>
             </Row>
+            {/* The vendor's own words about the place. Only shown when they've written some —
+                an empty line would be worse than none. */}
+            {store?.description?.trim() ? (
+              <Text style={{ fontSize: 13.5, color: c.textMuted, marginTop: 10, lineHeight: 20 }}>
+                {store.description.trim()}
+              </Text>
+            ) : null}
             <Row style={{ gap: 8, marginTop: 12 }}>
               {isFood ? (
                 <Row style={{ gap: 5, backgroundColor: `${c.warning}1A`, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 }}>

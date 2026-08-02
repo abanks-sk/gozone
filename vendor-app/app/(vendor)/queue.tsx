@@ -7,8 +7,9 @@ import { wsClient } from '../../src/realtime/wsClient';
 import { useVendorStore } from '../../src/store/vendorStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Row } from '../../src/components/ui';
+import { VendorGate } from '../../src/components/VendorGate';
 
-export default function VendorQueueScreen() {
+function VendorQueueScreenBoard() {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const vendor = useVendorStore((s) => s.vendor);
@@ -90,5 +91,20 @@ export default function VendorQueueScreen() {
         )}
       </ScrollView>
     </View>
+  );
+}
+
+/**
+ * Only an approved business can use this screen.
+ *
+ * The tab itself stays reachable — an unapproved vendor gets in and is told where they
+ * stand, rather than being parked on a dead-end page with nothing but a logout button.
+ * Profile is deliberately NOT gated: fixing your details is what the wait is for.
+ */
+export default function VendorQueueScreen() {
+  return (
+    <VendorGate>
+      <VendorQueueScreenBoard />
+    </VendorGate>
   );
 }

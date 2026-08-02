@@ -37,6 +37,21 @@ public class Vendor {
     @Column(name = "prep_minutes", nullable = false)
     private int prepMinutes = 20;
 
+    /**
+     * The storefront a customer reads before ordering. All optional — when empty the customer app
+     * falls back to its bundled `shopCatalog` metadata, which is how the seeded vendors have
+     * always looked, so leaving these unset changes nothing.
+     */
+    @Column(columnDefinition = "text")
+    private String description;
+
+    @Column(name = "image_url", columnDefinition = "text")
+    private String imageUrl;
+
+    /** Human-readable location line. Coordinates route the courier; this tells the customer. */
+    @Column(columnDefinition = "text")
+    private String address;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -60,5 +75,11 @@ public class Vendor {
     public void setVendorType(VendorType vendorType) { this.vendorType = vendorType; }
     public int getPrepMinutes() { return prepMinutes; }
     public void setPrepMinutes(int prepMinutes) { this.prepMinutes = prepMinutes; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public String getImageUrl() { return imageUrl; }
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
+    public String getAddress() { return address; }
+    public void setAddress(String address) { this.address = address; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 }

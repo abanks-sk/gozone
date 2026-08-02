@@ -1759,22 +1759,72 @@ read as dead ends rather than errors.
   and §9 (why there's no work).
 - **Rebuild food-service.** Then re-run `seed/02_food_seed.sql` for the Tema vendor.
 
+### Section C batch (C2/C3/C4/C6/C7) — REBUILT food-service, e2e 140/140, `npm install` in vendor-app
+The grouped half of `docs/ISSUES_FROM_TESTING.md` §C. Only **C1** (unmock driver KYC) and **C5**
+(Bolt-style scrollable map) remain — triage says both should be done alone.
+- **C6 keyboard avoidance — global, and Android had *nothing* before.** `react-native-keyboard-controller`
+  is out (native code, needs a dev build; everything here runs in Expo Go). The existing
+  `KeyboardAvoidingView`s passed `behavior={ios ? 'padding' : undefined}`, and `undefined` on
+  Android means *do nothing* — it defers to a window resize that never happens under SDK 54
+  edge-to-edge. New **`src/components/KeyboardAvoider`** in all three apps wraps the Stack in each
+  root `_layout`; it measures the real keyboard (`endCoordinates.screenY`) and the focused field
+  and lifts by **exactly the overlap**, which is what makes one global instance safe — a field
+  that already clears the keyboard yields zero, so a map with a top search bar never jumps. The
+  four per-screen handlers were removed (they would double-shift). `Modal` is a separate view
+  hierarchy the root cannot reach, so the vendor add-item sheet (which had **no** handling, with
+  add-on fields at the very bottom) and both `CashOutSheet`s wrap themselves.
+- **C2 vendor admitted before approval.** They were parked on a full-screen waiting page whose only
+  control was Log out — unable to reach their profile precisely when they'd want to. New
+  **`VendorGate`** on Orders/Queue/Catalogue/Earnings distinguishes checking / no-business /
+  under-review / rejected; **Profile is not gated**. `roleHome()` → `/(vendor)/orders`, and the tab
+  layout polls `/auth/me` so the app opens up by itself on approval. ⚠️ Caught mid-build: the only
+  route to Profile was an avatar **inside** the orders board that the gate replaces, so every gated
+  state now carries a Profile link — without it the whole change would have been self-defeating.
+- **C3 vendor location.** Coordinates were hardcoded to Accra at sign-up with no editor anywhere,
+  quietly breaking delivery pricing and courier routing. New **`app/pick-location.tsx`** —
+  purpose-built, not a port of the customer `map-picker` (which is entangled with ride drafts,
+  carts, recents and saved places). Uses the WebView/iframe Leaflet map **only**; deliberately not
+  `react-native-maps`, which needs a dev build. Reachable from the storefront editor and from
+  onboarding. ⚠️ **Adds `react-native-webview` + `expo-location` to vendor-app — `npm install` there.**
+- **C4 storefront editing.** The page customers read had no editor and no columns behind it. **V12**
+  adds `description`/`image_url`/`address` to `restaurants`; new **`PATCH /food/vendors/{id}`**
+  (owner-guarded, partial, blank name rejected, coordinates only as a pair). Vendor
+  **`app/storefront.tsx`** with a live cover preview; the customer menu prefers the vendor's own
+  banner/address/description and falls back to bundled metadata, so seeded vendors are unchanged.
+- **C7 one-tap saved cards** extended from ride-only to **food orders, parcels and top-up** — all
+  charging server-side through the same verification path as a checkout payment. Parcel had the
+  identical gap; the triage had only spotted two of the four payment points.
+- **Two real bugs found while verifying C4, neither reported:**
+  1. **`GET /food/restaurants` had no `ORDER BY`.** Postgres returned heap order, so *rewriting any
+     vendor row reshuffled the customer's shop list*. Now ordered by name. This also silently broke
+     the e2e suite, which picks `restaurants[0]` — it started testing a different vendor at a
+     different distance the moment a row was updated.
+  2. **e2e compared money as formatted strings.** psql renders `10.60`, JSON renders `10.6`, so
+     three settlement assertions passed or failed on whether the cents ended in a zero. Added an
+     `eqm` numeric comparator.
+  3. Also: the suite **debited the demo rider ~GH¢37 every run and never restored it**, so
+     "funded wallet pays" was always going to start failing for lack of funds rather than for a
+     defect. It now tops the float up when low.
+- **e2e 135 → 140** (storefront edit + customer visibility + three guards). All four front-ends
+  type-check; customer and vendor apps `expo export --platform web` bundle clean.
+- ⚠️ **Front-ends type-check but are not device-verified** — the keyboard lift, the vendor gate,
+  the map picker and one-tap cards all need a phone. New `TAP_THROUGH.md` §11 covers them.
+  One-tap cards additionally need a **real `PAYSTACK_SECRET_KEY`**; in `mock` no card is ever saved.
+
 ### Next
-1. **Convert `dest` to a proper nullable type** (retire the `NO_DEST` sentinel). Still outstanding —
+1. **`docs/ISSUES_FROM_TESTING.md` C1 and C5** — the two left, each to be done alone. C1 (unmock
+   driver KYC: real photo/licence/vehicle uploads) needs the file-storage decision made up front;
+   C5 is a visual rework of the ride home.
+2. **Convert `dest` to a proper nullable type** (retire the `NO_DEST` sentinel). Still outstanding —
    it is the root cause behind A1, and ~8 files read `dest.lat`/`dest.label` directly.
-3. **`docs/ISSUES_FROM_TESTING.md` §C** — grouped: C6 keyboard avoidance first (it touches every
-   form, so doing it globally beats fixing it once per screen forever), then C2 vendor app admits
-   unverified users, C3 vendor location via map picker, C4 vendor storefront editing, C7 one-tap
-   saved cards for food checkout + top-up. Then C5 (Bolt-style scrollable map) on its own, and
-   **C1 unmock driver KYC** last and alone — real uploads, storage decided up front.
-4. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
+3. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
-5. **Before any real deployment**: set `OTP_LOG_CODES=false`, set `GOOGLE_CLIENT_IDS`, tighten the Maps SDK
+4. **Before any real deployment**: set `OTP_LOG_CODES=false`, set `GOOGLE_CLIENT_IDS`, tighten the Maps SDK
    key to Android/iOS app restrictions, and rotate every credential in `.env`.
-6. Driver/vendor apps lack the client-side Ghana phone helper (`src/lib/phone.ts`) — backend still validates,
+5. Driver/vendor apps lack the client-side Ghana phone helper (`src/lib/phone.ts`) — backend still validates,
    so errors arrive after a round-trip.
-7. Per-topic WebSocket authorisation is done for trip/delivery location topics; queue topics stay open (count
+6. Per-topic WebSocket authorisation is done for trip/delivery location topics; queue topics stay open (count
    only).
-8. Older backlog: vendor self-serve "apply to promote"; ride quote in the parcel composer; external GoZone
+7. Older backlog: vendor self-serve "apply to promote"; ride quote in the parcel composer; external GoZone
    Inc. website; backend catalogue-write API for vendors; driver call via `tel:`; RIDER→PASSENGER backend
    rename (destructive — needs explicit go-ahead).

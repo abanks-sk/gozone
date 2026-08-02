@@ -9,7 +9,7 @@ import { clearPending, getPending, setPending } from '../../src/lib/pendingPayme
 import { walletApi } from '../../src/api/wallet';
 import { wsClient } from '../../src/realtime/wsClient';
 import { useTheme } from '../../src/theme/ThemeProvider';
-import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
+import { usePaymentStore, PAY_METHODS, isPaystack, isSavedCard, cardIdOf } from '../../src/store/paymentStore';
 import { useProfileStore } from '../../src/store/profileStore';
 import { apiBaseUrl } from '../../src/lib/host';
 import { LeafletMap } from '../../src/components/LeafletMap';
@@ -187,7 +187,16 @@ export default function OrderScreen() {
     if (!order) return;
     setPaying(true);
     try {
-      if (viaPaystack && !payRef) {
+      // A saved card charges server-side — no browser, no re-entering anything, which is the
+      // whole point of having saved it. Was wired into the ride flow only, so a customer who had
+      // saved a card still got bounced out to Paystack for every food order. The reference this
+      // returns goes through exactly the same verification as a checkout payment, so nothing
+      // gains a second trust path.
+      if (isSavedCard(payMethod) && !payRef) {
+        const { reference } = await walletApi.chargeCard(cardIdOf(payMethod), Number(order.total));
+        setOrder(await shopApi.payOrder(orderId, 'card', reference));
+        await clearPending();
+      } else if (viaPaystack && !payRef) {
         const { reference, authorizationUrl } = await walletApi.payInitialize(Number(order.total));
         const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
         setPayRef(reference);

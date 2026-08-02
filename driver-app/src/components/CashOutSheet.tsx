@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, Text, TextInput,
+  Alert, Modal, ScrollView, Text, TextInput,
   TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { walletApi, Withdrawal, WithdrawalMethod } from '../api/wallet';
 import { usePayout, MOMO_NETWORKS } from '../store/payoutStore';
 import { normalizeGhPhone } from '../lib/phone';
 import { Btn, Row } from '../components/ui';
+import { KeyboardAvoider } from './KeyboardAvoider';
 
 /**
  * Cash out earned money to mobile money or a bank account.
@@ -101,8 +102,9 @@ export function CashOutSheet({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* A Modal is its own view hierarchy, so the app-root KeyboardAvoider cannot reach it.
+          The momo number and account name sit at the bottom of this sheet. */}
+      <KeyboardAvoider style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: c.bg, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingBottom: insets.bottom + 16, maxHeight: '92%' }}>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20 }}>
 
@@ -196,8 +198,7 @@ export function CashOutSheet({
               <Btn label={busy ? 'Requesting…' : 'Cash out'} onPress={submit} loading={busy} />
             </ScrollView>
           </View>
-        </KeyboardAvoidingView>
-      </View>
+      </KeyboardAvoider>
     </Modal>
   );
 }

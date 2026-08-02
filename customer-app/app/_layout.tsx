@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider as NavThemeProvider, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
+import { KeyboardAvoider } from '../src/components/KeyboardAvoider';
 import { useAuthStore } from '../src/store/authStore';
 import { configureForegroundPush, registerForPush } from '../src/lib/push';
 import { usePaymentStore } from '../src/store/paymentStore';
@@ -61,7 +62,9 @@ function ThemedStack() {
 
   return (
     <NavThemeProvider value={navTheme}>
-      <View style={{ flex: 1, backgroundColor: c.bg }}>
+      {/* One keyboard handler for the whole app. It shifts by the measured overlap, so screens
+          whose fields already clear the keyboard (a map with a search bar on top) never move. */}
+      <KeyboardAvoider style={{ backgroundColor: c.bg }}>
         <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
         <Stack
           screenOptions={{
@@ -90,7 +93,7 @@ function ThemedStack() {
           <Stack.Screen name="(shop)" />
           <Stack.Screen name="(parcel)" />
         </Stack>
-      </View>
+      </KeyboardAvoider>
     </NavThemeProvider>
   );
 }

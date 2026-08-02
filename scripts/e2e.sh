@@ -31,6 +31,14 @@ PASS=0; FAIL=0; FAILED_LIST=""
 ok()  { echo "   ok   $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL  $1  << $2"; FAIL=$((FAIL+1)); FAILED_LIST="$FAILED_LIST\n  - $1 ($2)"; }
 eq()  { if [ "$2" == "$3" ]; then ok "$1"; else bad "$1" "got '$2' expected '$3'"; fi; }
+# Money equality. psql prints a numeric at its column scale ("10.60"); JSON trims trailing zeros
+# ("10.6"). Comparing those as strings passes or fails on the last digit rather than on the
+# amount, so compare the numbers and allow a rounding cent.
+eqm() { python -c "
+import sys
+try: a, b = float('$2' or 'nan'), float('$3' or 'nan')
+except ValueError: sys.exit(2)
+sys.exit(0 if abs(a - b) < 0.005 else 1)" 2>/dev/null         && ok "$1" || bad "$1" "got '$2' expected '$3'"; }
 neq() { if [ "$2" != "$3" ]; then ok "$1"; else bad "$1" "unexpectedly '$2'"; fi; }
 jq_() { python -c "import sys,json;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
 
@@ -257,10 +265,10 @@ echo "        (vendor wallet $VBAL0 → $VBAL1)"
 
 # The customer's total splits three ways. Every part of it must land somewhere, or GoZone is
 # either inventing money or losing it.
-eq "order splits exactly between vendor, courier and platform"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(amount),0) FROM ledger_entries WHERE ref_id='$OID' AND amount > 0;")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['total']")"
-eq "courier earned the delivery fee"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(amount),0) FROM ledger_entries WHERE ref_id='$OID' AND type='DELIVERY_FEE';")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['deliveryFee']")"
+eqm "order splits exactly between vendor, courier and platform"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(amount),0) FROM ledger_entries WHERE ref_id='$OID' AND amount > 0;")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['total']")"
+eqm "courier earned the delivery fee"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(amount),0) FROM ledger_entries WHERE ref_id='$OID' AND type='DELIVERY_FEE';")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['deliveryFee']")"
 # Cash: the courier walked off with the customer's money, so they owe GoZone that much.
-eq "courier owes the cash they collected"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(-amount),0) FROM ledger_entries WHERE ref_id='$OID' AND type='CASH_COLLECTED';")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['total']")"
+eqm "courier owes the cash they collected"   "$(docker exec gozone-postgres psql -U gozone -d wallet_db -t -A -c       "SELECT COALESCE(SUM(-amount),0) FROM ledger_entries WHERE ref_id='$OID' AND type='CASH_COLLECTED';")"   "$(GET "/food/orders/$OID" $RIDER | jq_ "d['total']")"
 
 echo
 echo "=============================================="
@@ -277,6 +285,22 @@ BORD=$(POST /food/orders "$BROKE" "{\"restaurantId\":\"$VID\",\"mode\":\"PICKUP\
 BOID=$(echo "$BORD" | jq_ "d['id']")
 eq "empty wallet cannot pay"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $BROKE" -d '{"method":"wallet"}' $GW/food/orders/$BOID/pay)" "402"
 eq "  …and the order stays unpaid" "$(GET "/food/orders/$BOID" $BROKE | jq_ "d['paymentStatus']")" "UNPAID"
+
+# Make sure the demo rider can actually afford the test before asserting that they can.
+#
+# This section debits them the full order total on every run and nothing ever puts it back, so the
+# balance ratcheted down until "funded wallet pays" started failing for lack of funds rather than
+# for any real defect — a test that quietly expires. Top up when low, which is also what keeps the
+# demo account usable.
+docker exec gozone-postgres psql -U gozone -d wallet_db -q -c "
+INSERT INTO ledger_entries (id, wallet_id, amount, type, ref_type, created_at)
+SELECT gen_random_uuid(), w.id, 500, 'TOPUP', 'E2E_FLOAT', now()
+FROM wallets w
+WHERE w.owner_type = 'RIDER' AND w.owner_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+  AND w.balance < 100;
+UPDATE wallets w SET balance = balance + 500
+WHERE w.owner_type = 'RIDER' AND w.owner_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+  AND w.balance < 100;" >/dev/null 2>&1
 
 # A funded wallet pays and is actually debited by the order total.
 RBAL0=$(GET "/wallet/balance?ownerType=RIDER" $RIDER | jq_ "d['balance']")
@@ -332,6 +356,20 @@ echo
 echo "=============================================="
 echo " 8. PROMOS / VENDOR SELF-SERVE"
 echo "=============================================="
+# A vendor can edit the storefront customers read — the one part of the business that had no
+# editor and nowhere to store one. Values are put back at the end so the demo data is unchanged.
+eq "vendor edits their storefront" \
+   "$(PATCH_ "/food/vendors/$VID" "$VENDOR" '{"description":"E2E storefront","address":"E2E address"}' | jq_ "d['description']")" "E2E storefront"
+eq "  …and the customer sees it" \
+   "$(GET /food/restaurants $RIDER | python -c "
+import sys,json
+v = next((x for x in json.load(sys.stdin) if x['id']=='$VID'), {})
+print(v.get('description'))")" "E2E storefront"
+eq "  …blank name refused"        "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $VENDOR" -d '{"name":"  "}' $GW/food/vendors/$VID)" "400"
+eq "  …half a location refused"   "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $VENDOR" -d '{"lat":5.6}' $GW/food/vendors/$VID)" "400"
+eq "  …someone else's shop is 403" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER" -d '{"name":"Hijacked"}' $GW/food/vendors/$VID)" "403"
+PATCH_ "/food/vendors/$VID" "$VENDOR" '{"description":"","address":""}' >/dev/null
+
 eq "public promos load" "$(GET /food/promos $RIDER | python -c "import sys,json;print(len(json.load(sys.stdin))>0)")" "True"
 MYV=$(GET /food/vendors/mine $VENDOR | jq_ "d[0]['id']")
 # A discount application must carry its terms; scope defaults to the whole catalogue.

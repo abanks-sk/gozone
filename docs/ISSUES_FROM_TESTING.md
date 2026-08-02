@@ -3,7 +3,7 @@
 Raised by the user during the first real tap-through (see `TAP_THROUGH.md` for the run itself,
 where `[/]` means partly passing and `((notes))` are the user's own).
 
-**Status: sections A (A1–A7) and B (B1–B3) are fixed. C is open.** `dest` is still the `NO_DEST`
+**Status: A (A1–A7), B (B1–B3) and most of C are fixed — only C1 and C5 remain.** `dest` is still the `NO_DEST`
 sentinel — converting it to a proper nullable type remains the right fix, and would have made A1 a
 compile error rather than a bug report. Ordered by cost-to-fix so a session can clear the cheap
 correctness bugs first and not stall on the feature work. Each entry says where to look, because
@@ -125,32 +125,72 @@ central-Accra order that always sat near the floor.
 
 ---
 
-## C. Product gaps — real work, scope each before starting
+## C. Product gaps — C2/C3/C4/C6/C7 DONE; C1 and C5 remain
+
+**C6. Keyboard avoidance.** — ✅ FIXED (global)
+`react-native-keyboard-controller` was not an option: it ships native code and needs a dev build,
+and everything here must run in Expo Go. `KeyboardAvoidingView` was already in use on four auth
+screens and still didn't work, because every call site passed
+`behavior={Platform.OS === 'ios' ? 'padding' : undefined}` — and `undefined` on Android means *do
+nothing*, deferring to a window resize that **never happens under SDK 54 edge-to-edge**. So the
+platform the tester was using had no keyboard handling at all.
+New **`src/components/KeyboardAvoider`** in all three apps, wrapping the Stack in each root
+`_layout`. It measures the real keyboard (`endCoordinates.screenY`) and the real focused field,
+then lifts by **exactly the overlap** — which is what makes it safe to apply globally: a field that
+already clears the keyboard yields zero, so a map with a top search bar never jumps. The four
+per-screen `KeyboardAvoidingView`s were removed to avoid double-shifting. Modals render in their
+own hierarchy and cannot be reached from the root, so the vendor add-item sheet (which had none at
+all, with add-on fields at the very bottom) and both `CashOutSheet`s wrap themselves.
+
+**C2. Vendor app should admit unverified users.** — ✅ FIXED
+`onboarding.tsx` parked them on a full-screen "awaiting approval" page whose only control was Log
+out — they could not reach their profile, add an email or correct anything while waiting, which is
+exactly when they'd want to. New **`VendorGate`** wraps Orders/Queue/Catalogue/Earnings and
+distinguishes four states (checking / no business yet / under review / rejected); **Profile is
+deliberately not gated**. `roleHome()` now returns `/(vendor)/orders`, and `_layout` polls
+`/auth/me` so the app opens up by itself on approval.
+⚠️ Caught while building it: the *only* route to Profile was an avatar inside the orders board,
+which the gate replaces — so "restrict them to settings" would have left settings unreachable.
+Every gated state now carries a **Profile & settings** link.
+
+**C3. Vendor location via map picker.** — ✅ FIXED
+Vendor coordinates were hardcoded to Accra at sign-up with no editor anywhere, which quietly
+breaks delivery pricing, courier routing and "how far is this shop". Added
+**`app/pick-location.tsx`** — purpose-built rather than a port of the customer's `map-picker`,
+which is entangled with ride drafts, shop carts, recents and saved places. Uses the WebView/iframe
+Leaflet map only (**not** `react-native-maps`, which needs a dev build). Reachable from the
+storefront editor and from onboarding, so a new vendor is no longer born on the wrong pin.
+⚠️ **Adds `react-native-webview` + `expo-location` to vendor-app — run `npm install` there.**
+
+**C4. Vendor storefront editing.** — ✅ FIXED
+The page customers read had no editor and no columns to store one, so every storefront was
+whatever the seed said, over stock photography hardcoded in the customer app's bundled metadata.
+**V12** adds `description`, `image_url`, `address` to `restaurants`; new **`PATCH /food/vendors/{id}`**
+(owner-guarded, partial, blank-name rejected, coordinates accepted only as a pair). New vendor
+**`app/storefront.tsx`** with a live cover preview; the customer menu screen now prefers the
+vendor's own banner/address/description and falls back to bundled metadata, so seeded vendors look
+exactly as before.
+⚠️ Two real bugs found while verifying this: `GET /food/restaurants` had **no ORDER BY**, so
+updating any vendor row reshuffled the customer's shop list (now ordered by name); and the e2e
+money assertions compared *formatted strings*, so `10.60` vs `10.6` failed on equal amounts.
+
+**C7. One-tap saved cards.** — ✅ FIXED
+Ride-only before; food orders and top-up bounced a customer with a saved card out to Paystack
+anyway. Both now charge server-side via `chargeCard`, through the same verification path as a
+checkout payment. **Parcel had the identical gap** and was fixed too — the triage only spotted two
+of the four payment points.
+
+---
+
+## C. Remaining — scope each before starting
 
 **C1. Unmock driver KYC.** Needs real uploads: driver photo, vehicle photo, licence. This is file
 storage (S3/Cloudinary or a served volume), an upload endpoint, and admin review UI showing the
 images. **The single biggest item on this list** — do not start it in the same session as anything
 else.
 
-**C2. Vendor app should admit unverified users** like the driver app does — let them in, restrict to
-profile/settings until approved.
-
-**C3. Vendor location via map picker / current location.** Port the customer's `map-picker` flow.
-Currently hardcoded Accra coordinates.
-
-**C4. Vendor *storefront* editing.** Personal/business profile editing already works — this is the
-**kitchen information shown on the customer's menu screen**: the header, description, imagery and
-anything else a customer reads before ordering. That surface has no editor at all today.
-
 **C5. Bolt-style scrollable map on the customer home.** Pull the sheet down to reveal the full map,
 search bar docked at the bottom. A layout change to `(rider)/home.tsx`.
-
-**C6. Keyboard avoidance.** Screens do not lift when a low text field is focused. Needs
-`KeyboardAvoidingView` / `react-native-keyboard-controller` applied **globally**, not per screen —
-otherwise it gets fixed once per form forever.
-
-**C7. One-tap saved cards for food checkout and top-up.** Ride flow only today. Same three lines per
-call site; deferred previously for context, not difficulty.
 
 ---
 

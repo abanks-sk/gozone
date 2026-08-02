@@ -10,6 +10,10 @@ export interface Restaurant {
   status: string;
   prepMinutes: number;
   vendorType: VendorType;
+  /** Storefront — what a customer reads before ordering. Null until the vendor fills it in. */
+  description?: string | null;
+  imageUrl?: string | null;
+  address?: string | null;
 }
 
 export interface MenuItem {
@@ -91,6 +95,17 @@ export const foodApi = {
 
   myPromos: (vendorId: string) =>
     api.get<Promo[]>(`/food/promos/mine?vendorId=${vendorId}`).then(r => r.data),
+
+  /**
+   * Edit your own business, storefront included. Partial: send only what changed — null/omitted
+   * leaves a field alone, so two screens editing different fields cannot clobber each other.
+   */
+  updateVendor: (vendorId: string, body: {
+    name?: string; vendorType?: string;
+    lat?: number; lng?: number;
+    address?: string; description?: string; imageUrl?: string;
+    prepMinutes?: number; status?: string;
+  }) => api.patch<Restaurant>(`/food/vendors/${vendorId}`, body).then(r => r.data),
 
   getMenu: (restaurantId: string) =>
     api.get<MenuItem[]>(`/food/restaurants/${restaurantId}/menu`).then(r => r.data),

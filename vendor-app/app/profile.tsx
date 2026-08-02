@@ -90,6 +90,11 @@ export default function ProfileScreen() {
       <Card>
         <Row icon="person-outline" label="Your details" hint={profile.name || 'Add'} onPress={() => router.push('/account' as any)} c={c} />
         <Divider />
+        {/* What customers see, as opposed to "Business details" below, which is your own record. */}
+        <Row icon="image-outline" label="Storefront & location"
+             hint={vendor?.address || (vendor?.description ? 'Edit' : 'Set up')}
+             onPress={() => router.push('/storefront' as any)} c={c} />
+        <Divider />
         <Row icon="storefront-outline" label="Business details" hint={business.address || 'Add'} onPress={() => router.push('/business' as any)} c={c} />
         <Divider />
         <Row icon="time-outline" label="Opening hours" hint={hoursSummary(business)} onPress={() => router.push('/hours' as any)} c={c} />

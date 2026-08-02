@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider as NavThemeProvider, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
+import { KeyboardAvoider } from '../src/components/KeyboardAvoider';
 import { useAuthStore } from '../src/store/authStore';
 import { useVendorStore } from '../src/store/vendorStore';
 import { useVendorSetup } from '../src/store/vendorSetupStore';
@@ -50,7 +51,9 @@ function ThemedStack() {
 
   return (
     <NavThemeProvider value={navTheme}>
-      <View style={{ flex: 1, backgroundColor: c.bg }}>
+      {/* One keyboard handler for the whole app. It shifts by the measured overlap, so screens
+          whose fields already clear the keyboard never move. */}
+      <KeyboardAvoider style={{ backgroundColor: c.bg }}>
         <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
         <Stack
           screenOptions={{
@@ -70,11 +73,13 @@ function ThemedStack() {
           <Stack.Screen name="business" />
           <Stack.Screen name="hours" />
           <Stack.Screen name="promote" />
+          <Stack.Screen name="storefront" />
+          <Stack.Screen name="pick-location" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="auth/register" />
           <Stack.Screen name="auth/verify-otp" />
           <Stack.Screen name="(vendor)" />
         </Stack>
-      </View>
+      </KeyboardAvoider>
     </NavThemeProvider>
   );
 }

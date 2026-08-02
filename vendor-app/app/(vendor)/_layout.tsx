@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useVendorStore } from '../../src/store/vendorStore';
+import { useAuthStore } from '../../src/store/authStore';
 import { authApi } from '../../src/api/auth';
 
 export default function VendorLayout() {
@@ -14,6 +15,9 @@ export default function VendorLayout() {
 
   const vendor = useVendorStore((s) => s.vendor);
   const setVendor = useVendorStore((s) => s.setVendor);
+  const setLoaded = useVendorStore((s) => s.setLoaded);
+  const status = useAuthStore((s) => s.status);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
 
   // Pick a business for the whole tab group, not just for Orders.
   //
@@ -22,12 +26,27 @@ export default function VendorLayout() {
   // an empty queue. Signing out clears the stored selection, so that was the state after *every*
   // fresh login — open Catalogue first and the app looked broken. Selecting the business is a
   // property of being signed in, not of which tab you happened to visit.
+  //
+  // `setLoaded` marks the answer as known either way, so VendorGate can tell "still checking"
+  // apart from "you genuinely have no business yet".
   useEffect(() => {
-    if (vendor) return;
+    if (vendor) { setLoaded(true); return; }
     authApi.myVendors()
       .then((list) => { if (list.length) setVendor(list[0]); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoaded(true));
   }, [vendor?.id]);
+
+  // Approval state drives the gate on the operational tabs. Polled while the vendor is not yet
+  // approved so the app opens up by itself the moment an admin says yes — they should not have to
+  // guess when to restart it.
+  useEffect(() => { fetchMe(); }, []);
+  useEffect(() => {
+    if (status === 'ACTIVE') return;
+    const poll = setInterval(() => { fetchMe(); }, 8000);
+    return () => clearInterval(poll);
+  }, [status]);
+
   return (
     <Tabs
       screenOptions={{

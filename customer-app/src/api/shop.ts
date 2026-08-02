@@ -21,6 +21,14 @@ export interface Restaurant {
   status: string;
   prepMinutes: number;
   vendorType: VendorType;
+  /**
+   * Storefront the vendor set themselves. Null on the seeded vendors and on anyone who hasn't
+   * filled it in, in which case the app falls back to its bundled `shopCatalog` metadata — which
+   * is how every vendor looked before there was an editor.
+   */
+  description?: string | null;
+  imageUrl?: string | null;
+  address?: string | null;
 }
 
 export interface AddonOption { id: string; label: string; price: number }

@@ -10,7 +10,7 @@ import { mapsApi, LatLng } from '../../src/api/maps';
 import { wsClient } from '../../src/realtime/wsClient';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useRideDraft } from '../../src/store/rideDraft';
-import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
+import { usePaymentStore, PAY_METHODS, isPaystack, isSavedCard, cardIdOf } from '../../src/store/paymentStore';
 import { apiBaseUrl } from '../../src/lib/host';
 import { getCurrentLocation } from '../../src/lib/location';
 import { LeafletMap } from '../../src/components/LeafletMap';
@@ -216,7 +216,14 @@ export default function ParcelLiveScreen() {
     if (!trip) return;
     setPaying(true);
     try {
-      if (viaPaystack && !payRef) {
+      // Saved card charges server-side — no browser. Parcel was the fourth payment point and had
+      // the same gap food did; leaving one of the four behaving differently is how a customer
+      // learns not to trust the feature.
+      if (isSavedCard(payMethod) && !payRef) {
+        const { reference } = await walletApi.chargeCard(cardIdOf(payMethod), Number(trip.agreedFare));
+        setTrip(await rideApi.payTrip(trip.id, 'card', reference));
+        await clearPending();
+      } else if (viaPaystack && !payRef) {
         const { reference, authorizationUrl } = await walletApi.payInitialize(Number(trip.agreedFare));
         const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
         setPayRef(reference);

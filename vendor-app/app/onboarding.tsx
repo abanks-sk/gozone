@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Redirect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,10 +6,19 @@ import { authApi } from '../src/api/auth';
 import { useAuthStore } from '../src/store/authStore';
 import { useVendorSetup } from '../src/store/vendorSetupStore';
 import { useVendorStore } from '../src/store/vendorStore';
-import { BrandScreen, GlowOrb, BrandInput, PillButton, GzHero } from '../src/components/brand';
+import { usePickedLocation } from '../src/store/pickedLocationStore';
+import { BrandScreen, GlowOrb, BrandInput, PillButton } from '../src/components/brand';
 import { brand } from '../src/theme/tokens';
 
-type Stage = 'loading' | 'setup' | 'awaiting' | 'rejected';
+/**
+ * Business setup — no longer the gate for the whole app.
+ *
+ * This screen used to decide whether a vendor got in at all, and parked anyone unapproved on a
+ * full-screen "awaiting approval" page with nothing but a Log out button. Approval state now
+ * lives in `VendorGate` on the operational tabs, so an unapproved owner can still use their
+ * profile. What is left here is the form itself, reached from the gate.
+ */
+type Stage = 'loading' | 'setup' | 'rejected';
 
 const TYPES = [
   { key: 'RESTAURANT', label: 'Restaurant', icon: 'fast-food' as const },
@@ -18,7 +27,9 @@ const TYPES = [
   { key: 'CONVENIENCE', label: 'Convenience', icon: 'storefront' as const },
   { key: 'OTHER', label: 'Other', icon: 'pricetag' as const },
 ];
-// Demo default location (Accra) — a real "choose on map" picker is on the backlog.
+// Fallback only. Every vendor used to be created on this exact pin with no way to correct it,
+// which quietly broke delivery pricing and courier routing for anyone not in central Accra.
+// The map picker below is the real answer; this stands in only if it is skipped.
 const DEFAULT_LAT = 5.6037;
 const DEFAULT_LNG = -0.187;
 
@@ -30,35 +41,37 @@ export default function VendorOnboarding() {
   const [view, setView] = useState<Stage>('loading');
   const [goApp, setGoApp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Location chosen on the map picker, if they used it. Peeked rather than consumed so it
+  // survives re-renders of this form; it is cleared when the vendor is actually created.
+  const picked = usePickedLocation((s) => s.picked);
+  const clearPicked = usePickedLocation((s) => s.consume);
 
+  // Only two reasons to be here: you have no business yet, or yours was turned down and you are
+  // resubmitting. Anything else belongs in the app, where the gate does the explaining.
   async function refresh() {
     const me = await authApi.me().catch(() => null);
-    if (!me) { setView('setup'); return; }
-    if (me.status === 'ACTIVE') { setGoApp(true); return; }
-    if (me.status === 'REJECTED') { setView('rejected'); return; }
-    const vendors = await authApi.myVendors();
-    setView(vendors.length > 0 ? 'awaiting' : 'setup');
+    if (me?.status === 'REJECTED') { setView('rejected'); return; }
+    const vendors = await authApi.myVendors().catch(() => []);
+    if (vendors.length > 0) { setGoApp(true); return; }
+    setView('setup');
   }
   useEffect(() => { refresh(); }, []);
-
-  useEffect(() => {
-    if (view !== 'awaiting') return;
-    pollRef.current = setInterval(async () => {
-      const me = await authApi.me().catch(() => null);
-      if (me?.status === 'ACTIVE') setGoApp(true);
-      if (me?.status === 'REJECTED') setView('rejected');
-    }, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [view]);
 
   async function submit() {
     if (!draft.name.trim()) return Alert.alert('Business name needed', 'What’s your business called?');
     setSubmitting(true);
     try {
-      const v = await authApi.createVendor({ name: draft.name.trim(), vendorType: draft.vendorType, lat: DEFAULT_LAT, lng: DEFAULT_LNG });
-      setVendor(v); // open the vendor app on this business once approved
-      setView('awaiting');
+      const v = await authApi.createVendor({
+        name: draft.name.trim(),
+        vendorType: draft.vendorType,
+        lat: picked?.lat ?? DEFAULT_LAT,
+        lng: picked?.lng ?? DEFAULT_LNG,
+      });
+      setVendor(v);
+      clearPicked(); // spent — it belongs to this business now
+      // Straight into the app rather than onto a waiting screen. The gate on each operational tab
+      // reports the approval state, and profile/settings stay usable throughout.
+      setGoApp(true);
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.message ?? 'Could not submit for approval');
     } finally { setSubmitting(false); }
@@ -70,27 +83,6 @@ export default function VendorOnboarding() {
 
   if (view === 'loading') {
     return <BrandScreen><View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={brand.text} /></View></BrandScreen>;
-  }
-
-  if (view === 'awaiting') {
-    return (
-      <BrandScreen>
-        {/* GzHero carries its own glow — a corner orb on top of it read as a stray light. */}
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 }}>
-          <GzHero size={130} />
-          <Text style={{ fontSize: 26, fontWeight: '800', color: brand.text, marginTop: 22, textAlign: 'center' }}>Business submitted</Text>
-          <Text style={{ fontSize: 14.5, color: brand.textMuted, marginTop: 12, textAlign: 'center', lineHeight: 21 }}>
-            An admin is reviewing your business. You’ll be able to start taking orders as soon as you’re
-            approved — this screen updates automatically.
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 20 }}>
-            <ActivityIndicator color={brand.textMuted} />
-            <Text style={{ fontSize: 13, color: brand.textMuted }}>Waiting for approval…</Text>
-          </View>
-          <TouchableOpacity onPress={signOut} style={{ marginTop: 28 }}><Text style={{ fontSize: 13, color: brand.textMuted }}>Log out</Text></TouchableOpacity>
-        </View>
-      </BrandScreen>
-    );
   }
 
   if (view === 'rejected') {
@@ -138,6 +130,22 @@ export default function VendorOnboarding() {
         </View>
 
         <BrandInput label="Location / address" placeholder="Osu, Accra" value={draft.locationLabel} onChangeText={(v: string) => draft.set({ locationLabel: v })} />
+
+        {/* Drop a real pin. Typing "Osu, Accra" gives us a string, not a location — couriers need
+            coordinates, and the delivery fee is charged on distance from them. */}
+        <TouchableOpacity onPress={() => router.push('/pick-location' as any)} activeOpacity={0.85}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 16, borderWidth: 1.5, borderColor: picked ? brand.primary : brand.borderSoft, backgroundColor: 'rgba(255,255,255,0.04)', padding: 14, marginTop: 4 }}>
+          <Ionicons name={picked ? 'location' : 'map-outline'} size={20} color={picked ? brand.primaryBright : brand.textMuted} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 14.5, fontWeight: '700', color: brand.text }} numberOfLines={1}>
+              {picked ? (picked.label || 'Pin dropped') : 'Pin your shop on the map'}
+            </Text>
+            <Text style={{ fontSize: 12, color: brand.textMuted, marginTop: 2 }}>
+              {picked ? `${picked.lat.toFixed(5)}, ${picked.lng.toFixed(5)}` : 'Optional now — you can set it later'}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={19} color={brand.textMuted} />
+        </TouchableOpacity>
 
         <PillButton label={submitting ? 'Submitting…' : 'Submit for approval'} onPress={submit} loading={submitting} style={{ marginTop: 22 }} />
         <Text style={{ fontSize: 12, color: brand.textMuted, textAlign: 'center', marginTop: 12, lineHeight: 18 }}>

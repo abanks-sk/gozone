@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
@@ -57,10 +57,7 @@ export default function VerifyOtpScreen() {
   return (
     <BrandScreen>
       <GlowOrb size={280} style={{ position: 'absolute', top: -80, right: -90 }} />
-      <KeyboardAvoidingView
-        style={{ flex: 1, paddingHorizontal: 24 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <View style={{ flex: 1, paddingHorizontal: 24 }}>
         <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 4, width: 40 }}>
           <Ionicons name="chevron-back" size={26} color={brand.text} />
         </TouchableOpacity>
@@ -84,7 +81,7 @@ export default function VerifyOtpScreen() {
 
           <PillButton label="Verify" onPress={handleVerify} loading={loading} style={{ marginTop: 6 }} />
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </BrandScreen>
   );
 }

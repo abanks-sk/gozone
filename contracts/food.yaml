@@ -73,6 +73,57 @@ paths:
                 items:
                   $ref: '#/components/schemas/VendorResponse'
 
+  /vendors/{id}:
+    patch:
+      tags: [restaurants]
+      summary: A vendor edits their own business, storefront included
+      description: >
+        Partial update — every field is optional and null means "leave alone", so a screen can
+        send only what the owner changed rather than round-tripping the whole record.
+        A blank `name` is rejected; blank `description`, `imageUrl` and `address` are treated as
+        a deliberate clear. Coordinates are accepted only as a pair, since half a location would
+        silently move the business onto a different meridian and misroute every courier.
+        Owner-guarded: the id is in the path, the authority comes from the token (403 otherwise).
+      operationId: updateVendor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                vendorType:
+                  type: string
+                  enum: [RESTAURANT, PHARMACY, GROCERY, CONVENIENCE, OTHER]
+                lat: { type: number, format: double }
+                lng: { type: number, format: double }
+                address: { type: string, nullable: true }
+                description: { type: string, nullable: true }
+                imageUrl: { type: string, nullable: true }
+                prepMinutes: { type: integer }
+                status:
+                  type: string
+                  enum: [OPEN, CLOSED, PAUSED]
+      responses:
+        '200':
+          description: Updated vendor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VendorResponse'
+        '400':
+          description: Blank name, unknown type/status, or only one of lat/lng
+        '403':
+          description: Not your business
+
   /promos:
     get:
       tags: [restaurants]
@@ -732,6 +783,22 @@ components:
           type: string
           enum: [RESTAURANT, PHARMACY, GROCERY, CONVENIENCE, OTHER]
           description: What the vendor sells; orders/queue/delivery behave the same for all types.
+        description:
+          type: string
+          nullable: true
+          description: >
+            The storefront a customer reads before ordering. Null until the vendor writes one —
+            there was no editor for any of this until recently, so every storefront was whatever
+            the seed said. The customer app falls back to its bundled metadata when these are
+            null, which is why the seeded vendors are unaffected.
+        imageUrl:
+          type: string
+          nullable: true
+          description: Cover photo link. Null falls back to the app's bundled stock imagery.
+        address:
+          type: string
+          nullable: true
+          description: Human-readable location line; lat/lng route the courier, this tells the customer.
 
     MenuItemRequest:
       type: object

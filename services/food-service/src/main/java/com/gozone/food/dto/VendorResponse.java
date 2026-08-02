@@ -12,11 +12,16 @@ public record VendorResponse(
     BigDecimal lng,
     String status,
     int prepMinutes,
-    String vendorType
+    String vendorType,
+    /** Storefront: what the customer reads before ordering. Null until the vendor fills it in. */
+    String description,
+    String imageUrl,
+    String address
 ) {
     public static VendorResponse from(Vendor v) {
         return new VendorResponse(
             v.getId(), v.getName(), v.getLat(), v.getLng(),
-            v.getStatus().name(), v.getPrepMinutes(), v.getVendorType().name());
+            v.getStatus().name(), v.getPrepMinutes(), v.getVendorType().name(),
+            v.getDescription(), v.getImageUrl(), v.getAddress());
     }
 }

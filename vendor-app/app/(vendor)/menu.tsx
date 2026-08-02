@@ -6,8 +6,10 @@ import { foodApi, MenuItem } from '../../src/api/food';
 import { useVendorStore } from '../../src/store/vendorStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Row } from '../../src/components/ui';
+import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
+import { VendorGate } from '../../src/components/VendorGate';
 
-export default function VendorMenuScreen() {
+function VendorMenuScreenBoard() {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const vendor = useVendorStore((s) => s.vendor);
@@ -190,9 +192,11 @@ export default function VendorMenuScreen() {
         )}
       </ScrollView>
 
-      {/* Add item modal */}
+      {/* Add item modal. A Modal is its own native view hierarchy, so the app-root
+          KeyboardAvoider cannot reach it — and the add-on option fields sit right at the bottom
+          of a long form, which is exactly where the keyboard lands. */}
       <Modal visible={adding} transparent animationType="slide" onRequestClose={() => setAdding(false)}>
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+        <KeyboardAvoider style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
           <View style={{ backgroundColor: c.bg, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingBottom: insets.bottom + 16, maxHeight: '90%' }}>
             <Row style={{ justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingBottom: 8 }}>
               <Text style={{ fontSize: 19, fontWeight: '800', color: c.text }}>Add an item</Text>
@@ -248,12 +252,12 @@ export default function VendorMenuScreen() {
               </TouchableOpacity>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoider>
       </Modal>
 
       {/* Prep time for one dish */}
       <Modal visible={!!prepItem} transparent animationType="fade" onRequestClose={() => setPrepItem(null)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}>
+        <KeyboardAvoider style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}>
           <View style={{ backgroundColor: c.bg, borderRadius: 22, padding: 20, gap: 12 }}>
             <Text style={{ fontSize: 17, fontWeight: '800', color: c.text }}>Prep time</Text>
             <Text style={{ fontSize: 13, color: c.textMuted, lineHeight: 18 }}>
@@ -272,7 +276,7 @@ export default function VendorMenuScreen() {
               </TouchableOpacity>
             </Row>
           </View>
-        </View>
+        </KeyboardAvoider>
       </Modal>
     </View>
   );
@@ -299,5 +303,20 @@ function Field({ label, value, onChangeText, placeholder, keyboardType, multilin
         style={{ backgroundColor: c.surfaceAlt, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15, color: c.text, minHeight: multiline ? 64 : undefined, textAlignVertical: multiline ? 'top' : 'center' }}
       />
     </View>
+  );
+}
+
+/**
+ * Only an approved business can use this screen.
+ *
+ * The tab itself stays reachable — an unapproved vendor gets in and is told where they
+ * stand, rather than being parked on a dead-end page with nothing but a logout button.
+ * Profile is deliberately NOT gated: fixing your details is what the wait is for.
+ */
+export default function VendorMenuScreen() {
+  return (
+    <VendorGate>
+      <VendorMenuScreenBoard />
+    </VendorGate>
   );
 }

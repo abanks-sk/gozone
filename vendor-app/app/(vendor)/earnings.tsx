@@ -10,6 +10,7 @@ import { useBusiness } from '../../src/store/businessStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { CashOutSheet, withdrawalLook } from '../../src/components/CashOutSheet';
 import { Empty, Row } from '../../src/components/ui';
+import { VendorGate } from '../../src/components/VendorGate';
 
 const TYPE_LABEL: Record<string, string> = {
   DELIVERY_FEE: 'Courier fee', CASH_COLLECTED: 'Cash collected', PAYMENT: 'Payment',
@@ -20,7 +21,7 @@ const labelFor = (t: string) => TYPE_LABEL[t] ?? t.replace(/_/g, ' ').toLowerCas
 type Period = 'today' | 'week' | 'all';
 const DAY = 86400000;
 
-export default function VendorEarningsScreen() {
+function VendorEarningsScreenBoard() {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const vendor = useVendorStore((s) => s.vendor);
@@ -234,3 +235,18 @@ function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 const section = (c: any) => ({ fontSize: 13, fontWeight: '700' as const, color: c.textMuted, textTransform: 'uppercase' as const, letterSpacing: 0.6, marginBottom: 8 });
+
+/**
+ * Only an approved business can use this screen.
+ *
+ * The tab itself stays reachable — an unapproved vendor gets in and is told where they
+ * stand, rather than being parked on a dead-end page with nothing but a logout button.
+ * Profile is deliberately NOT gated: fixing your details is what the wait is for.
+ */
+export default function VendorEarningsScreen() {
+  return (
+    <VendorGate>
+      <VendorEarningsScreenBoard />
+    </VendorGate>
+  );
+}

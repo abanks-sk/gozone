@@ -8,7 +8,7 @@ import { walletApi, LedgerEntry, Notification } from '../src/api/wallet';
 import { apiBaseUrl } from '../src/lib/host';
 import { clearPending, getPending, setPending } from '../src/lib/pendingPayment';
 import { useTheme } from '../src/theme/ThemeProvider';
-import { usePaymentStore, PAY_METHODS, PayMethodMeta } from '../src/store/paymentStore';
+import { usePaymentStore, PAY_METHODS, PayMethodMeta, isSavedCard, cardIdOf } from '../src/store/paymentStore';
 import { Empty, Row } from '../src/components/ui';
 
 const TYPE_LABEL: Record<string, string> = {
@@ -64,11 +64,27 @@ export default function PaymentScreen() {
   function openTopUp() { setTopAmt(''); setTopRef(null); setTopUp(true); }
 
   // Step 1: create the Paystack transaction and open its checkout page.
+  //
+  // Unless there is a saved card, in which case the whole hand-off is unnecessary — see below.
   async function startTopUp() {
     const amount = Number(topAmt);
     if (!amount || amount <= 0) return Alert.alert('Amount', 'Enter an amount greater than 0.');
     setTopBusy(true);
     try {
+      // One-tap top-up with a saved card: charge server-side and credit in the same breath, no
+      // browser at all. Top-up was the last place still bouncing a customer out to Paystack even
+      // when they had a card on file. `verifyTopUp` is the same call the checkout path makes, and
+      // it is idempotent per reference, so this gains no new way to be credited.
+      const saved = selected && isSavedCard(selected) ? cardIdOf(selected) : null;
+      if (saved) {
+        const { reference } = await walletApi.chargeCard(saved, amount);
+        const { balance: newBal } = await walletApi.verifyTopUp(amount, reference);
+        setBalance(newBal);
+        setTopUp(false);
+        await load();
+        Alert.alert('Wallet funded', `GH₵ ${amount.toFixed(2)} added to your wallet.`);
+        return;
+      }
       const { reference, authorizationUrl } = await walletApi.initializeTopUp(amount);
       const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
       setTopRef(reference);

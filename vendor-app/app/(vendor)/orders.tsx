@@ -8,6 +8,7 @@ import { authApi } from '../../src/api/auth';
 import { useVendorStore } from '../../src/store/vendorStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Row } from '../../src/components/ui';
+import { VendorGate } from '../../src/components/VendorGate';
 
 /**
  * The next status, which depends on how the order is being collected.
@@ -76,7 +77,7 @@ const TYPE_LABEL: Record<string, string> = {
   RESTAURANT: 'Restaurant', PHARMACY: 'Pharmacy', GROCERY: 'Grocery', CONVENIENCE: 'Convenience', OTHER: 'Vendor',
 };
 
-export default function VendorOrdersScreen() {
+function VendorOrdersScreenBoard() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
@@ -277,5 +278,20 @@ function Stat({ label, value, color, c }: any) {
       <Text style={{ fontSize: 24, fontWeight: '800', color }}>{value}</Text>
       <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 2 }}>{label}</Text>
     </View>
+  );
+}
+
+/**
+ * Only an approved business can use this screen.
+ *
+ * The tab itself stays reachable — an unapproved vendor gets in and is told where they
+ * stand, rather than being parked on a dead-end page with nothing but a logout button.
+ * Profile is deliberately NOT gated: fixing your details is what the wait is for.
+ */
+export default function VendorOrdersScreen() {
+  return (
+    <VendorGate>
+      <VendorOrdersScreenBoard />
+    </VendorGate>
   );
 }

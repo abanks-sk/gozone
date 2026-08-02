@@ -73,7 +73,7 @@ public class FoodService {
 
     @Transactional(readOnly = true)
     public List<VendorResponse> listOpenRestaurants() {
-        return vendorRepo.findByStatus(Vendor.Status.OPEN)
+        return vendorRepo.findByStatusOrderByNameAsc(Vendor.Status.OPEN)
             .stream().map(VendorResponse::from).toList();
     }
 
@@ -90,10 +90,73 @@ public class FoodService {
         return VendorResponse.from(v);
     }
 
+    /**
+     * A vendor edits their own business — including the storefront a customer sees.
+     *
+     * Guarded by {@code requireOwner}, so an owner can only touch their own businesses; the id
+     * comes from the path but the authority comes from the token.
+     *
+     * Null leaves a field unchanged (see {@link UpdateVendorRequest}). Coordinates are only
+     * accepted as a pair — half a location is worse than none, since it would silently move the
+     * business onto a different meridian and misroute every courier sent to it.
+     */
+    public VendorResponse updateVendor(UUID vendorId, String ownerId, UpdateVendorRequest req) {
+        Vendor v = requireOwner(ownerId, vendorId);
+
+        if (req.getName() != null) {
+            String name = req.getName().trim();
+            if (name.isEmpty()) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "A business needs a name.");
+            }
+            v.setName(name);
+        }
+        if (req.getVendorType() != null && !req.getVendorType().isBlank()) {
+            try {
+                v.setVendorType(Vendor.VendorType.valueOf(req.getVendorType().trim().toUpperCase()));
+            } catch (IllegalArgumentException e) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "Unknown business type.");
+            }
+        }
+        if (req.getLat() != null || req.getLng() != null) {
+            if (req.getLat() == null || req.getLng() == null) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Send both lat and lng, or neither.");
+            }
+            v.setLat(BigDecimal.valueOf(req.getLat()));
+            v.setLng(BigDecimal.valueOf(req.getLng()));
+        }
+        // Blank is a deliberate clear for these three, unlike name.
+        if (req.getAddress() != null)     v.setAddress(blankToNull(req.getAddress()));
+        if (req.getDescription() != null) v.setDescription(blankToNull(req.getDescription()));
+        if (req.getImageUrl() != null)    v.setImageUrl(blankToNull(req.getImageUrl()));
+        if (req.getPrepMinutes() != null && req.getPrepMinutes() > 0) {
+            v.setPrepMinutes(req.getPrepMinutes());
+        }
+        if (req.getStatus() != null && !req.getStatus().isBlank()) {
+            try {
+                v.setStatus(Vendor.Status.valueOf(req.getStatus().trim().toUpperCase()));
+            } catch (IllegalArgumentException e) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "Unknown status.");
+            }
+        }
+        vendorRepo.save(v);
+        log.info("[VENDOR] updated vendor {} by owner {}", vendorId, ownerId);
+        return VendorResponse.from(v);
+    }
+
+    private static String blankToNull(String s) {
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
+    }
+
     /** The signed-in owner's businesses. */
     @Transactional(readOnly = true)
     public List<VendorResponse> myVendors(String ownerId) {
-        return vendorRepo.findByOwnerId(UUID.fromString(ownerId))
+        return vendorRepo.findByOwnerIdOrderByNameAsc(UUID.fromString(ownerId))
             .stream().map(VendorResponse::from).toList();
     }
 

@@ -82,6 +82,19 @@ public class FoodController {
         return ResponseEntity.ok(foodService.myVendors(ownerId));
     }
 
+    /**
+     * A vendor edits their own business, including the storefront customers read.
+     *
+     * Owner-guarded in the service: the id is in the path, but the authority comes from the token.
+     */
+    @PatchMapping("/vendors/{id}")
+    public ResponseEntity<VendorResponse> updateVendor(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String ownerId,
+            @RequestBody UpdateVendorRequest req) {
+        return ResponseEntity.ok(foodService.updateVendor(id, ownerId, req));
+    }
+
     // ── Orders ────────────────────────────────────────────────────────────────
 
     @PostMapping("/orders")

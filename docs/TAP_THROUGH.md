@@ -1,7 +1,7 @@
 # Device tap-through checklist
 
 Everything here is **unverified by any automated test** and can only be cleared on a real device.
-The e2e suite (121/121) covers the backend; these are the phone-side behaviours it cannot reach —
+The e2e suite (140/140) covers the backend; these are the phone-side behaviours it cannot reach —
 React Native Web ignores synthetic clicks, so none of this has ever been seen running.
 
 Work top to bottom. **§1 first** — if the app red-screens on launch nothing else is testable.
@@ -221,13 +221,53 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 ---
 
+## 11. Keyboard, vendor storefront and one-tap cards (section C)
+
+**Keyboard (C6) — check this on a low field in several forms, not just one:**
+
+- [ ] Tap a text box near the **bottom** of a screen — the screen lifts so the box sits just above
+      the keyboard ← Android previously did nothing at all here
+- [ ] Move between two fields at different heights **without closing the keyboard**; the lift
+      follows the field you're in
+- [ ] A screen whose fields are already high up (search over a map) **does not jump**
+- [ ] Vendor **Add item** sheet: the add-on option rows at the bottom stay visible while typing
+- [ ] Driver/vendor **Cash out** sheet: momo number and account name stay visible
+- [ ] Nothing lifts twice or overshoots — that would mean a leftover per-screen handler
+
+**Vendor gets in before approval (C2):**
+
+- [ ] Sign up a brand-new vendor. You land **in the app**, not on a dead-end waiting page
+- [ ] Orders/Queue/Catalogue/Earnings each explain the state; **Profile & settings** is reachable
+      from every one of them
+- [ ] Profile works fully — edit your details, add an email
+- [ ] Approve the business in admin web; the app opens up **on its own** within ~8s
+
+**Vendor storefront + location (C3/C4):**
+
+- [ ] Profile → **Storefront & location** → set a description, cover photo link and location
+- [ ] The cover preview updates as you paste a link
+- [ ] Tap the location row → map picker → drag/search/locate-me → **Use this location**
+- [ ] Save, then open that vendor as a **customer**: your banner, description and address show
+      on the menu screen ← none of this was editable before
+- [ ] A vendor you have *not* customised still looks exactly as it did (bundled imagery)
+- [ ] Shop list order is stable — it no longer reshuffles after a vendor edits anything
+
+**One-tap cards (C7) — needs a real `PAYSTACK_SECRET_KEY`, see §6:**
+
+- [ ] With a saved card, pay for a **food order** → charged in one tap, no browser ← was ride-only
+- [ ] Same for a **parcel** and for **wallet top-up**
+- [ ] Without a saved card, all three still open Paystack as before
+
+---
+
 ## Known-bad, do not raise as bugs
 
 - **Push banners do not appear in Expo Go** (SDK 53+). Notifications land in the in-app list; the
   walk-in alert stands in. Needs a development build.
 - **Saved cards do nothing in mock mode** — see §6.
-- **One-tap saved-card payment is wired into the ride flow only.** Food checkout and top-up still
-  open the browser even with a card saved. ((fix this))
+- ~~**One-tap saved-card payment is wired into the ride flow only.**~~ **FIXED** — food orders,
+  parcels and wallet top-up all charge a saved card in one tap now. Without a saved card they
+  still open Paystack, which is correct.
 - **Driver/vendor apps have no leave-time or saved-card UI** — customer app only, by design.
 
 FIXES OR ISSUES FOUND
@@ -252,8 +292,9 @@ Run by the user; findings triaged in **`ISSUES_FROM_TESTING.md`** — 17 issues.
 (driver) are largely **untested** because earlier failures blocked them — they are still open, not
 passing.
 
-**Since that run:** sections **A and B are both fixed** (A1–A3 first, then A4–A7, then B1–B3).
-`scripts/e2e.sh` is **135/135** against the rebuilt stack and now guards the new behaviour
+**Since that run:** sections **A and B are fixed**, and **C2/C3/C4/C6/C7** with them — only
+**C1** (unmock driver KYC) and **C5** (Bolt-style scrollable map) remain.
+`scripts/e2e.sh` is **140/140** against the rebuilt stack and now guards the new behaviour
 directly: the collection estimate counts down, the awaiting-class list works, and a delivery keeps
 both of its endpoints as coordinates.
 
@@ -261,4 +302,5 @@ Verified against the running stack: A6, A7, B1 (the API was never broken — the
 B3's backend. Only checkable on a phone, so **still open**: A4, A5 (splash appearance), B1's
 front-end path, B2 (feed states), B3's map. New checks for all of them are in the sections above.
 
-**Section C is untouched** and is the remaining work.
+**C1 and C5 are the remaining work.** Both were flagged in triage as jobs to do alone:
+C1 needs file storage decided up front, C5 is a visual rework of the ride home.
