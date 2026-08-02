@@ -346,6 +346,12 @@ public class FoodService {
         PlatformSettings ps = settings();
         BigDecimal deliveryFee = BigDecimal.ZERO;
         if (mode == Order.Mode.DELIVERY) {
+            // Keep the destination, don't just price it. Pricing was the only thing these
+            // coordinates were ever used for, so the customer's tracking map had nowhere to point.
+            if (req.getDeliveryLat() != null && req.getDeliveryLng() != null) {
+                order.setDeliveryLat(BigDecimal.valueOf(req.getDeliveryLat()));
+                order.setDeliveryLng(BigDecimal.valueOf(req.getDeliveryLng()));
+            }
             double distKm = (req.getDeliveryLat() != null && req.getDeliveryLng() != null
                     && restaurant.getLat() != null && restaurant.getLng() != null)
                 ? haversineKm(restaurant.getLat().doubleValue(), restaurant.getLng().doubleValue(),
@@ -432,6 +438,11 @@ public class FoodService {
 
         validateOrderTransition(order.getStatus(), newStatus, order.getMode());
         order.setStatus(newStatus);
+        // Start the cooking clock, which is what the collection estimate counts down against.
+        // Only on the first entry into PREPARING — a re-entry must not reset a customer's wait.
+        if (newStatus == Order.Status.PREPARING && order.getPreparingAt() == null) {
+            order.setPreparingAt(OffsetDateTime.now());
+        }
         orderRepo.save(order);
 
         // On READY for delivery orders, create delivery record (courier assignment is manual in demo)
@@ -813,25 +824,32 @@ public class FoodService {
     private static final int BUFFER_MINUTES = 5;
 
     /**
-     * How long until a walk-in customer's food is ready, and when they should set off.
+     * How long until a collection order's food is ready, and when the customer should set off.
      *
-     * <p>A walk-in is closer to a table booking than a takeaway: people are queued behind them,
-     * and arriving too early means standing about while arriving late costs them their place. The
-     * useful answer is not "your food is ready" — by then they are already late — but "leave now".
+     * <p>Covers walk-in and pickup — both mean somebody has to travel to the counter, which is the
+     * only reason this figure exists. A walk-in is closer to a table booking than a takeaway:
+     * people are queued behind them, and arriving too early means standing about while arriving
+     * late costs them their place. A pickup carries no queue, so the wait is just their own food.
+     * Either way the useful answer is not "your food is ready" — by then they are already late —
+     * but "leave now". A delivery order is nobody's journey but the courier's, hence the refusal.
      *
      * <p>Location is passed in rather than stored, because it is the customer's location *now*
      * that matters; where they were when they ordered is beside the point. It is optional: with
      * no coordinates the travel leg is simply left out and they still get a ready time.
      */
     @Transactional(readOnly = true)
-    public Map<String, Object> walkInLeaveTime(UUID orderId, String customerId, Double lat, Double lng) {
+    public Map<String, Object> collectionLeaveTime(UUID orderId, String customerId, Double lat, Double lng) {
         Order order = orderRepo.findById(orderId)
             .orElseThrow(() -> new IllegalStateException("Order not found"));
         if (!order.getCustomerId().equals(UUID.fromString(customerId))) {
             throw new IllegalStateException("Not your order");
         }
-        if (order.getMode() != Order.Mode.WALKIN) {
-            throw new IllegalStateException("Only walk-in orders have a queue");
+        if (order.getMode() == Order.Mode.DELIVERY) {
+            // Explicit status: there is no exception handler in this service, so a bare
+            // IllegalStateException would reach the caller as an opaque 500.
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT,
+                "A delivery order is brought to you — there is nothing to set off for.");
         }
 
         QueueEntry entry = queueRepo.findByOrderId(orderId).orElse(null);
@@ -858,13 +876,23 @@ public class FoodService {
                 .max().orElse(prep)
               + Math.min(10, Math.max(0, order.getItems().size() - 1) * 2);
 
-        // Already cooking means the queue no longer applies to them.
+        // Once the kitchen has started, the queue no longer applies to them and the only thing
+        // left is their own food — minus however long it has already been cooking. Without that
+        // subtraction the figure stood still while the vendor worked, which is what made it look
+        // broken. Elapsed is floored, so the estimate never falls faster than the clock.
+        int cookedFor = 0;
+        if (order.getPreparingAt() != null) {
+            cookedFor = (int) java.time.Duration.between(order.getPreparingAt(), OffsetDateTime.now()).toMinutes();
+            cookedFor = Math.max(0, cookedFor);
+        }
         boolean cooking = order.getStatus() == Order.Status.PREPARING
                        || order.getStatus() == Order.Status.READY;
         // People ahead are queued with orders of their own, which we cannot see from here, so
         // they are costed at the vendor's average rather than pretending to know their dishes.
+        // A kitchen running over its own estimate floors at 1, not 0: "ready in 0 min" on food
+        // that is demonstrably not ready reads as a lie, and READY is the only honest zero.
         int readyIn = order.getStatus() == Order.Status.READY ? 0
-                    : cooking ? ownPrep
+                    : cooking ? Math.max(1, ownPrep - cookedFor)
                     : ahead * prep + ownPrep;
 
         Integer travel = null;

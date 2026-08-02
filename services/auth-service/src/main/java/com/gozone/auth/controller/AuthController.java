@@ -174,6 +174,16 @@ public class AuthController {
         return ResponseEntity.ok(authService.listUsersByStatus(status));
     }
 
+    /**
+     * Drivers awaiting a vehicle class. Not reachable through /users?status=, because these
+     * accounts are already ACTIVE — grading the car is a separate job from approving the person.
+     */
+    @GetMapping("/users/awaiting-class")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<List<UserResponse>> listAwaitingClass() {
+        return ResponseEntity.ok(authService.listAwaitingVehicleClass());
+    }
+
     @PatchMapping("/users/{id}/status")
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public ResponseEntity<UserResponse> reviewUser(

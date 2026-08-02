@@ -54,6 +54,12 @@ export interface Order {
   /** Vendor-fulfilled promos in effect on this order. */
   promoNotes?: string | null;
   deliveryAddr?: string;
+  /** Destination pin. Null on pickup/walk-in, and on orders placed before it was stored. */
+  deliveryLat?: number | null;
+  deliveryLng?: number | null;
+  /** Where the food comes from — sent with the order so tracking needs no second call. */
+  restaurantLat?: number | null;
+  restaurantLng?: number | null;
   createdAt: string;
   paymentStatus?: 'UNPAID' | 'AWAITING' | 'PAID';
   paymentMethod?: string | null;

@@ -17,7 +17,15 @@ VALUES
    'MedPlus Pharmacy', 5.6075, -0.1925, 'OPEN', 10, 'PHARMACY'),
   ('bbbbbbbb-0000-0000-0000-000000000004',
    'aaaaaaaa-0000-0000-0000-000000000004',
-   'FreshMart Grocery', 5.5990, -0.1995, 'OPEN', 25, 'GROCERY')
+   'FreshMart Grocery', 5.5990, -0.1995, 'OPEN', 25, 'GROCERY'),
+  -- Deliberately ~20 km east, in Tema. The other four sit within about two kilometres of each
+  -- other in central Accra, which makes a courier's progress almost invisible on the tracking
+  -- map — you cannot tell a moving marker from a stuck one at that scale. Order from here to
+  -- watch a delivery actually travel. It also exercises the distance-based delivery fee, which
+  -- is otherwise always near its floor.
+  ('bbbbbbbb-0000-0000-0000-000000000005',
+   'aaaaaaaa-0000-0000-0000-000000000004',
+   'Tema Harbour Grill', 5.6698, -0.0166, 'OPEN', 20, 'RESTAURANT')
 ON CONFLICT (id) DO NOTHING;
 
 -- Idempotent: matched on (restaurant, name), because the ids are generated at
@@ -45,7 +53,12 @@ FROM (VALUES
   ('bbbbbbbb-0000-0000-0000-000000000004'::uuid, 'Sliced Bread',            10.00),
   ('bbbbbbbb-0000-0000-0000-000000000004'::uuid, 'Eggs (crate of 30)',      45.00),
   ('bbbbbbbb-0000-0000-0000-000000000004'::uuid, 'Perfumed Rice 5kg',       80.00),
-  ('bbbbbbbb-0000-0000-0000-000000000004'::uuid, 'Cooking Oil 2L',          38.00)
+  ('bbbbbbbb-0000-0000-0000-000000000004'::uuid, 'Cooking Oil 2L',          38.00),
+  -- Tema (the far vendor, for watching a delivery actually cover ground)
+  ('bbbbbbbb-0000-0000-0000-000000000005'::uuid, 'Grilled Red Snapper',     48.00),
+  ('bbbbbbbb-0000-0000-0000-000000000005'::uuid, 'Harbour Prawns',          65.00),
+  ('bbbbbbbb-0000-0000-0000-000000000005'::uuid, 'Yam Chips',               15.00),
+  ('bbbbbbbb-0000-0000-0000-000000000005'::uuid, 'Sobolo (large)',           8.00)
 ) AS v(restaurant_id, name, price)
 WHERE NOT EXISTS (
   SELECT 1 FROM menu_items m

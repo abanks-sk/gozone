@@ -75,7 +75,7 @@ export default function VendorOnboarding() {
   if (view === 'awaiting') {
     return (
       <BrandScreen>
-        <GlowOrb size={360} style={{ position: 'absolute', top: -100, right: -120 }} />
+        {/* GzHero carries its own glow — a corner orb on top of it read as a stray light. */}
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 }}>
           <GzHero size={130} />
           <Text style={{ fontSize: 26, fontWeight: '800', color: brand.text, marginTop: 22, textAlign: 'center' }}>Business submitted</Text>

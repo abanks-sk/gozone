@@ -25,6 +25,7 @@ export default function VendorMenuScreen() {
   const [prep, setPrep] = useState('');
   const [prepItem, setPrepItem] = useState<MenuItem | null>(null);
   const [prepDraft, setPrepDraft] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
   type OptDraft = { label: string; price: string };
   type GroupDraft = { name: string; multi: boolean; required: boolean; options: OptDraft[] };
   const [groups, setGroups] = useState<GroupDraft[]>([]);
@@ -52,8 +53,17 @@ export default function VendorMenuScreen() {
   async function load() {
     if (!vendor) return;
     // Vendor sees the full catalogue (incl. sold-out); falls back to the public menu.
-    try { setItems(await foodApi.getCatalogue(vendor.id)); }
-    catch { try { setItems(await foodApi.getMenu(vendor.id)); } catch {} }
+    try { setItems(await foodApi.getCatalogue(vendor.id)); setLoadError(null); }
+    catch (e: any) {
+      try { setItems(await foodApi.getMenu(vendor.id)); setLoadError(null); }
+      catch (e2: any) {
+        // Both of these used to be `catch {}`, so a failed load rendered as "no items yet" —
+        // identical to an genuinely empty catalogue. "I can't add items" and "I have no items"
+        // must not be the same screen.
+        setLoadError(e2?.response?.data?.message ?? e?.response?.data?.message
+          ?? 'Could not load your catalogue. Check your connection and try again.');
+      }
+    }
   }
   useEffect(() => { load(); }, [vendor?.id]);
 
@@ -61,7 +71,12 @@ export default function VendorMenuScreen() {
     const p = parseFloat(price.replace(/[^0-9.]/g, ''));
     if (!name.trim()) return Alert.alert('Name needed', 'Enter an item name.');
     if (!p || p <= 0) return Alert.alert('Price needed', 'Enter a valid price.');
-    if (!vendor) return;
+    // Never fail silently. This was `return` with no message, so with no business selected the
+    // Add button did nothing at all — no error, no spinner — and looked like a broken app.
+    if (!vendor) {
+      return Alert.alert('No business selected',
+        'We could not tell which of your businesses to add this to. Open the Orders tab, pick your business, then try again.');
+    }
     const groupsPayload = groups
       .filter((gr) => gr.name.trim() && gr.options.some((o) => o.label.trim()))
       .map((gr) => ({
@@ -117,10 +132,26 @@ export default function VendorMenuScreen() {
         </Row>
         <Text style={{ fontSize: 13.5, color: c.textMuted, marginBottom: 18 }}>{vendor?.name ?? 'Your business'} · {items.length} items</Text>
 
-        {items.length === 0 ? (
+        {loadError ? (
+          <View style={{ alignItems: 'center', paddingVertical: 36, gap: 10, paddingHorizontal: 20 }}>
+            <Ionicons name="alert-circle-outline" size={34} color={c.danger} />
+            <Text style={{ color: c.text, fontSize: 14.5, fontWeight: '700' }}>Couldn't load your {isFood ? 'menu' : 'catalogue'}</Text>
+            <Text style={{ color: c.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>{loadError}</Text>
+            <TouchableOpacity onPress={load} activeOpacity={0.85}
+              style={{ marginTop: 6, backgroundColor: c.primarySoft, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 9 }}>
+              <Text style={{ color: c.primary, fontWeight: '700', fontSize: 13.5 }}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : !vendor ? (
+          <View style={{ alignItems: 'center', paddingVertical: 36, gap: 10 }}>
+            <Ionicons name="storefront-outline" size={34} color={c.textMuted} />
+            <Text style={{ color: c.textMuted, fontSize: 14 }}>Loading your business…</Text>
+          </View>
+        ) : items.length === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 36, gap: 10 }}>
             <Ionicons name={isFood ? 'fast-food-outline' : 'pricetags-outline'} size={34} color={c.textMuted} />
             <Text style={{ color: c.textMuted, fontSize: 14 }}>No items in your {isFood ? 'menu' : 'catalogue'} yet</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12.5 }}>Tap “Add item” to create your first one.</Text>
           </View>
         ) : (
           items.map((it) => {

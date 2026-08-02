@@ -10,6 +10,20 @@ public record DeliveryResponse(
     UUID orderId,
     String vendorName,
     String dropoffAddr,
+    /**
+     * The two ends of the job as coordinates, not just names.
+     *
+     * The courier app previously received an address string and nothing else, so its position
+     * updates walked a path hardcoded into the app — the same stretch of central Accra whichever
+     * restaurant the order came from. The customer therefore watched a courier who was nowhere
+     * near their food. A courier needs pins, not prose.
+     *
+     * Dropoff is null on orders placed before the destination was stored.
+     */
+    BigDecimal vendorLat,
+    BigDecimal vendorLng,
+    BigDecimal dropoffLat,
+    BigDecimal dropoffLng,
     BigDecimal total,
     String status,
     UUID courierId,
@@ -23,6 +37,10 @@ public record DeliveryResponse(
             o.getId(),
             o.getRestaurant().getName(),
             o.getDeliveryAddr(),
+            o.getRestaurant().getLat(),
+            o.getRestaurant().getLng(),
+            o.getDeliveryLat(),
+            o.getDeliveryLng(),
             o.getTotal(),
             d.getStatus().name(),
             d.getCourierId(),

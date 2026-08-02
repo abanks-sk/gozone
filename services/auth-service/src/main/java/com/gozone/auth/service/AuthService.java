@@ -605,6 +605,22 @@ public class AuthService {
             .stream().map(this::toUserResponse).toList();
     }
 
+    /**
+     * Drivers and couriers whose vehicle class an admin still has to set.
+     *
+     * <p>Separate from the approvals list on purpose. Approving an account and grading a vehicle
+     * are two different judgements: a car has to be seen before it can be called Standard or Luxe,
+     * and that can happen after the account is already live. Because the approvals list filters on
+     * PENDING, an approved car driver fell off every admin screen while their own app still read
+     * "Awaiting admin" — a queue with no queue attached to it.
+     */
+    @Transactional(readOnly = true)
+    public List<UserResponse> listAwaitingVehicleClass() {
+        return userRepo.findByRoleInAndVehicleClassIsNullAndStatusNotOrderByCreatedAtDesc(
+                List.of(User.Role.DRIVER, User.Role.COURIER), User.Status.REJECTED)
+            .stream().map(this::toUserResponse).toList();
+    }
+
     /** Admin approves (ACTIVE) or rejects (REJECTED) a pending account. */
     public UserResponse reviewUser(UUID userId, String status) {
         User u = userRepo.findById(userId)

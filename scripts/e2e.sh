@@ -219,6 +219,10 @@ OID=$(echo "$ORD" | jq_ "d['id']")
 eq "order placed" "$(echo "$ORD" | jq_ "d['status']")" "PLACED"
 echo "        (total GH¢ $(echo "$ORD" | jq_ "d['total']"), service fee $(echo "$ORD" | jq_ "d.get('serviceFee')"))"
 eq "vendor sees the order" "$(GET "/food/restaurants/$VID/orders" $VENDOR | python -c "import sys,json;print(any(o['id']=='$OID' for o in json.load(sys.stdin)))")" "True"
+# The destination is KEPT, not just used to price the delivery and thrown away. Without these the
+# customer's tracking map has nowhere to point and the courier gets prose instead of a pin.
+eq "order keeps the delivery destination" "$(GET "/food/orders/$OID" $RIDER | jq_ "'%.4f,%.4f' % (float(d['deliveryLat']), float(d['deliveryLng']))")" "5.5570,-0.1820"
+neq "order carries the vendor's position"  "$(GET "/food/orders/$OID" $RIDER | jq_ "str(d.get('restaurantLat'))")" "None"
 
 # The kitchen cooks; the courier delivers. The vendor's authority ends at READY.
 for s in CONFIRMED PREPARING READY; do
@@ -231,6 +235,13 @@ DEL=$(GET /food/deliveries/available $COURIER)
 DID=$(echo "$DEL" | python -c "import sys,json;d=json.load(sys.stdin);print(next((x['id'] for x in d if x['orderId']=='$OID'),''))")
 neq "delivery offered to courier" "$DID" ""
 eq "courier accepts delivery" "$(POST "/food/deliveries/$DID/accept" "$COURIER" '{}' | jq_ "d['status']")" "ASSIGNED"
+# Both ends as coordinates. The courier app used to get only an address string, so its demo GPS
+# walked a path hardcoded into the app — the customer watched a courier nowhere near their food.
+eq "courier gets both ends as coordinates" \
+   "$(GET /food/deliveries/mine $COURIER | python -c "
+import sys,json
+d = next((x for x in json.load(sys.stdin) if x['orderId']=='$OID'), {})
+print(all(d.get(k) is not None for k in ('vendorLat','vendorLng','dropoffLat','dropoffLng')))")" "True"
 eq "courier pickup drives the order" "$(PATCH_ "/food/deliveries/$DID/status" "$COURIER" '{"status":"PICKED_UP"}' | jq_ "d['status']")" "updated"
 eq "  …order now OUT_FOR_DELIVERY" "$(GET "/food/orders/$OID" $RIDER | jq_ "d['status']")" "OUT_FOR_DELIVERY"
 for s in ENROUTE DELIVERED; do
@@ -278,12 +289,38 @@ eq "  …customer was debited the order total"   "$(python -c "print(round(float
 
 echo
 echo "=============================================="
+echo " 6c. COLLECTION ESTIMATE — it has to count down"
+echo "=============================================="
+# A figure that read the same at PLACED and ten minutes into PREPARING is what made customers
+# report the estimate as broken. Pickup counts as a collection: somebody still has to travel.
+LT=$(GET "/food/orders/$WOID/leave-time?lat=5.6037&lng=-0.1870" $RIDER)
+neq "pickup order gets a ready time"        "$(echo "$LT" | jq_ "str(d.get('readyInMinutes'))")" "None"
+neq "  …and a leave time from coordinates"  "$(echo "$LT" | jq_ "str(d.get('leaveInMinutes'))")" "None"
+eq  "delivery order has no journey to time" "$(CODE "/food/orders/$OID/leave-time" $RIDER)" "409"
+PATCH_ "/food/orders/$WOID/status" "$VENDOR" '{"status":"CONFIRMED"}' >/dev/null
+PATCH_ "/food/orders/$WOID/status" "$VENDOR" '{"status":"PREPARING"}' >/dev/null
+R1=$(GET "/food/orders/$WOID/leave-time" $RIDER | jq_ "d['readyInMinutes']")
+# Wind the cooking clock back rather than waiting ten real minutes to watch it move.
+docker exec gozone-postgres psql -U gozone -d food_db -q -c \
+  "UPDATE orders SET preparing_at = now() - interval '10 minutes' WHERE id = '$WOID';" >/dev/null 2>&1
+R2=$(GET "/food/orders/$WOID/leave-time" $RIDER | jq_ "d['readyInMinutes']")
+neq "  …ready time while cooking"           "$R1" ""
+eq  "estimate counts down as the kitchen works" "$(python -c "print(int('$R2') < int('$R1'))" 2>/dev/null)" "True"
+# Finish both of this section's orders instead of abandoning them at PLACED — that is how the
+# vendor board used to accumulate dozens of half-finished demo orders, one per run.
+PATCH_ "/food/orders/$WOID/status" "$VENDOR" '{"status":"READY"}' >/dev/null
+PATCH_ "/food/orders/$WOID/status" "$VENDOR" '{"status":"COMPLETED"}' >/dev/null
+PATCH_ "/food/orders/$BOID/status" "$VENDOR" '{"status":"CANCELLED"}' >/dev/null
+
+echo
+echo "=============================================="
 echo " 7. WALK-IN QUEUE"
 echo "=============================================="
 WORD=$(POST /food/orders "$RIDER" "{\"restaurantId\":\"$VID\",\"mode\":\"WALKIN\",\"items\":[{\"menuItemId\":\"$MI\",\"qty\":1}]}")
 WID=$(echo "$WORD" | jq_ "d['id']")
 eq "walk-in order placed" "$(echo "$WORD" | jq_ "d['mode']")" "WALKIN"
 neq "customer has a queue position" "$(GET "/food/orders/$WID/queue-position" $RIDER | jq_ "str(d.get('position'))")" "None"
+neq "walk-in gets a ready time too" "$(GET "/food/orders/$WID/leave-time" $RIDER | jq_ "str(d.get('readyInMinutes'))")" "None"
 eq "vendor sees queue" "$(GET "/food/restaurants/$VID/queue" $VENDOR | python -c "import sys,json;print(len(json.load(sys.stdin))>=1)")" "True"
 CN=$(POST "/food/restaurants/$VID/queue/call-next" "$VENDOR" '{}')
 eq "call next → CALLED" "$(echo "$CN" | jq_ "d['status']")" "CALLED"
@@ -374,6 +411,23 @@ echo "=============================================="
 eq "KYC list (admin)"      "$(CODE '/auth/driver/kyc' $ADMIN)" "200"
 eq "users list (admin)"    "$(CODE '/auth/users?status=PENDING' $ADMIN)" "200"
 eq "promos/all (admin)"    "$(CODE '/food/promos/all' $ADMIN)" "200"
+
+# A driver awaiting a vehicle class is already ACTIVE, so a status filter cannot find them. Without
+# this list their app says "Awaiting admin" while no admin screen shows them — which is what
+# happened. Test it by actually creating that state on a spare seeded driver, then restoring it.
+YAW='aaaaaaaa-0000-0000-0000-000000000003'
+eq "awaiting-class list is admin-only" "$(CODE '/auth/users/awaiting-class' $DRIVER)" "403"
+eq "awaiting-class list (admin)"       "$(CODE '/auth/users/awaiting-class' $ADMIN)" "200"
+docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+  "UPDATE users SET vehicle_class = NULL WHERE id = '$YAW';" >/dev/null 2>&1
+eq "an ACTIVE driver with no class is listed" \
+   "$(GET /auth/users/awaiting-class $ADMIN | python -c "import sys,json;print(any(u['id']=='$YAW' for u in json.load(sys.stdin)))")" "True"
+eq "  …and grading them clears the list"  "$(PATCH_ "/auth/users/$YAW/class" "$ADMIN" '{"vehicleClass":"STANDARD"}' | jq_ "d['vehicleClass']")" "STANDARD"
+eq "  …restored to STANDARD" \
+   "$(GET /auth/users/awaiting-class $ADMIN | python -c "import sys,json;print(any(u['id']=='$YAW' for u in json.load(sys.stdin)))")" "False"
+# Belt and braces: if any assertion above died mid-way, put the seeded driver back regardless.
+docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+  "UPDATE users SET vehicle_class = 'STANDARD' WHERE id = '$YAW' AND vehicle_class IS NULL;" >/dev/null 2>&1
 
 echo
 echo "=============================================="

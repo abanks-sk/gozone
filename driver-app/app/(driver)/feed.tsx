@@ -39,8 +39,25 @@ export default function DriverFeedScreen() {
 
   const vehicleClass = useAuthStore((s) => s.vehicleClass);
   const serviceMode = useAuthStore((s) => s.serviceMode);
+  const accountStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
   useEffect(() => { fetchMe(); }, []);
+
+  /**
+   * Why this driver cannot be given work yet — null when they can.
+   *
+   * A driver who registers a car is class-null until an admin grades it, and the backend's
+   * class filter then matches nothing. The feed showed them a spinner reading "Looking for
+   * requests nearby…" forever: indistinguishable from a quiet night, so they waited instead of
+   * chasing the approval. The Deliveries tab already explained itself; the first screen did not,
+   * and the first screen is the one they actually sit on.
+   */
+  const blockedReason: string | null =
+    accountStatus && accountStatus !== 'ACTIVE'
+      ? 'Your account is still being reviewed. You can’t take trips until an admin approves it — this screen updates on its own once they do.'
+      : !vehicleClass
+        ? 'An admin still needs to approve your vehicle. Trips are matched by vehicle class, so nothing can reach you until yours is set. You’ll start receiving requests as soon as it is.'
+        : null;
 
   const online = useDriverStore((s) => s.online);
   const setOnline = useDriverStore((s) => s.setOnline);
@@ -60,6 +77,10 @@ export default function DriverFeedScreen() {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [balance, setBalance] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
+  // Whether a poll has actually come back yet. Without this the empty feed shows a spinner and
+  // "Looking for requests nearby…" indefinitely, so a quiet night is indistinguishable from a
+  // stuck app — and the driver has no idea whether to wait or go and fix something.
+  const [polled, setPolled] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [pos, setPos] = useState(FALLBACK);
   const [placeName, setPlaceName] = useState<string | null>(null);
@@ -84,8 +105,11 @@ export default function DriverFeedScreen() {
   const onTheRoad = !!activeTrip && activeTrip.status !== 'COMPLETED';
 
   // Poll nearby requests while online, not on a trip and not awaiting an offer answer.
+  // Skipped entirely when the account cannot be given work: `nearby` requires STATUS_ACTIVE, so an
+  // unapproved driver would collect a 403 and see "Can't load requests" stacked on top of the real
+  // explanation — two error states for one cause, neither of them the useful one.
   useEffect(() => {
-    if (!online || onTheRoad || pendingOffer) { setRequests([]); return; }
+    if (!online || onTheRoad || pendingOffer || blockedReason) { setRequests([]); return; }
     let active = true;
     const tick = async () => {
       try {
@@ -94,12 +118,12 @@ export default function DriverFeedScreen() {
         if (active) { setRequests(data.filter((r) => r.status === 'OPEN')); setFeedError(null); }
       } catch (e: any) {
         if (active) setFeedError(e?.response?.data?.message ?? e?.message ?? 'Could not reach the server');
-      } finally { if (active) setSearching(false); }
+      } finally { if (active) { setSearching(false); setPolled(true); } }
     };
     tick();
     const poll = setInterval(tick, 5000);
     return () => { active = false; clearInterval(poll); };
-  }, [online, onTheRoad, pendingOffer, pos.lat, pos.lng, vehicleClass, serviceMode]);
+  }, [online, onTheRoad, pendingOffer, blockedReason, pos.lat, pos.lng, vehicleClass, serviceMode]);
 
   // Offering no longer starts the trip — it sends an offer the passenger picks from
   // (several drivers can offer; they compare price + distance). Poll the bid until
@@ -257,7 +281,24 @@ export default function DriverFeedScreen() {
 
         {/* ── Body ── */}
         <View style={{ paddingHorizontal: 16, marginTop: 22 }}>
-          {!online ? (
+          {/* Verification comes first: if they cannot be given work, everything below is noise. */}
+          {blockedReason ? (
+            <View style={{ backgroundColor: c.surface, borderRadius: 22, borderWidth: 1, borderColor: c.border, padding: 22, alignItems: 'center', gap: 10 }}>
+              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="shield-checkmark-outline" size={27} color={c.primary} />
+              </View>
+              <Text style={{ fontSize: 17.5, fontWeight: '800', color: c.text, textAlign: 'center' }}>
+                {accountStatus && accountStatus !== 'ACTIVE' ? 'Account under review' : 'Vehicle awaiting approval'}
+              </Text>
+              <Text style={{ fontSize: 13.5, color: c.textMuted, textAlign: 'center', lineHeight: 20 }}>
+                {blockedReason}
+              </Text>
+              <TouchableOpacity onPress={() => fetchMe()} activeOpacity={0.85}
+                style={{ marginTop: 6, borderRadius: 999, paddingVertical: 11, paddingHorizontal: 26, borderWidth: 1.5, borderColor: c.border }}>
+                <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>Check again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : !online ? (
             <Offline c={c} onGoOnline={() => setOnline(true)} />
           ) : onTheRoad ? (
             <Text style={{ color: c.textMuted, fontSize: 14, textAlign: 'center', paddingVertical: 24 }}>
@@ -294,10 +335,19 @@ export default function DriverFeedScreen() {
                   <Text style={{ color: c.textMuted, fontSize: 13, textAlign: 'center' }} numberOfLines={3}>{feedError}</Text>
                   <Text style={{ color: c.textMuted, fontSize: 12.5, textAlign: 'center' }}>Retrying automatically…</Text>
                 </View>
-              ) : visible.length === 0 ? (
+              ) : visible.length === 0 && !polled ? (
                 <View style={{ alignItems: 'center', paddingVertical: 36, gap: 12 }}>
                   <ActivityIndicator color={c.primary} />
                   <Text style={{ color: c.textMuted, fontSize: 14 }}>Looking for requests nearby…</Text>
+                </View>
+              ) : visible.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 36, gap: 8 }}>
+                  <Ionicons name="time-outline" size={32} color={c.textMuted} />
+                  <Text style={{ color: c.text, fontSize: 14.5, fontWeight: '700' }}>No requests right now</Text>
+                  <Text style={{ color: c.textMuted, fontSize: 13, textAlign: 'center', paddingHorizontal: 20, lineHeight: 19 }}>
+                    You’re online and we’re still checking every few seconds. Requests within
+                    {' '}{SEARCH_RADIUS_KM} km of {placeName || 'you'} will appear here.
+                  </Text>
                 </View>
               ) : (
                 visible.map((req) => (

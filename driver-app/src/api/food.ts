@@ -42,6 +42,12 @@ export interface Delivery {
   orderId: string;
   vendorName: string;
   dropoffAddr?: string;
+  /** Collection point. */
+  vendorLat?: number | null;
+  vendorLng?: number | null;
+  /** Where it's going. Null on orders placed before the destination was stored. */
+  dropoffLat?: number | null;
+  dropoffLng?: number | null;
   total: number;
   status: 'ASSIGNED' | 'PICKED_UP' | 'ENROUTE' | 'DELIVERED';
   courierId?: string | null;

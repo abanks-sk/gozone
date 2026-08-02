@@ -1659,15 +1659,122 @@ trip/order it rides on).
 
 **Rebuild:** `docker compose build food-service wallet-service ride-service && docker compose up -d`
 
+### Device-testing batch A (A4–A7) — REBUILT food + auth, e2e 132/132
+The four remaining quick-correctness items from `docs/ISSUES_FROM_TESTING.md`. A1–A3 were done the
+session before; section A is now closed. B (blocked flows) and C (product gaps) are still open.
+- **A4 — the GZ mark "not appearing" was `tintColor`.** `GzMark` painted the navy PNG white with
+  `Image` `tintColor`, which silently does nothing on some Android builds — and when it does
+  nothing you get a **navy mark on a near-black brand background**, i.e. invisible. That is the
+  reported symptom exactly. Now ships a **pre-whitened `assets/gz-logo-white.png`** (alpha kept,
+  RGB forced white; script in scratchpad `make_white_logo.py`) chosen by the `color` prop, with
+  `tintColor` removed outright. Same API, no call site changed, all three apps.
+- **A5 — duplicate glow.** The rule the report was reaching for is "a screen that already shows a
+  logo or hero must not also carry a corner orb". Five screens did both: `welcome.tsx` ×3 (orb
+  beside the `Logo` squircle) and the awaiting-approval view of driver + vendor `onboarding.tsx`
+  (orb on top of `GzHero`, which brings its own glow). Register / verify-OTP / onboarding-setup
+  **keep** theirs — no logo there, which is why it was only *some* screens.
+- **A6 — the estimate now counts down.** `readyInMinutes` ignored elapsed time, so it read the same
+  at PLACED and ten minutes into PREPARING. New **`orders.preparing_at`** (food **V10**), stamped on
+  first entry into PREPARING only. `created_at` is the wrong clock — an order sits at PLACED for
+  however long the vendor takes to confirm, and nothing is cooking then; null means no subtraction,
+  so pre-existing orders behave exactly as before. `walkInLeaveTime` → **`collectionLeaveTime`**,
+  **widened to PICKUP** (a pickup customer travels too), delivery refused **409** — an explicit
+  status because this service has **no exception handler**, so the bare `IllegalStateException` was
+  surfacing as an opaque 500. Floors at 1 while cooking; only READY reports 0. Verified live:
+  `15 → 15` at PLACED, then `15 → 10 → 3 → 0` as the kitchen works. Customer card now shows for
+  pickup too and explains the frozen pre-cooking window ("The kitchen hasn't started yet…") instead
+  of leaving an unmoving number unaccounted for.
+- **A7 — drivers awaiting a vehicle class were invisible.** Approvals filters `status=PENDING`, but a
+  car driver is class-null **and already ACTIVE**, so approving them removed them from the only
+  screen that could grade them — while their app kept saying "Awaiting admin". New
+  **`GET /auth/users/awaiting-class`** (ADMIN/SUPER_ADMIN; DRIVER/COURIER, `vehicle_class IS NULL`,
+  REJECTED excluded, deliberately **not** status-filtered). Admin web: an **"Awaiting vehicle class"**
+  section on Approvals (de-duplicated against the pending list so nobody gets two class pickers) plus
+  a Dashboard count and a "Grade N vehicles" shortcut.
+- **Contracts:** `food.yaml` gained `/orders/{id}/leave-time` + `LeaveTimeResponse` — it had **never
+  been published**, a pre-existing drift against the contract-first rule, fixed now that its behaviour
+  changed. `auth.yaml` gained `/users/awaiting-class`.
+- **e2e 121 → 132.** New **"6c. COLLECTION ESTIMATE"** section: it winds `preparing_at` back ten
+  minutes via psql rather than waiting, and asserts the figure actually drops — plus pickup gets an
+  estimate, delivery 409s, and the walk-in one still works. A7 is tested by *creating* the state:
+  null a spare seeded driver's class, assert they appear, grade them, assert they leave, with an
+  unconditional restore afterwards. **Also fixed a suite hygiene bug found while in there:** §6b
+  abandoned **two PICKUP orders at PLACED every single run** — one of the documented sources of the
+  vendor-board pile-up — so the new block drives them terminal instead.
+- ⚠️ **A4 and A5 are not device-verified** — they are phone-side appearance and only the device that
+  failed can clear them. New checks added to `TAP_THROUGH.md` §2. A6/A7 are verified against the
+  running stack, not just type-checked.
+- ⚠️ The first food-service build failed after ~14 min on a Maven `DependencyResolutionException`
+  (dependency download, not a compile error). A straight retry succeeded — treat that failure mode as
+  network flakiness and just re-run.
+- Housekeeping: the suite consumed the staged walk-in customer again (documented side effect);
+  re-staged by flipping the existing entry, not by placing a new order.
+- All four front-ends type-check; admin-web builds. **Rebuild food-service + auth-service.**
+
+### Device-testing batch B (B1–B3) — REBUILT food-service, e2e 135/135
+The three flows that stopped the tester. **Every one turned out to be a silent failure** — the app
+doing nothing, or showing something indistinguishable from "nothing to show" — which is why they
+read as dead ends rather than errors.
+- **B1 — "can't add items" was never the API.** Verified live first: `POST /food/restaurants/{id}/menu`
+  returns 200 with and without add-on groups. The bug was `submitItem`'s opening
+  `if (!vendor) return;` — **no message at all**, so the button was simply inert. `vendor` was null
+  because **only `orders.tsx` ever selected a business**; `menu.tsx` and `queue.tsx` read the store
+  and bailed. Signing out clears the selection, so this was the state after **every fresh login** if
+  you opened Catalogue first. Selection moved into **`(vendor)/_layout.tsx`** — it belongs to being
+  signed in, not to one tab. Also killed the silent failures: the null case explains itself, and
+  `load()`'s two bare `catch {}` blocks (which rendered a failed fetch as "no items yet", identical
+  to an empty catalogue) now surface the server message with a retry.
+- **B2 — the feed didn't just say nothing, it lied.** An unapproved driver saw a spinner reading
+  "Looking for requests nearby…" **forever**, which looks exactly like a quiet night — so they waited
+  instead of chasing the approval. A car is class-null until an admin grades it and the class filter
+  then matches nothing. `feed.tsx` gained `blockedReason` (account not ACTIVE / no vehicle class)
+  with a **Check again** button. The `nearby` poll is **skipped while blocked** — it requires
+  `STATUS_ACTIVE`, so it would have stacked a 403 "Can't load requests" over the real reason. An
+  *approved* driver with no work now gets "No requests right now" + the radius, not the same spinner.
+- **B3 — three faults, only one of them reported.** (1) No map: the card printed **raw coordinates**.
+  (2) Wrong start: it subscribed at `OUT_FOR_DELIVERY`, but the courier app pushes GPS from the moment
+  they **accept** — while the order is still READY — so the whole run to the restaurant was discarded.
+  (3) **The destination was never stored.** `deliveryLat/Lng` were sent at checkout, used once to
+  price the delivery fee, and **thrown away** — the same collected-then-discarded bug as the parcel
+  handover details. And because the courier app received only an address *string*, its demo GPS
+  walked **six coordinates hardcoded into the app**: the same stretch of central Accra whichever
+  restaurant the order came from, looping to the start every six pings. So the customer was watching
+  a courier who was nowhere near their food.
+  Fixed with **`orders.delivery_lat/lng` (V11)**, both endpoints on `OrderResponse` **and**
+  `DeliveryResponse`, a real `LeafletMap` on the order screen subscribing from READY with phase-aware
+  copy, and a courier path generated **between the real endpoints** — phase-aware and holding at the
+  destination instead of wrapping.
+- **Seeded `Tema Harbour Grill`** (`bbbbbbbb-…005`, ~20 km east) per the scope note. The note blamed
+  vendor spacing for movement being unobservable; the real cause was the hardcoded path, but it was
+  right that everything sits within ~2 km. It also exercises the distance-based delivery fee —
+  **GH¢35.28** Tema→Osu, against central-Accra orders that always sat near the floor. Seed stays
+  idempotent (re-running inserts 0 rows).
+- **Contracts:** `food.yaml` — `OrderResponse` gained `deliveryLat/Lng` + `restaurantLat/Lng`,
+  `DeliveryResponse` gained `vendorLat/Lng` + `dropoffLat/Lng`.
+- **e2e 132 → 135:** the order keeps its destination, the order carries the vendor's position, and
+  the courier gets both ends as coordinates. These are the fields a future refactor could quietly
+  drop with nothing else going red.
+- ⚠️ **Front-ends are type-checked, not device-verified** — B1's app path, B2's feed states and B3's
+  map all need a phone. New checklists added to `TAP_THROUGH.md` §7 (courier map), §8 (adding items)
+  and §9 (why there's no work).
+- **Rebuild food-service.** Then re-run `seed/02_food_seed.sql` for the Tema vendor.
+
 ### Next
-1. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
+1. **Convert `dest` to a proper nullable type** (retire the `NO_DEST` sentinel). Still outstanding —
+   it is the root cause behind A1, and ~8 files read `dest.lat`/`dest.label` directly.
+3. **`docs/ISSUES_FROM_TESTING.md` §C** — grouped: C6 keyboard avoidance first (it touches every
+   form, so doing it globally beats fixing it once per screen forever), then C2 vendor app admits
+   unverified users, C3 vendor location via map picker, C4 vendor storefront editing, C7 one-tap
+   saved cards for food checkout + top-up. Then C5 (Bolt-style scrollable map) on its own, and
+   **C1 unmock driver KYC** last and alone — real uploads, storage decided up front.
+4. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
-2. **Before any real deployment**: set `OTP_LOG_CODES=false`, set `GOOGLE_CLIENT_IDS`, tighten the Maps SDK
+5. **Before any real deployment**: set `OTP_LOG_CODES=false`, set `GOOGLE_CLIENT_IDS`, tighten the Maps SDK
    key to Android/iOS app restrictions, and rotate every credential in `.env`.
-3. Driver/vendor apps lack the client-side Ghana phone helper (`src/lib/phone.ts`) — backend still validates,
+6. Driver/vendor apps lack the client-side Ghana phone helper (`src/lib/phone.ts`) — backend still validates,
    so errors arrive after a round-trip.
-4. Per-topic WebSocket authorisation is done for trip/delivery location topics; queue topics stay open (count
+7. Per-topic WebSocket authorisation is done for trip/delivery location topics; queue topics stay open (count
    only).
-5. Older backlog: vendor self-serve "apply to promote"; ride quote in the parcel composer; external GoZone
+8. Older backlog: vendor self-serve "apply to promote"; ride quote in the parcel composer; external GoZone
    Inc. website; backend catalogue-write API for vendors; driver call via `tel:`; RIDER→PASSENGER backend
    rename (destructive — needs explicit go-ahead).

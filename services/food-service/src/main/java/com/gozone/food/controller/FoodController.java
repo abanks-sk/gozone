@@ -93,7 +93,8 @@ public class FoodController {
     }
 
     /**
-     * When a walk-in customer should set off, given where they are now.
+     * When a collecting customer should set off, given where they are now. Walk-in and pickup
+     * both qualify — somebody has to travel to the counter either way; a delivery is refused.
      *
      * <p>Coordinates are query params, not stored on the order: what matters is where they are
      * when they ask, not where they were when they ordered. Both optional — without them the
@@ -105,7 +106,7 @@ public class FoodController {
             @AuthenticationPrincipal String userId,
             @RequestParam(required = false) Double lat,
             @RequestParam(required = false) Double lng) {
-        return ResponseEntity.ok(foodService.walkInLeaveTime(id, userId, lat, lng));
+        return ResponseEntity.ok(foodService.collectionLeaveTime(id, userId, lat, lng));
     }
 
     @GetMapping("/orders/{id}")

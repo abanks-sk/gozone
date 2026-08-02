@@ -303,6 +303,31 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /users/awaiting-class:
+    get:
+      tags: [admin]
+      summary: Drivers and couriers still waiting on a vehicle class
+      description: >
+        Not reachable via /users?status=. A driver who registers a car is class-null from sign-up
+        and stays class-null after approval, so a status filter loses them the moment they become
+        ACTIVE — while their own app still reads "Awaiting admin". Approving the person and
+        grading their vehicle are separate judgements, so they get separate lists.
+        Excludes REJECTED accounts; ordered newest first.
+      operationId: listAwaitingVehicleClass
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Drivers with no vehicle class set
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /users/{id}/status:
     patch:
       tags: [admin]

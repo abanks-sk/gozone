@@ -30,6 +30,19 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [x] "GoZone" and the motto are **blue**, not white ((app name changed to white and motto remains blue))
 - [x] Driver app says **GoZone Driver**, vendor app says **GoZone Vendor**
 
+**Retest after the A4/A5 fixes — this is the section that could not be cleared:**
+
+- [ ] **On the device where the GZ did not appear**, the mark now shows white on the splash. The fix
+      removed `tintColor` entirely in favour of a pre-whitened asset, so a failing tint can no longer
+      leave a navy mark on a near-black background. If it is *still* missing, the cause is the asset
+      itself, not the tint — check `assets/gz-logo-white.png` loads at all
+- [ ] Welcome screen (all three apps): **no glow orb in the top-right corner** — only the blue
+      squircle logo. The brand background keeps its own glow
+- [ ] Driver and vendor **awaiting-approval** screens: the hero glow is centred behind the mark, with
+      **no second orb** in the corner
+- [ ] Register / verify-OTP / driver-and-vendor setup form **still have** their corner orb — those
+      screens carry no logo, so the orb is the only light source and is meant to be there
+
 ---
 
 ## 3. Ride home — greeting and map
@@ -106,6 +119,25 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [ ] A driver with an **unapproved car** sees "An admin still needs to approve your vehicle", not an empty list
 - [ ] Courier accepts → customer sees live courier location → DELIVERED completes the order
 
+**Courier map (B3) — order from Tema to see it properly:**
+
+> Order from **Tema Harbour Grill**, not a central-Accra vendor. The other five sit within about
+> two kilometres of each other, and at that scale you cannot tell a moving marker from a stuck one.
+> Tema is ~20 km out, so the courier visibly covers ground.
+
+- [ ] Customer order screen shows a **map**, not a line of raw coordinates ← this was the bug
+- [ ] The map appears **as soon as the order is READY**, before the courier has collected anything —
+      you should watch them drive *to the restaurant* first. It used to appear only after pickup
+- [ ] Card reads **"Finding you a courier"** → **"Courier heading to the restaurant"** →
+      **"Your courier is on the way"** as the job progresses
+- [ ] The courier marker moves along the **real route between the restaurant and your address** —
+      it used to walk a fixed loop in central Accra regardless of the order, and teleport back to
+      the start every six updates
+- [ ] Your address shows as a **destination pin** on the map
+- [ ] On the **courier's** side the same two pins and the current leg are drawn, and the leg
+      switches from "to the restaurant" to "to the customer" when they tap picked-up
+- [ ] Live/Stale badge only appears once a courier is actually assigned
+
 **Pickup / walk-in:**
 
 - [x] A **pickup** order at READY offers **"Handed to customer"** — _not_ "Out for delivery" ← this was the bug
@@ -123,11 +155,37 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [ ] Deny location permission → card degrades to **"Ready in about N min"** with a prompt, no crash
 - [ ] Card **disappears** once the order completes or is cancelled
 
+**The countdown fix (A6) — verified server-side, wants a device pass:**
+
+- [ ] While the order sits at PLACED/CONFIRMED the figure **does not move**, and the card explains
+      why: _"The kitchen hasn't started yet — the countdown begins when they do."_ This is deliberate;
+      nothing is cooking, so a ticking number would imply progress that is not happening
+- [ ] The moment the vendor taps **Start preparing**, the figure begins dropping — leave the screen
+      open for a few minutes and watch it fall (it refreshes on the existing 4s poll)
+- [ ] It never reads **0** while still cooking; only a READY order shows 0
+- [ ] A **pickup** order now gets the same card (it used to be walk-in only). A **delivery** order
+      still gets none — there is no journey for the customer to time
+- [ ] Curl equivalent, if you want it without waiting:
+      `GET /food/orders/{id}/leave-time?lat=&lng=` → `readyInMinutes` should fall between calls
+      once PREPARING
+
 **Prep time:**
 
 - [ ] Vendor catalogue: each dish has a **prep chip** ("Set prep time" / "20 min prep")
 - [ ] Setting one changes the customer's estimate; **clearing it** falls back to the business default
 - [ ] Order with two dishes ≈ the **slowest** dish plus a small margin — _not_ the sum
+
+**Adding items (B1) — this is what blocked all the prep-time testing:**
+
+- [ ] Sign out of the vendor app and back in, then go **straight to the Catalogue tab** without
+      opening Orders first. Items should load and **"Add item" should work** ← this was the bug:
+      only the Orders tab ever picked your business, so every other tab had none and the Add
+      button did nothing at all, silently
+- [ ] Fill in name + price → **Add to catalogue** → the item appears in the list
+- [ ] It also appears for a customer browsing that business
+- [ ] The Queue tab likewise works straight after a fresh login
+- [ ] If anything does fail you now get a **message** — a red "Couldn't load your catalogue" with a
+      Try again button, or an explicit alert. A silent no-op is itself a bug; report it
 
 ---
 
@@ -137,6 +195,18 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [ ] Feed shows incoming requests with a countdown; Accept / Decline / Counter all work
 - [ ] Offer-sent card polls and returns to the feed if another driver wins
 
+**Why there's no work (B2) — the feed used to say nothing at all:**
+
+- [ ] Sign in as a driver who registered a **car that no admin has graded yet**. The Home feed
+      shows **"Vehicle awaiting approval"** with an explanation and a **Check again** button
+      ← this was the bug: it showed a spinner reading "Looking for requests nearby…" forever, so
+      an unapproved driver could not tell that from a quiet night and just waited
+- [ ] An account still under review shows **"Account under review"** instead
+- [ ] Grade the vehicle in the admin web (Approvals → Awaiting vehicle class), tap **Check again** →
+      the normal feed appears
+- [ ] An **approved** driver who is online with genuinely no work nearby sees **"No requests right
+      now"** with the search radius — not an endless spinner
+
 ---
 
 ## 10. Admin web
@@ -144,6 +214,10 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [x] `npm run dev` → log in as `superadmin` (OTP from `docker logs gozone-auth`)
 - [/] Approvals: a pending driver can be approved **and assigned a vehicle class**
 - [x] Payouts, Incidents, Promos, Fees pages all load
+- [ ] **A7:** approve a driver who registered a **car** *without* setting a class. They should then
+      appear under **Approvals → "Awaiting vehicle class"** (they used to vanish from every screen
+      while their own app still read "Awaiting admin"), and the Dashboard should count them
+- [ ] Setting the class removes them from that list, and the driver's app stops saying "Awaiting admin"
 
 ---
 
@@ -173,7 +247,18 @@ FIXES OR ISSUES FOUND
 
 ## Results of the first run
 
-Run by the user; findings triaged in **`ISSUES_FROM_TESTING.md`** — 17 issues, none fixed yet.
-`[x]` passed, `[/]` partly, `[ ]` failed or blocked. Sections 6 (food/parcel/cash payments), 7
-(courier), 9 (driver) are largely **untested** because earlier failures blocked them — they are
-still open, not passing.
+Run by the user; findings triaged in **`ISSUES_FROM_TESTING.md`** — 17 issues. `[x]` passed,
+`[/]` partly, `[ ]` failed or blocked. Sections 6 (food/parcel/cash payments), 7 (courier), 9
+(driver) are largely **untested** because earlier failures blocked them — they are still open, not
+passing.
+
+**Since that run:** sections **A and B are both fixed** (A1–A3 first, then A4–A7, then B1–B3).
+`scripts/e2e.sh` is **135/135** against the rebuilt stack and now guards the new behaviour
+directly: the collection estimate counts down, the awaiting-class list works, and a delivery keeps
+both of its endpoints as coordinates.
+
+Verified against the running stack: A6, A7, B1 (the API was never broken — the bug was app-side),
+B3's backend. Only checkable on a phone, so **still open**: A4, A5 (splash appearance), B1's
+front-end path, B2 (feed states), B3's map. New checks for all of them are in the sections above.
+
+**Section C is untouched** and is the remaining work.

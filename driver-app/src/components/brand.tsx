@@ -11,11 +11,17 @@ import { brand } from '../theme/tokens';
 
 // ── GzMark ────────────────────────────────────────────────────────────────────
 // The official GoZone "GZ" logo (assets/gz-logo.png — background removed, so the
-// road's dashed centreline shows the surface through). `color` tints the whole
-// mark (white on dark surfaces); omit it to keep the original navy. `dash` is
-// accepted for API compatibility but unused with the bitmap asset.
+// road's dashed centreline shows the surface through). Passing `color` picks the
+// pre-whitened variant for dark surfaces; omit it to keep the original navy.
+// `dash` is accepted for API compatibility but unused with the bitmap asset.
+//
+// Why two files instead of one tinted image: `Image` `tintColor` silently does
+// nothing on some Android builds, and when it did the mark stayed navy on a
+// near-black brand background — invisible, which is what "the GZ doesn't appear
+// on some devices" turned out to be. A second asset can't fail that way.
 
 const GZ_LOGO = require('../../assets/gz-logo.png');
+const GZ_LOGO_WHITE = require('../../assets/gz-logo-white.png');
 const GZ_ASPECT = 681 / 985; // cleaned asset height / width
 
 export function GzMark({
@@ -30,9 +36,8 @@ export function GzMark({
 }) {
   return (
     <Image
-      source={GZ_LOGO}
+      source={color ? GZ_LOGO_WHITE : GZ_LOGO}
       resizeMode="contain"
-      tintColor={color}
       style={[{ width: size, height: size * GZ_ASPECT }, style]}
     />
   );

@@ -6,6 +6,10 @@ interface Vendor { id: string; vendorType?: string; }
 
 export default function Dashboard({ onReviewKyc, onApprovals }: { onReviewKyc: () => void; onApprovals: () => void }) {
   const [pendingApprovals, setPendingApprovals] = useState<number | null>(null);
+  // Approved drivers with no vehicle class. Counted separately because they are not PENDING and
+  // so never showed up in any total, which is how they stayed invisible while their app told them
+  // an admin was dealing with it.
+  const [awaitingClass, setAwaitingClass] = useState<number | null>(null);
   const [pending, setPending] = useState<number | null>(null);
   const [verified, setVerified] = useState<number | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -13,13 +17,15 @@ export default function Dashboard({ onReviewKyc, onApprovals }: { onReviewKyc: (
 
   useEffect(() => {
     (async () => {
-      const [appr, p, v, vend] = await Promise.allSettled([
+      const [appr, cls, p, v, vend] = await Promise.allSettled([
         api.get<Kyc[]>('/auth/users?status=PENDING'),
+        api.get<Kyc[]>('/auth/users/awaiting-class'),
         api.get<Kyc[]>('/auth/driver/kyc?status=PENDING'),
         api.get<Kyc[]>('/auth/driver/kyc?status=VERIFIED'),
         api.get<Vendor[]>('/food/restaurants'),
       ]);
       if (appr.status === 'fulfilled') setPendingApprovals(appr.value.data.length);
+      if (cls.status === 'fulfilled') setAwaitingClass(cls.value.data.length);
       if (p.status === 'fulfilled') setPending(p.value.data.length);
       if (v.status === 'fulfilled') setVerified(v.value.data.length);
       if (vend.status === 'fulfilled') setVendors(vend.value.data);
@@ -44,6 +50,7 @@ export default function Dashboard({ onReviewKyc, onApprovals }: { onReviewKyc: (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 16, marginBottom: 24 }}>
             <Stat label="Awaiting approval" value={pendingApprovals ?? '—'} accent="var(--warning)" />
+            <Stat label="Awaiting vehicle class" value={awaitingClass ?? '—'} accent="var(--warning)" />
             <Stat label="Pending KYC" value={pending ?? '—'} accent="var(--warning)" />
             <Stat label="Verified drivers" value={verified ?? '—'} accent="var(--success)" />
             <Stat label="Vendors" value={vendors.length} accent="var(--primary)" />
@@ -69,6 +76,11 @@ export default function Dashboard({ onReviewKyc, onApprovals }: { onReviewKyc: (
               {(pendingApprovals ?? 0) > 0 && (
                 <button className="btn" style={{ width: '100%', marginBottom: 10 }} onClick={onApprovals}>
                   Review {pendingApprovals} pending approval{pendingApprovals === 1 ? '' : 's'} →
+                </button>
+              )}
+              {(awaitingClass ?? 0) > 0 && (
+                <button className="btn btn-ghost" style={{ width: '100%', marginBottom: 10 }} onClick={onApprovals}>
+                  Grade {awaitingClass} vehicle{awaitingClass === 1 ? '' : 's'} →
                 </button>
               )}
               {(pending ?? 0) > 0 ? (

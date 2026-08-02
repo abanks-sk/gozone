@@ -1,6 +1,6 @@
 import { Alert, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { BrandScreen, GlowOrb, Logo, PillButton } from '../src/components/brand';
+import { BrandScreen, Logo, PillButton } from '../src/components/brand';
 import { brand } from '../src/theme/tokens';
 
 export default function WelcomeScreen() {
@@ -11,9 +11,8 @@ export default function WelcomeScreen() {
 
   return (
     <BrandScreen>
-      {/* Off-center glow — sits to the top-right so the layout isn't a rigid stack */}
-      <GlowOrb size={440} style={{ position: 'absolute', top: -120, right: -140 }} />
-
+      {/* No corner glow here: the logo is the focal point, and a second light source
+          beside it read as a stray orb rather than as the brand's glow. */}
       <View style={{ flex: 1, paddingHorizontal: 24 }}>
         <View style={{ marginTop: 8 }}>
           <Logo size={52} />

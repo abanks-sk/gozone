@@ -19,10 +19,31 @@ const STEP = [
   { key: 'ENROUTE', label: 'On the way', sub: 'Driving to the customer' },
   { key: 'DELIVERED', label: 'Delivered', sub: 'Handed over' },
 ];
-const WAYPOINTS = [
-  { lat: 5.6052, lng: -0.1674 }, { lat: 5.6060, lng: -0.1720 }, { lat: 5.6075, lng: -0.1780 },
-  { lat: 5.6085, lng: -0.1840 }, { lat: 5.6098, lng: -0.1950 }, { lat: 5.6110, lng: -0.1980 },
-];
+type Pt = { lat: number; lng: number };
+
+/** Accra centre — only used when a delivery has no coordinates at all to work from. */
+const ACCRA: Pt = { lat: 5.6037, lng: -0.187 };
+
+/**
+ * Demo GPS along the leg the courier is actually driving.
+ *
+ * This used to be six coordinates hardcoded into the app, walked in a loop regardless of which
+ * restaurant the order came from or where the customer lived — so the customer's tracking map
+ * showed a courier wandering a fixed stretch of central Accra, nowhere near their food, and
+ * teleporting back to the start every six pings. It also made movement look trivial no matter
+ * how far apart the two ends really were.
+ *
+ * Now the path is generated between the real endpoints, so distance on the map is real distance.
+ * Still scripted — GPS is mocked for the demo, per the project's "what is mocked" list.
+ */
+function legPath(from: Pt, to: Pt, steps = 24): Pt[] {
+  const pts: Pt[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    pts.push({ lat: from.lat + (to.lat - from.lat) * t, lng: from.lng + (to.lng - from.lng) * t });
+  }
+  return pts;
+}
 
 export default function DriverDeliveriesScreen() {
   const insets = useSafeAreaInsets();
@@ -72,13 +93,38 @@ export default function DriverDeliveriesScreen() {
     return () => clearInterval(poll);
   }, [active]);
 
-  // Push scripted GPS while a delivery is in progress.
+  // ── The two ends of the active job, and the leg currently being driven ──────
+  const vendorPt: Pt | null = active?.vendorLat != null && active?.vendorLng != null
+    ? { lat: Number(active.vendorLat), lng: Number(active.vendorLng) } : null;
+  const dropoffPt: Pt | null = active?.dropoffLat != null && active?.dropoffLng != null
+    ? { lat: Number(active.dropoffLat), lng: Number(active.dropoffLng) } : null;
+  // Before collection you are driving to the vendor; after it, to the customer. An order placed
+  // before destinations were stored has no dropoff pin, so the second leg simply has nothing to
+  // draw and the courier holds at the vendor rather than being sent somewhere invented.
+  const legStart = active?.status === 'ASSIGNED' ? (courierPos ?? ACCRA) : (vendorPt ?? ACCRA);
+  const legEnd = active?.status === 'ASSIGNED' ? vendorPt : dropoffPt;
+  const activePath: Pt[] = legEnd ? legPath(legStart, legEnd) : [];
+  // Frame the whole leg when there is one, otherwise just the vendor.
+  const mapCenter: Pt = legEnd && vendorPt
+    ? { lat: (legStart.lat + legEnd.lat) / 2, lng: (legStart.lng + legEnd.lng) / 2 }
+    : vendorPt ?? ACCRA;
+
+  // Push scripted GPS along whichever leg is actually being driven.
+  //
+  // Restarts at the top of each leg (the dep array includes status), so collecting the order
+  // switches the courier from "approaching the restaurant" to "carrying it to the customer" —
+  // which is the transition the customer's map is meant to show.
   useEffect(() => {
     const live = active && active.status !== 'DELIVERED';
     if (!live) { stopGps(); return; }
-    if (locRef.current) return;
+    stopGps();
+    wpRef.current = 0;
+    const path = activePath;
+    if (!path.length) return;
     locRef.current = setInterval(() => {
-      const wp = WAYPOINTS[wpRef.current % WAYPOINTS.length];
+      // Hold at the destination instead of wrapping round to the start: a courier who has
+      // arrived stays arrived until they advance the status.
+      const wp = path[Math.min(wpRef.current, path.length - 1)];
       deliveryApi.pushLocation(active!.id, wp.lat, wp.lng).catch(() => {});
       setCourierPos(wp); // move the marker on the courier's own map too
       wpRef.current++;
@@ -135,21 +181,19 @@ export default function DriverDeliveriesScreen() {
               <Text style={{ fontSize: 13.5, color: c.textMuted, flex: 1 }}>{active.dropoffAddr ?? 'Customer address'}</Text>
             </Row>
 
-            {/* Live delivery map — pickup, drop-off, route and your position */}
-            {active.status !== 'DELIVERED' && (
+            {/* Live delivery map — the real pickup, drop-off, current leg and your position.
+                Needs the vendor pin at minimum; without it there is no map worth drawing. */}
+            {active.status !== 'DELIVERED' && vendorPt && (
               <GoogleMap
                 style={{ height: 200, borderRadius: 16, marginTop: 12 }}
-                center={{
-                  lat: (WAYPOINTS[0].lat + WAYPOINTS[WAYPOINTS.length - 1].lat) / 2,
-                  lng: (WAYPOINTS[0].lng + WAYPOINTS[WAYPOINTS.length - 1].lng) / 2,
-                }}
+                center={mapCenter}
                 zoom={13}
                 vehicleKind={vehicleKindOf(vehicleClass)}
                 markers={[
-                  { ...WAYPOINTS[0], kind: 'pickup', label: active.vendorName },
-                  { ...WAYPOINTS[WAYPOINTS.length - 1], kind: 'dest', label: 'Customer' },
+                  { ...vendorPt, kind: 'pickup', label: active.vendorName },
+                  ...(dropoffPt ? [{ ...dropoffPt, kind: 'dest' as const, label: 'Customer' }] : []),
                 ]}
-                route={WAYPOINTS}
+                route={activePath}
                 driver={courierPos}
               />
             )}

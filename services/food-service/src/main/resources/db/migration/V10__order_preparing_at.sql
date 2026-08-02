@@ -1,0 +1,14 @@
+-- When the kitchen actually started cooking this order.
+--
+-- The "when should I leave?" estimate was computed from queue position and prep time alone, so it
+-- returned the same number the moment the vendor hit "start preparing" and ten minutes later. The
+-- customer watched a figure that never moved and concluded it was broken — which it was.
+--
+-- Elapsed time is the missing input, and it needs a start point. created_at is the wrong one: an
+-- order can sit at PLACED for as long as the vendor takes to confirm it, and nothing is cooking in
+-- that time. Only the transition into PREPARING starts the clock.
+--
+-- NULL means the order has not started cooking (or predates this column), and the estimate falls
+-- back to exactly today's behaviour — no subtraction — rather than guessing against created_at and
+-- telling someone their food is ready when it has not been started.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS preparing_at TIMESTAMPTZ;

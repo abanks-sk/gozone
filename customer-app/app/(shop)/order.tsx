@@ -12,6 +12,7 @@ import { useTheme } from '../../src/theme/ThemeProvider';
 import { usePaymentStore, PAY_METHODS, isPaystack } from '../../src/store/paymentStore';
 import { useProfileStore } from '../../src/store/profileStore';
 import { apiBaseUrl } from '../../src/lib/host';
+import { LeafletMap } from '../../src/components/LeafletMap';
 import { Badge, Card, Divider, Row } from '../../src/components/ui';
 
 const STAGES: Record<string, string[]> = {
@@ -43,6 +44,22 @@ function eta(status: string): string {
   }
 }
 
+/**
+ * Why the estimate is standing still before the kitchen starts.
+ *
+ * The number only counts down once the food is actually being cooked, because until then nothing
+ * is happening to count down — the vendor hasn't picked the order up. Saying so is better than a
+ * figure that ticks away and implies progress that isn't being made.
+ */
+function NotStartedNote({ status, color }: { status: string; color: string }) {
+  if (status !== 'PLACED' && status !== 'CONFIRMED') return null;
+  return (
+    <Text style={{ fontSize: 12.5, color, marginTop: 6, fontStyle: 'italic' }}>
+      The kitchen hasn't started yet — the countdown begins when they do.
+    </Text>
+  );
+}
+
 export default function OrderScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -72,6 +89,11 @@ export default function OrderScreen() {
       setOrder(o);
       if (o.mode === 'WALKIN') {
         setQueue(await shopApi.queuePosition(orderId).catch(() => null));
+      }
+      // Anyone collecting has a journey to time — a pickup customer as much as a walk-in; only a
+      // delivery customer stays put. This poll is also what makes the estimate count down, since
+      // the server recomputes it against how long the food has actually been cooking.
+      if (o.mode === 'WALKIN' || o.mode === 'PICKUP') {
         // Where they are NOW is what decides when to set off, so the position is read on each
         // refresh rather than once. Best-effort: no permission still gives a ready time.
         const here = await getCurrentLocation().catch(() => null);
@@ -98,8 +120,15 @@ export default function OrderScreen() {
     return () => clearInterval(poll);
   }, [order?.status, orderId]);
 
+  // Listen from READY, not from OUT_FOR_DELIVERY.
+  //
+  // The courier's app starts pushing GPS the moment they accept the job, which happens while the
+  // order is still READY — they then drive to the restaurant, collect, and only *then* does the
+  // order flip to OUT_FOR_DELIVERY. Subscribing at OUT_FOR_DELIVERY threw away the whole first
+  // leg, so the customer saw nothing during the part of the wait they most want to watch.
   useEffect(() => {
-    if (!order || order.mode !== 'DELIVERY' || order.status !== 'OUT_FOR_DELIVERY') return;
+    if (!order || order.mode !== 'DELIVERY') return;
+    if (order.status !== 'READY' && order.status !== 'OUT_FOR_DELIVERY') return;
     wsClient.subscribeToDelivery(orderId, (loc) => {
       setCourierLoc({ lat: loc.lat, lng: loc.lng });
       setIsStale(false);
@@ -187,6 +216,26 @@ export default function OrderScreen() {
   const viaPaystack = isPaystack(payMethod);
   const confirmer = order.mode === 'DELIVERY' ? 'courier' : 'vendor';
 
+  // ── Courier tracking geometry ──────────────────────────────────────────────
+  // Before collection the useful view is courier → restaurant; after it, restaurant → your door.
+  const collected = order.status === 'OUT_FOR_DELIVERY';
+  const vendorPt = order.restaurantLat != null && order.restaurantLng != null
+    ? { lat: Number(order.restaurantLat), lng: Number(order.restaurantLng) } : null;
+  const destPt = order.deliveryLat != null && order.deliveryLng != null
+    ? { lat: Number(order.deliveryLat), lng: Number(order.deliveryLng) } : null;
+  const courierMarkers = [
+    ...(vendorPt ? [{ ...vendorPt, kind: 'pickup' as const, label: order.restaurantName }] : []),
+    // Older orders have no stored destination, so the map shows the pickup end only rather than
+    // inventing a pin. Nothing breaks; there is simply one fewer marker.
+    ...(destPt ? [{ ...destPt, kind: 'dest' as const, label: order.deliveryAddr || 'Your address' }] : []),
+  ];
+  // Centre on whichever leg is live: the courier's approach, or the journey to you.
+  const mapCenter = courierLoc && vendorPt && !collected
+    ? { lat: (courierLoc.lat + vendorPt.lat) / 2, lng: (courierLoc.lng + vendorPt.lng) / 2 }
+    : destPt && vendorPt
+      ? { lat: (vendorPt.lat + destPt.lat) / 2, lng: (vendorPt.lng + destPt.lng) / 2 }
+      : courierLoc ?? vendorPt;
+
   const stages = STAGES[order.mode] ?? STAGES.PICKUP;
   const cancelled = order.status === 'CANCELLED';
   const currentIdx = stages.indexOf(order.status);
@@ -228,22 +277,47 @@ export default function OrderScreen() {
           )}
         </Card>
 
-        {/* Courier */}
-        {order.mode === 'DELIVERY' && order.status === 'OUT_FOR_DELIVERY' && (
+        {/* Courier — shown from READY, so the run to the restaurant is visible too, not just the
+            leg to your door. `collected` is what splits those two phases. */}
+        {order.mode === 'DELIVERY' && (order.status === 'READY' || order.status === 'OUT_FOR_DELIVERY') && (
           <Card>
             <Row style={{ gap: 14 }}>
               <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="bicycle" size={24} color="#fff" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>Your courier is on the way</Text>
-                <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }}>Delivering your order to you</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>
+                  {collected ? 'Your courier is on the way'
+                    : courierLoc ? 'Courier heading to the restaurant'
+                    : 'Finding you a courier'}
+                </Text>
+                <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }}>
+                  {collected ? 'Delivering your order to you'
+                    : courierLoc ? 'They’ll collect your order, then bring it to you'
+                    : 'Your order is ready and waiting for collection'}
+                </Text>
               </View>
-              <Badge label={isStale ? 'Stale' : 'Live'} color={isStale ? c.textMuted : c.success} />
+              {courierLoc && <Badge label={isStale ? 'Stale' : 'Live'} color={isStale ? c.textMuted : c.success} />}
             </Row>
-            {courierLoc && (
-              <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 12 }}>
-                Courier near {courierLoc.lat.toFixed(4)}, {courierLoc.lng.toFixed(4)}
+
+            {/* The map only means anything once we have at least the vendor to anchor it. Raw
+                coordinates used to be printed here, which told the customer nothing at all. */}
+            {vendorPt && (
+              <View style={{ height: 220, borderRadius: 16, overflow: 'hidden', marginTop: 14, backgroundColor: c.surfaceAlt }}>
+                <LeafletMap
+                  style={{ flex: 1 }}
+                  mode="view"
+                  center={mapCenter!}
+                  zoom={14}
+                  markers={courierMarkers}
+                  driver={courierLoc}
+                  vehicleKind="bike"
+                />
+              </View>
+            )}
+            {!courierLoc && (
+              <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 10 }}>
+                The courier will appear on the map as soon as one accepts your delivery.
               </Text>
             )}
           </Card>
@@ -258,9 +332,9 @@ export default function OrderScreen() {
           </Card>
         )}
 
-        {/* When to set off. A walk-in is a place in a queue, so "your food is ready" arrives too
-            late to be useful — what the customer needs is the moment to leave. */}
-        {order.mode === 'WALKIN' && leave && order.status !== 'COMPLETED' && order.status !== 'CANCELLED' && (
+        {/* When to set off — for walk-in and pickup alike. "Your food is ready" arrives too late
+            to be useful when you still have to travel; the moment to leave is the useful figure. */}
+        {order.mode !== 'DELIVERY' && leave && order.status !== 'COMPLETED' && order.status !== 'CANCELLED' && (
           <Card>
             {leave.leaveInMinutes == null ? (
               <>
@@ -271,6 +345,7 @@ export default function OrderScreen() {
                 <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 6 }}>
                   Turn on location and we'll tell you exactly when to set off.
                 </Text>
+                <NotStartedNote status={leave.status} color={c.textMuted} />
               </>
             ) : leave.leaveInMinutes <= 0 ? (
               <>
@@ -294,6 +369,7 @@ export default function OrderScreen() {
                     : `Ready in about ${leave.readyInMinutes} min`}
                   {leave.travelMinutes != null ? ` · ${leave.travelMinutes} min away` : ''}
                 </Text>
+                <NotStartedNote status={leave.status} color={c.textMuted} />
               </>
             )}
           </Card>

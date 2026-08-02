@@ -22,6 +22,12 @@ public record OrderResponse(
     String promoLabel,
     String promoNotes,
     String deliveryAddr,
+    /** Destination pin. Null for pickup/walk-in and for orders placed before it was stored. */
+    BigDecimal deliveryLat,
+    BigDecimal deliveryLng,
+    /** Where the food is coming from — sent here so tracking needs no second call. */
+    BigDecimal restaurantLat,
+    BigDecimal restaurantLng,
     OffsetDateTime createdAt,
     String paymentStatus,
     String paymentMethod,
@@ -53,6 +59,10 @@ public record OrderResponse(
             o.getPromoLabel(),
             o.getPromoNotes(),
             o.getDeliveryAddr(),
+            o.getDeliveryLat(),
+            o.getDeliveryLng(),
+            o.getRestaurant().getLat(),
+            o.getRestaurant().getLng(),
             o.getCreatedAt(),
             o.getPaymentStatus().name(),
             o.getPaymentMethod(),

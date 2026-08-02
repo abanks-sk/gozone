@@ -427,6 +427,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/OrderResponse'
 
+  /orders/{id}/leave-time:
+    get:
+      tags: [orders]
+      summary: When a collecting customer should set off
+      description: >
+        Walk-in and pickup orders only — a delivery is brought to the customer, so there is no
+        journey to time (409). Once the kitchen starts cooking the estimate counts down against
+        elapsed prep time, so polling this endpoint is what makes the figure move.
+        Coordinates are deliberately query parameters rather than stored on the order: what
+        matters is where the customer is when they ask. Without them the travel leg is omitted
+        and only the ready time is returned.
+      operationId: orderLeaveTime
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: lat
+          in: query
+          required: false
+          schema: { type: number, format: double }
+        - name: lng
+          in: query
+          required: false
+          schema: { type: number, format: double }
+      responses:
+        '200':
+          description: Ready time, and when to leave if coordinates were supplied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveTimeResponse'
+        '409':
+          description: Delivery order — nothing to set off for
+
   /orders/{id}/rate:
     post:
       tags: [ratings]
@@ -823,6 +860,24 @@ components:
           type: string
           nullable: true
           description: Vendor-fulfilled promos in effect, for customer and vendor to see
+        deliveryLat:
+          type: number
+          nullable: true
+          description: >
+            Where the delivery is going. Null for pickup/walk-in and for orders placed before
+            this was persisted — the checkout has always sent it, but it was previously used
+            only to price the delivery fee and then discarded, which left live tracking with no
+            destination to draw.
+        deliveryLng:
+          type: number
+          nullable: true
+        restaurantLat:
+          type: number
+          nullable: true
+          description: Vendor's position, included so a tracking screen needs no second call
+        restaurantLng:
+          type: number
+          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -841,6 +896,39 @@ components:
           type: string
           enum: [CONFIRMED, PREPARING, READY, COMPLETED, CANCELLED]
 
+    LeaveTimeResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          nullable: true
+          description: Queue position; null for a pickup order, which has no queue
+        peopleAhead:
+          type: integer
+          description: Recomputed from who is still waiting, not read off the ticket number
+        readyInMinutes:
+          type: integer
+          description: >
+            Minutes until the food is ready. Before cooking starts this is the queue ahead plus
+            the order's own prep; once cooking it is the remaining prep, i.e. it counts down.
+            Floors at 1 while still cooking — only a READY order returns 0.
+        travelMinutes:
+          type: integer
+          nullable: true
+          description: Straight-line travel at city speed; null when no coordinates were supplied
+        leaveInMinutes:
+          type: integer
+          nullable: true
+          description: >
+            readyInMinutes minus travel and a safety buffer. Negative means already late to set
+            off, so the app should say "leave now". Null when no coordinates were supplied.
+        status:
+          type: string
+          description: The order's current status
+
     DeliveryResponse:
       type: object
       properties:
@@ -854,6 +942,24 @@ components:
           type: string
         dropoffAddr:
           type: string
+          nullable: true
+        vendorLat:
+          type: number
+          nullable: true
+          description: >
+            Collection point. Couriers previously received only names and an address string, so
+            the app's position updates followed a path hardcoded into it — the same stretch of
+            central Accra whichever restaurant the order came from, which put the courier nowhere
+            near the food on the customer's tracking map.
+        vendorLng:
+          type: number
+          nullable: true
+        dropoffLat:
+          type: number
+          nullable: true
+          description: Destination. Null on orders placed before it was persisted.
+        dropoffLng:
+          type: number
           nullable: true
         total:
           type: number

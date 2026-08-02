@@ -34,6 +34,18 @@ public class Order {
     @Column(name = "delivery_addr")
     private String deliveryAddr;
 
+    /**
+     * Where the delivery is going. Sent at checkout and previously used only to price the
+     * delivery fee before being discarded, which left the customer's live-tracking map with no
+     * destination to draw and the courier with a street name instead of a pin.
+     * Null for pickup/walk-in, and for orders placed before this was stored.
+     */
+    @Column(name = "delivery_lat", precision = 10, scale = 7)
+    private BigDecimal deliveryLat;
+
+    @Column(name = "delivery_lng", precision = 10, scale = 7)
+    private BigDecimal deliveryLng;
+
     @Column(name = "delivery_fee", nullable = false, precision = 10, scale = 2)
     private BigDecimal deliveryFee = BigDecimal.ZERO;
 
@@ -60,6 +72,14 @@ public class Order {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
+
+    /**
+     * When the kitchen started cooking. Null until the vendor moves the order to PREPARING —
+     * created_at would be wrong, as an order can sit at PLACED for as long as the vendor takes
+     * to confirm it. This is what lets the collection estimate count down instead of standing still.
+     */
+    @Column(name = "preparing_at")
+    private OffsetDateTime preparingAt;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<OrderItem> items = new ArrayList<>();
@@ -89,6 +109,10 @@ public class Order {
     public void setStatus(Status status) { this.status = status; }
     public String getDeliveryAddr() { return deliveryAddr; }
     public void setDeliveryAddr(String deliveryAddr) { this.deliveryAddr = deliveryAddr; }
+    public BigDecimal getDeliveryLat() { return deliveryLat; }
+    public void setDeliveryLat(BigDecimal deliveryLat) { this.deliveryLat = deliveryLat; }
+    public BigDecimal getDeliveryLng() { return deliveryLng; }
+    public void setDeliveryLng(BigDecimal deliveryLng) { this.deliveryLng = deliveryLng; }
     public BigDecimal getDeliveryFee() { return deliveryFee; }
     public void setDeliveryFee(BigDecimal deliveryFee) { this.deliveryFee = deliveryFee; }
     public BigDecimal getServiceFee() { return serviceFee; }
@@ -104,6 +128,8 @@ public class Order {
     public BigDecimal getTotal() { return total; }
     public void setTotal(BigDecimal total) { this.total = total; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getPreparingAt() { return preparingAt; }
+    public void setPreparingAt(OffsetDateTime preparingAt) { this.preparingAt = preparingAt; }
     public List<OrderItem> getItems() { return items; }
     public PaymentStatus getPaymentStatus() { return paymentStatus; }
     public void setPaymentStatus(PaymentStatus paymentStatus) { this.paymentStatus = paymentStatus; }
