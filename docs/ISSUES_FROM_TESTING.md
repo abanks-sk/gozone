@@ -3,7 +3,9 @@
 Raised by the user during the first real tap-through (see `TAP_THROUGH.md` for the run itself,
 where `[/]` means partly passing and `((notes))` are the user's own).
 
-**None of these are fixed yet.** Ordered by cost-to-fix so a session can clear the cheap
+**Status: A1, A2, A3 fixed. A4-A7 and B/C open.** `dest` is still the `NO_DEST` sentinel —
+converting it to a proper nullable type remains the right fix, and would have made A1 a compile
+error rather than a bug report. Ordered by cost-to-fix so a session can clear the cheap
 correctness bugs first and not stall on the feature work. Each entry says where to look, because
 the diagnosis is the expensive part and it is already done here.
 
@@ -11,29 +13,30 @@ the diagnosis is the expensive part and it is already done here.
 
 ## A. Quick correctness bugs — do these first
 
-**A1. A fare is quoted with no destination.**
+**A1. A fare is quoted with no destination.** — ✅ FIXED
 `(rider)/home.tsx` guards the *quote fetch* with `hasDest(dest)`, but `fare` is seeded from
 `useState(() => rideFare(distance, 1))` and `distance` is computed against `NO_DEST` (0,0), so a
 stale figure renders anyway. Guard the fare *display*, not just the fetch.
 → This is the `NO_DEST` sentinel leaking exactly where predicted. Converting `dest` to a proper
 nullable type would have caught it at compile time; worth doing now rather than patching again.
 
-**A2. Destination survives logout.**
+**A2. Destination survives logout.** — ✅ FIXED
 Empty on a fresh *account* but not a fresh *login*. `rideDraft` is not cleared by
 `src/lib/session.ts clearUserData()` — add it alongside profile/recents/payment/cart. Same class of
 bug as the "new account inherited the previous user's data" fix; the store was simply missed.
 
-**A3. Splash wordmark is white, motto is blue.**
-Both should be blue. `app/index.tsx` sets `brand.primaryBright` on the name — check it is not being
-overridden, and that all three apps match.
+**A3. Splash wordmark colour.** — ✅ FIXED
+Corrected requirement: the company name should be **white**, the motto **blue**. Both had ended up
+blue. Name now `brand.text`, motto stays `brand.glow`, in all three apps.
 
 **A4. GZ mark missing or malformed on some devices.**
 `GzMark` renders the PNG with `tintColor`. Suspect the cleaned asset's alpha or the tint on certain
 Android versions. Test on the device that fails; fall back to an untinted white variant if needed.
 
-**A5. Glow orb appears in a top corner on screens that already have the glow background.**
-Double-rendered `GlowOrb` — one from `BrandScreen`, one from `GzHero`. Find the screens that use
-both and drop the inner one.
+**A5. Glow orb appears in a top corner on some screens that already have the glow background.**
+**Not every such screen — only some**, so this is not a blanket `BrandScreen` change. Find the
+specific screens that render their own `GlowOrb`/`GzHero` on top of the brand background and drop
+the duplicate there only.
 
 **A6. Walk-in / pickup estimate does not count down as the vendor works.**
 `readyInMinutes` is computed from queue position and prep time only; it ignores *elapsed* time, so
@@ -62,6 +65,10 @@ treatment — a clear "your account is still being verified" state on the first 
 **B3. Courier live location not showing during delivery.** Customer order screen has the courier
 card but no map. The WS topic broadcasts on the **order id** and the plumbing exists — wire the map
 in, mirroring `(rider)/live.tsx`.
+⚠️ **Scope check first.** The map must appear from the *start* of the delivery, not only once the
+courier has collected the food — if it currently only shows post-pickup, that is the bug. The
+later phase could not be tested at all, because every seeded vendor is in Accra and the distances
+were too short to observe movement. **Seed a vendor further out before retesting.**
 
 ---
 
@@ -78,7 +85,9 @@ profile/settings until approved.
 **C3. Vendor location via map picker / current location.** Port the customer's `map-picker` flow.
 Currently hardcoded Accra coordinates.
 
-**C4. Vendor profile editing**, including what customers see (business name, image, description).
+**C4. Vendor *storefront* editing.** Personal/business profile editing already works — this is the
+**kitchen information shown on the customer's menu screen**: the header, description, imagery and
+anything else a customer reads before ordering. That surface has no editor at all today.
 
 **C5. Bolt-style scrollable map on the customer home.** Pull the sheet down to reveal the full map,
 search bar docked at the bottom. A layout change to `(rider)/home.tsx`.

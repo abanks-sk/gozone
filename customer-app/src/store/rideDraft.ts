@@ -25,6 +25,8 @@ interface RideDraftState {
   setOrigin: (p: Place) => void;
   setDest: (p: Place) => void;
   setScheduledAt: (t: number | null) => void;
+  /** Back to a clean draft — called on logout and on every fresh sign-in. */
+  reset: () => void;
   swap: () => void;
 }
 
@@ -35,6 +37,7 @@ export const useRideDraft = create<RideDraftState>((set) => ({
   setOrigin: (p) => set({ origin: p }),
   setDest: (p) => set({ dest: p }),
   setScheduledAt: (scheduledAt) => set({ scheduledAt }),
+  reset: () => set({ origin: KOTOKA, dest: NO_DEST, scheduledAt: null }),
   // Nothing to swap with an empty destination — leave the draft alone rather than
   // blanking the pickup the rider has already got right.
   swap: () => set((s) => (hasDest(s.dest) ? { origin: s.dest, dest: s.origin } : {})),

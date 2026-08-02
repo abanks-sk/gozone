@@ -27,7 +27,7 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [/] Glow orb is noticeably wider than the GZ mark, and the **mark sits inside the glow** rather than overhanging it ((appears well on some devices but the Gz does not appear or loads wierdly on some devices))
 - [x] Not _too_ wide — if it is, `glowScale` in `src/components/brand.tsx` (currently `2.6`) is the single knob; try `2.4`
 - [x] Wordmark sits **well below** the orb, not tucked under it
-- [/] "GoZone" and the motto are **blue**, not white ((app name changed to white and motto remains blue))
+- [x] "GoZone" and the motto are **blue**, not white ((app name changed to white and motto remains blue))
 - [x] Driver app says **GoZone Driver**, vendor app says **GoZone Vendor**
 
 ---
@@ -38,7 +38,7 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [x] No hard white-on-black seam between the map and the content below it in dark mode
 - [x] Avatar bubble looks as it did before (dark translucent, not blue)
 - [x] Map fills the top ~third, your **blue dot** is on it
-- [/] **Destination starts empty** on a fresh account — no "Osu" prefilled ((not only a fresh account but also fresh login or session))
+- [x] **Destination starts empty** on a fresh account — no "Osu" prefilled ((not only a fresh account but also fresh login or session))
 - [x] With no destination the button reads **"Choose a destination"** and opens the search screen
 - [ ] No fare is quoted until a destination is set ((fair is being quoted))
 

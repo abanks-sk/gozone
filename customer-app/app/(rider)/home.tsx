@@ -96,7 +96,9 @@ export default function RiderHomeScreen() {
       : []),
   ];
 
-  const distance = haversineKm(origin, dest);
+  // Zero with no destination: the sentinel sits at 0,0, so measuring to it quotes a fare for a
+  // trip into the Atlantic. The quote fetch was already guarded; the displayed fare was not.
+  const distance = hasDest(dest) ? haversineKm(origin, dest) : 0;
   // Server-authoritative fares per ride type (falls back to local pricing on failure/offline).
   const [quotes, setQuotes] = useState<Record<string, number>>({});
   const [surge, setSurge] = useState(false);
@@ -104,7 +106,7 @@ export default function RiderHomeScreen() {
   const [rideType, setRideType] = useState('standard');
   const [typeOpen, setTypeOpen] = useState(false);
   const typeMeta = RIDE_TYPES.find((t) => t.key === rideType) ?? RIDE_TYPES[0];
-  const [fare, setFare] = useState(() => rideFare(distance, 1));
+  const [fare, setFare] = useState(() => (hasDest(dest) ? rideFare(distance, 1) : 0));
   const [loading, setLoading] = useState(false);
 
   // Fetch server quotes for every ride type whenever the route changes.
@@ -305,7 +307,7 @@ export default function RiderHomeScreen() {
               <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 16, backgroundColor: c.surfaceAlt, borderRadius: 14, padding: 14 }}>
                 <View>
                   <Text style={{ fontSize: 12, color: c.textMuted, fontWeight: '600' }}>Fixed fare · no bargaining</Text>
-                  <Text style={{ fontSize: 22, fontWeight: '800', color: c.text, marginTop: 2 }}>GH₵ {fare}</Text>
+                  <Text style={{ fontSize: 22, fontWeight: '800', color: c.text, marginTop: 2 }}>{hasDest(dest) ? `GH₵ ${fare}` : '—'}</Text>
                 </View>
                 <Ionicons name="shield-checkmark" size={22} color={c.primary} />
               </Row>

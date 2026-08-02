@@ -1,3 +1,4 @@
+import { useRideDraft } from '../store/rideDraft';
 import { useProfileStore } from '../store/profileStore';
 import { useRecents } from '../store/recentsStore';
 import { usePaymentStore } from '../store/paymentStore';
@@ -10,6 +11,9 @@ import { useShopCart } from '../store/shopCart';
 // a new/returning account never inherits the previous person's identity or history.
 export async function clearUserData(): Promise<void> {
   await Promise.all([
+    // The draft carries the last rider's pickup and destination. Missed when the other stores
+    // were cleared, so a new sign-in inherited somebody else's route.
+    useRideDraft.getState().reset(),
     useProfileStore.getState().reset(),
     useRecents.getState().reset(),
     usePaymentStore.getState().reset(),
