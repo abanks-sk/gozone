@@ -73,6 +73,7 @@ function ThemedStack() {
           <Stack.Screen name="add-phone" />
           <Stack.Screen name="help" />
           <Stack.Screen name="vehicle" />
+          <Stack.Screen name="documents" />
           <Stack.Screen name="auth/register" />
           <Stack.Screen name="auth/verify-otp" />
           <Stack.Screen name="(driver)" />

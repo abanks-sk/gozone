@@ -16,7 +16,7 @@ import { clearPending, getPending, setPending } from '../../src/lib/pendingPayme
 import { getCurrentLocation } from '../../src/lib/location';
 import { LeafletMap } from '../../src/components/LeafletMap';
 import { vehicleKindOf } from '../../src/components/mapTypes';
-import { Row, Badge } from '../../src/components/ui';
+import { Row, Badge, StarRating } from '../../src/components/ui';
 
 function tripPhase(status: string): { label: string; title: string; sub: string } {
   switch (status) {
@@ -257,10 +257,11 @@ export default function LiveRideScreen() {
       Alert.alert('SOS', 'Could not send the alert — please call emergency services directly if you are in danger.');
     }
   }
-  async function rate(score: number) {
-    if (!trip || rated) return;
-    setRating(score);
-    try { await rideApi.rateTrip(trip.id, trip.driverId, score); setRated(true); }
+  // Choosing a score and sending it are separate now: tapping a star used to submit on the spot,
+  // so a thumb that landed on the wrong one was the rating that stood.
+  async function rate() {
+    if (!trip || rated || !rating) return;
+    try { await rideApi.rateTrip(trip.id, trip.driverId, rating); setRated(true); }
     catch (e: any) { Alert.alert('Error', e?.response?.data?.message ?? 'Could not submit rating'); }
   }
 
@@ -492,12 +493,14 @@ export default function LiveRideScreen() {
             {/* Rating */}
             <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 16, textAlign: 'center' }}>{rated ? 'Thanks for rating!' : 'Rate your driver'}</Text>
             <Row style={{ gap: 10, marginTop: 10, justifyContent: 'center' }}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <TouchableOpacity key={n} onPress={() => rate(n)} activeOpacity={0.7} disabled={rated}>
-                  <Ionicons name={n <= rating ? 'star' : 'star-outline'} size={32} color={c.warning} />
-                </TouchableOpacity>
-              ))}
+              <StarRating value={rating} onChange={setRating} disabled={rated} />
             </Row>
+            {!rated && rating > 0 && (
+              <TouchableOpacity onPress={rate} activeOpacity={0.85}
+                style={{ marginTop: 12, alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 11, borderRadius: 999, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary }}>
+                <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14 }}>Submit rating</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity onPress={() => router.replace('/(rider)/home' as any)} activeOpacity={0.9}
               style={{ marginTop: 16, backgroundColor: paid ? c.primary : c.surfaceAlt, borderRadius: 999, paddingVertical: 14, alignItems: 'center' }}>
               <Text style={{ color: paid ? '#fff' : c.text, fontWeight: '800', fontSize: 15 }}>{paid ? 'Book another ride' : 'Done'}</Text>

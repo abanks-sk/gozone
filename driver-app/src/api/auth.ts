@@ -14,6 +14,11 @@ export interface Kyc {
   status: string;
   licenceNo: string;
   vehicleReg: string;
+  /** Relative paths (`/auth/uploads/{id}`) — fetching one still requires being this driver or an admin. */
+  idSelfieUrl?: string | null;
+  licenceUrl?: string | null;
+  vehiclePhotoUrl?: string | null;
+  roadworthyUrl?: string | null;
 }
 
 export const authApi = {

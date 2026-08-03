@@ -15,17 +15,36 @@ import api from '../api/client';
 
 export type PickedPhoto = { uri: string; width: number; height: number };
 
+/**
+ * Why no photo came back. "Take photo" was reported as opening a picker instead of the camera, and
+ * a bare `null` made that impossible to tell apart from a refused permission or a cancelled shot —
+ * all three did nothing and said nothing. The caller can now explain itself.
+ */
+export type CaptureResult =
+  | { ok: true; photo: PickedPhoto }
+  | { ok: false; reason: 'cancelled' | 'camera-denied' | 'library-denied' | 'no-camera' };
+
 async function picker() {
   return await import('expo-image-picker');
 }
 
-/** Ask for the camera, falling back to the library if the camera is unavailable or refused. */
-export async function capturePhoto(useCamera: boolean): Promise<PickedPhoto | null> {
+/**
+ * Take a photo, or choose one — whichever was asked for, and never the other.
+ *
+ * Asking for the camera used to fall through to the library whenever the camera was unavailable,
+ * which on web means every time: "Take photo" opened a file-selection dialog. Silently doing the
+ * other thing is worse than saying you cannot do this one, because the driver has no idea their
+ * device just made a decision for them.
+ */
+export async function capturePhoto(useCamera: boolean): Promise<CaptureResult> {
   const ImagePicker = await picker();
 
-  if (useCamera && Platform.OS !== 'web') {
+  if (useCamera) {
+    // No camera capture in a browser — say so rather than quietly offering the file picker.
+    if (Platform.OS === 'web') return { ok: false, reason: 'no-camera' };
+
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) return null;
+    if (!perm.granted) return { ok: false, reason: 'camera-denied' };
     const shot = await ImagePicker.launchCameraAsync({
       mediaTypes: ['images'],
       // Compressed on the device: an unmodified phone photo is several megabytes, which is slow
@@ -33,21 +52,31 @@ export async function capturePhoto(useCamera: boolean): Promise<PickedPhoto | nu
       quality: 0.6,
       allowsEditing: false,
     });
-    if (shot.canceled || !shot.assets?.length) return null;
+    if (shot.canceled || !shot.assets?.length) return { ok: false, reason: 'cancelled' };
     const a = shot.assets[0];
-    return { uri: a.uri, width: a.width ?? 0, height: a.height ?? 0 };
+    return { ok: true, photo: { uri: a.uri, width: a.width ?? 0, height: a.height ?? 0 } };
   }
 
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!perm.granted) return null;
+  if (!perm.granted) return { ok: false, reason: 'library-denied' };
   const res = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
     quality: 0.6,
     allowsEditing: false,
   });
-  if (res.canceled || !res.assets?.length) return null;
+  if (res.canceled || !res.assets?.length) return { ok: false, reason: 'cancelled' };
   const a = res.assets[0];
-  return { uri: a.uri, width: a.width ?? 0, height: a.height ?? 0 };
+  return { ok: true, photo: { uri: a.uri, width: a.width ?? 0, height: a.height ?? 0 } };
+}
+
+/** A sentence for the driver explaining why nothing was captured — null when they simply backed out. */
+export function captureFailureMessage(reason: Exclude<CaptureResult, { ok: true }>['reason']): string | null {
+  switch (reason) {
+    case 'cancelled': return null;
+    case 'camera-denied': return 'GoZone needs permission to use the camera. Turn it on in Settings, or use Choose to pick a photo instead.';
+    case 'library-denied': return 'GoZone needs permission to see your photos. Turn it on in Settings, or use Take photo instead.';
+    case 'no-camera': return 'The camera is only available in the app on your phone. Use Choose to select a photo here.';
+  }
 }
 
 /**
@@ -77,9 +106,9 @@ export async function uploadPhoto(photo: PickedPhoto): Promise<string> {
   return data.url;
 }
 
-/** Pick and upload in one step. Returns null if the driver backed out. */
+/** Pick and upload in one step. Returns null if nothing was captured. */
 export async function captureAndUpload(useCamera: boolean): Promise<string | null> {
-  const photo = await capturePhoto(useCamera);
-  if (!photo) return null;
-  return await uploadPhoto(photo);
+  const res = await capturePhoto(useCamera);
+  if (!res.ok) return null;
+  return await uploadPhoto(res.photo);
 }

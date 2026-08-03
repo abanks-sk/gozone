@@ -49,16 +49,23 @@ export default function ProfileScreen() {
         <Text style={{ fontSize: 22, fontWeight: '800', color: c.text }}>Profile</Text>
       </View>
 
-      {/* Identity */}
-      <Card>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-          <Avatar label={(vendor?.name?.[0] ?? 'V').toUpperCase()} size={56} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: c.text }}>{vendor?.name ?? 'Your business'}</Text>
-            <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }}>Vendor · GoZone</Text>
+      {/* Identity → account editor. This card was the one dead end of the three apps: the customer
+          and driver cards both open your account details, and here the only route to them was a
+          row further down the page. */}
+      <TouchableOpacity activeOpacity={0.85} onPress={() => router.push('/account' as any)}>
+        <Card>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+            <Avatar label={(vendor?.name?.[0] ?? 'V').toUpperCase()} size={56} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: c.text }}>{vendor?.name ?? 'Your business'}</Text>
+              <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }}>
+                {profile.name ? `${profile.name} · Vendor` : 'Vendor · GoZone'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={c.textMuted} />
           </View>
-        </View>
-      </Card>
+        </Card>
+      </TouchableOpacity>
 
       {/* Appearance */}
       <Text style={sectionLabel(c)}>Appearance</Text>

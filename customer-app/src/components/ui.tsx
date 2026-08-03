@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  PanResponder,
   ScrollView,
   Text,
   TextInput,
@@ -443,5 +444,63 @@ export function ListRow({
       </View>
       {onPress ? <Ionicons name="chevron-forward" size={18} color={c.textMuted} /> : null}
     </TouchableOpacity>
+  );
+}
+
+/**
+ * Star rating you can drag across or tap directly.
+ *
+ * Every rating screen used to be five separate buttons that each submitted on the spot: your first
+ * touch was your answer, and if your thumb landed on the wrong star that was the rating the driver
+ * got. This one only *selects* — the screen decides when to send it — and the fill follows your
+ * finger, so you can slide from the first star along to the one you meant and let go there.
+ *
+ * The row measures itself in window coordinates and converts `pageX` into a star. Doing it from the
+ * geometry rather than from per-star touch handlers is what allows a drag to cross the gaps between
+ * the stars without the value dropping out.
+ */
+export function StarRating({
+  value, onChange, size = 34, disabled = false,
+}: { value: number; onChange: (n: number) => void; size?: number; disabled?: boolean }) {
+  const { colors: c } = useTheme();
+  const GAP = 10;
+  const step = size + GAP;
+  const rowRef = React.useRef<View>(null);
+  const originX = React.useRef(0);
+
+  const measure = () => {
+    rowRef.current?.measureInWindow?.((x) => { originX.current = x; });
+  };
+
+  const starAt = (pageX: number) => {
+    const rel = pageX - originX.current;
+    return Math.min(5, Math.max(1, Math.ceil(rel / step)));
+  };
+
+  const pan = React.useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (e) => { onChangeRef.current(starAt(e.nativeEvent.pageX)); },
+      onPanResponderMove: (e) => { onChangeRef.current(starAt(e.nativeEvent.pageX)); },
+    }),
+  ).current;
+
+  // The responder is created once, so it reaches the current callback through a ref rather than
+  // capturing whichever one existed on the first render.
+  const onChangeRef = React.useRef(onChange);
+  onChangeRef.current = disabled ? () => {} : onChange;
+
+  return (
+    <View
+      ref={rowRef}
+      onLayout={measure}
+      {...(disabled ? {} : pan.panHandlers)}
+      style={{ flexDirection: 'row', gap: GAP, alignSelf: 'center', paddingVertical: 6 }}
+    >
+      {[1, 2, 3, 4, 5].map((n) => (
+        <Ionicons key={n} name={n <= value ? 'star' : 'star-outline'} size={size} color={c.warning} />
+      ))}
+    </View>
   );
 }

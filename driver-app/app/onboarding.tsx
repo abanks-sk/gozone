@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { authApi, Kyc } from '../src/api/auth';
 import { useAuthStore } from '../src/store/authStore';
 import { useDriverSetup, SetupDraft } from '../src/store/driverSetupStore';
-import { capturePhoto, uploadPhoto } from '../src/lib/photo';
+import { capturePhoto, uploadPhoto, captureFailureMessage } from '../src/lib/photo';
 import { BrandScreen, GlowOrb, BrandInput, PillButton, GzHero } from '../src/components/brand';
 import { brand } from '../src/theme/tokens';
 
@@ -32,8 +32,15 @@ export default function DriverOnboarding() {
   async function pickDoc(key: DocKey, useCamera: boolean) {
     setBusyDoc(key);
     try {
-      const photo = await capturePhoto(useCamera);
-      if (!photo) return;                       // backed out, or permission refused
+      const res = await capturePhoto(useCamera);
+      if (!res.ok) {
+        // Backing out is silent; anything else gets a reason. Doing nothing without a word was
+        // indistinguishable from the button being broken.
+        const msg = captureFailureMessage(res.reason);
+        if (msg) Alert.alert(useCamera ? 'Can’t open the camera' : 'Can’t open your photos', msg);
+        return;
+      }
+      const photo = res.photo;
       setPreviews((p) => ({ ...p, [key]: photo.uri }));
       const url = await uploadPhoto(photo);
       draft.set({ [FIELD[key]]: url } as Partial<SetupDraft>);

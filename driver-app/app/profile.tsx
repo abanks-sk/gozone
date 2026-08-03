@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { authApi, Kyc } from '../src/api/auth';
 import { useAuthStore } from '../src/store/authStore';
 import { useDriverStore } from '../src/store/driverStore';
 import { useVehicle, vehicleSummary } from '../src/store/vehicleStore';
@@ -28,7 +29,39 @@ export default function ProfileScreen() {
   const serviceMode = useAuthStore((s) => s.serviceMode);
   const setServiceMode = useAuthStore((s) => s.setServiceMode);
   const fetchMe = useAuthStore((s) => s.fetchMe);
+  const accountStatus = useAuthStore((s) => s.status);
   useEffect(() => { fetchMe(); }, []);
+
+  /**
+   * What the account and its documents are actually worth.
+   *
+   * Both of these read "Verified" no matter what, and the Documents row opened an alert that said
+   * "(KYC mocked)" — written when the documents really were a placeholder string. They are real
+   * photographs now, and a driver waiting on an admin was being told they were already approved.
+   */
+  const [kyc, setKyc] = useState<Kyc | null>(null);
+  const [kycLoaded, setKycLoaded] = useState(false);
+  useEffect(() => {
+    authApi.myKyc().then((k) => { setKyc(k); }).finally(() => setKycLoaded(true));
+  }, []);
+
+  const accountLabel =
+    accountStatus === 'ACTIVE' ? 'Verified'
+    : accountStatus === 'REJECTED' ? 'Rejected'
+    : accountStatus === 'SUSPENDED' ? 'Suspended'
+    : accountStatus ? 'In review' : '—';
+  const accountTone =
+    accountStatus === 'ACTIVE' ? c.success
+    : accountStatus === 'REJECTED' || accountStatus === 'SUSPENDED' ? c.danger
+    : c.warning;
+
+  // Documents are their own thing: an account can be approved while a later document submission is
+  // still being looked at, so this must not just mirror the account status.
+  const docLabel = !kycLoaded ? '…'
+    : !kyc ? 'Not submitted'
+    : kyc.status === 'VERIFIED' ? 'Verified'
+    : kyc.status === 'REJECTED' ? 'Rejected'
+    : 'In review';
 
   const SERVICE_MODES: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: 'BOTH', label: 'Both', icon: 'swap-horizontal-outline' },
@@ -71,7 +104,7 @@ export default function ProfileScreen() {
           <View style={{ width: 1, height: 28, backgroundColor: c.border }} />
           <Stat label="Acceptance" value="95%" c={c} />
           <View style={{ width: 1, height: 28, backgroundColor: c.border }} />
-          <Stat label="Status" value="Verified" c={c} />
+          <Stat label="Status" value={accountLabel} tone={accountTone} c={c} />
         </URow>
       </Card>
 
@@ -132,7 +165,7 @@ export default function ProfileScreen() {
       <Card>
         <Row icon="car-outline" label="Vehicle" hint={vehicleSummary(vehicle)} onPress={() => router.push('/vehicle' as any)} c={c} />
         <Divider />
-        <Row icon="document-text-outline" label="Documents" hint="Verified" onPress={() => Alert.alert('Documents', 'Licence & roadworthy on file (KYC mocked).')} c={c} />
+        <Row icon="document-text-outline" label="Documents" hint={docLabel} onPress={() => router.push('/documents' as any)} c={c} />
         <Divider />
         <Row icon="help-circle-outline" label="Help & support" onPress={() => router.push('/help' as any)} c={c} />
         <Divider />
@@ -154,10 +187,10 @@ function Row({ icon, label, hint, onPress, danger, last, c }: any) {
   );
 }
 
-function Stat({ label, value, c }: any) {
+function Stat({ label, value, tone, c }: any) {
   return (
     <View style={{ alignItems: 'center' }}>
-      <Text style={{ fontSize: 16, fontWeight: '800', color: c.text }}>{value}</Text>
+      <Text style={{ fontSize: 16, fontWeight: '800', color: tone ?? c.text }}>{value}</Text>
       <Text style={{ fontSize: 11.5, color: c.textMuted, marginTop: 2 }}>{label}</Text>
     </View>
   );

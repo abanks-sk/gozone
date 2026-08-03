@@ -8,7 +8,7 @@ import { mapsApi } from '../../src/api/maps';
 import { useDriverStore } from '../../src/store/driverStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { useTheme } from '../../src/theme/ThemeProvider';
-import { Row } from '../../src/components/ui';
+import { Row, StarRating } from '../../src/components/ui';
 import { GoogleMap } from '../../src/components/GoogleMap';
 import { vehicleKindOf } from '../../src/components/mapTypes';
 
@@ -190,10 +190,11 @@ export default function DriverTripScreen() {
     finally { setArriving(false); }
   }
 
-  async function rate(score: number) {
-    if (!trip || rated || !req) return;
-    setRating(score);
-    try { await rideApi.rateTrip(trip.id, req.riderId, score); setRated(true); }
+  // Choosing a score and sending it are separate: tapping a star used to submit on the spot, so a
+  // thumb that landed on the wrong one was the rating that stood.
+  async function rate() {
+    if (!trip || rated || !req || !rating) return;
+    try { await rideApi.rateTrip(trip.id, req.riderId, rating); setRated(true); }
     catch (e: any) { Alert.alert('Error', e?.response?.data?.message ?? 'Could not submit rating'); }
   }
 
@@ -433,12 +434,14 @@ export default function DriverTripScreen() {
             {/* Rate the passenger */}
             <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 20 }}>{rated ? 'Thanks for rating!' : isParcel ? 'Rate the customer' : 'Rate your passenger'}</Text>
             <Row style={{ gap: 10, marginTop: 10 }}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <TouchableOpacity key={n} onPress={() => rate(n)} activeOpacity={0.7} disabled={rated}>
-                  <Ionicons name={n <= rating ? 'star' : 'star-outline'} size={32} color={c.warning} />
-                </TouchableOpacity>
-              ))}
+              <StarRating value={rating} onChange={setRating} disabled={rated} />
             </Row>
+            {!rated && rating > 0 && (
+              <TouchableOpacity onPress={rate} activeOpacity={0.85}
+                style={{ marginTop: 12, alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 11, borderRadius: 999, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary }}>
+                <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14 }}>Submit rating</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity onPress={finish} activeOpacity={0.9}
               style={{ marginTop: 22, backgroundColor: pay.status === 'PAID' ? c.primary : c.surfaceAlt, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 40 }}>

@@ -28,7 +28,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "GoZone needs your photos so you can attach your licence and vehicle documents.",
+          "cameraPermission": "GoZone needs the camera so you can photograph your licence, vehicle and yourself for verification."
+        }
+      ]
     ],
     "scheme": "gozonedriver"
   }

@@ -13,7 +13,7 @@ import { usePaymentStore, PAY_METHODS, isPaystack, isSavedCard, cardIdOf } from 
 import { useProfileStore } from '../../src/store/profileStore';
 import { apiBaseUrl } from '../../src/lib/host';
 import { LeafletMap } from '../../src/components/LeafletMap';
-import { Badge, Card, Divider, Row } from '../../src/components/ui';
+import { Badge, Card, Divider, Row, StarRating } from '../../src/components/ui';
 
 const STAGES: Record<string, string[]> = {
   DELIVERY: ['PLACED', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'],
@@ -143,9 +143,11 @@ export default function OrderScreen() {
     wsClient.subscribeToQueue(order.restaurantId, () => { shopApi.queuePosition(orderId).then(setQueue).catch(() => {}); });
   }, [order?.restaurantId]);
 
-  async function rate(score: number) {
-    setMyRating(score);
-    try { await shopApi.rateOrder(orderId, score); Alert.alert('Thanks for rating!'); } catch {}
+  // Choosing a score and sending it are separate now — see the note on the ride screens.
+  const [rateSent, setRateSent] = useState(false);
+  async function rate() {
+    if (!myRating || rateSent) return;
+    try { await shopApi.rateOrder(orderId, myRating); setRateSent(true); Alert.alert('Thanks for rating!'); } catch {}
   }
 
   // Cash awaits the vendor/courier's confirmation — poll until PAID.
@@ -494,12 +496,14 @@ export default function OrderScreen() {
           <Card>
             <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginBottom: 10 }}>How was your order?</Text>
             <Row style={{ gap: 8 }}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <TouchableOpacity key={n} onPress={() => rate(n)} activeOpacity={0.7}>
-                  <Ionicons name={n <= myRating ? 'star' : 'star-outline'} size={32} color={c.warning} />
-                </TouchableOpacity>
-              ))}
+              <StarRating value={myRating} onChange={setMyRating} disabled={rateSent} />
             </Row>
+            {!rateSent && myRating > 0 && (
+              <TouchableOpacity onPress={rate} activeOpacity={0.85}
+                style={{ marginTop: 12, alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 11, borderRadius: 999, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary }}>
+                <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14 }}>Submit rating</Text>
+              </TouchableOpacity>
+            )}
           </Card>
         )}
       </ScrollView>
