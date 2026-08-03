@@ -78,6 +78,11 @@ public class UploadService {
     /** Save one image for this owner and return its id. */
     @Transactional
     public Upload store(UUID ownerId, MultipartFile file) {
+        return store(ownerId, file, Upload.Visibility.PRIVATE);
+    }
+
+    /** Same, but says who may read it back. Private unless the caller deliberately asks otherwise. */
+    public Upload store(UUID ownerId, MultipartFile file, Upload.Visibility visibility) {
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No file was sent.");
         }
@@ -120,8 +125,9 @@ public class UploadService {
         u.setStoredName(storedName);
         u.setContentType(type);
         u.setSizeBytes(bytes.length);
+        u.setVisibility(visibility);
         uploadRepo.save(u);
-        log.info("[UPLOAD] {} stored {} ({} bytes) for {}", id, type, bytes.length, ownerId);
+        log.info("[UPLOAD] {} stored {} ({} bytes, {}) for {}", id, type, bytes.length, visibility, ownerId);
         return u;
     }
 
@@ -133,11 +139,24 @@ public class UploadService {
      */
     public record Stored(Upload meta, byte[] bytes) {}
 
+    /** Whether anyone may read this one — decided before we ask who is asking. */
+    @Transactional(readOnly = true)
+    public boolean isPublic(UUID id) {
+        return uploadRepo.findById(id)
+            .map(u -> u.getVisibility() == Upload.Visibility.PUBLIC)
+            .orElse(false);
+    }
+
     @Transactional(readOnly = true)
     public Stored read(UUID id, UUID requesterId, boolean isAdmin) {
         Upload u = uploadRepo.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found."));
-        if (!isAdmin && !u.getOwnerId().equals(requesterId)) {
+        // A public upload is shop imagery — anyone may read it, signed in or not. Everything else
+        // is somebody's identity document and the owner check stands. 404 rather than 403 on
+        // purpose: a 403 would confirm the document exists, which is itself something a stranger
+        // should not learn about someone's ID.
+        if (u.getVisibility() != Upload.Visibility.PUBLIC
+                && !isAdmin && !u.getOwnerId().equals(requesterId)) {   // requesterId may be null
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found.");
         }
         Path p = root.resolve(u.getStoredName()).normalize();

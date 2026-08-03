@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -54,6 +55,12 @@ public class SecurityConfig {
                     // Internal service-to-service call, guarded by X-Internal-Key in the controller.
                     "/delivery-riders/availability"
                 ).permitAll()
+                // Reading an upload is decided by the upload, not by the URL: vendor shop imagery
+                // is public, and a customer's <Image> on the web cannot attach a token. Letting the
+                // request through is not letting it read anything — UploadController answers 401
+                // for a private file with no caller, and UploadService still checks the owner.
+                // GET only: creating an upload stays authenticated.
+                .requestMatchers(HttpMethod.GET, "/uploads/**").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtFilter(), UsernamePasswordAuthenticationFilter.class)

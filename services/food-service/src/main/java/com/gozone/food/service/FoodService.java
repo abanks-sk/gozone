@@ -150,6 +150,7 @@ public class FoodService {
      */
     public VendorResponse updateVendor(UUID vendorId, String ownerId, UpdateVendorRequest req) {
         Vendor v = requireOwner(ownerId, vendorId);
+        if (req.getLogoUrl() != null) v.setLogoUrl(imageOrNull(req.getLogoUrl()));
 
         if (req.getName() != null) {
             String name = req.getName().trim();
@@ -179,7 +180,9 @@ public class FoodService {
         // Blank is a deliberate clear for these three, unlike name.
         if (req.getAddress() != null)     v.setAddress(blankToNull(req.getAddress()));
         if (req.getDescription() != null) v.setDescription(blankToNull(req.getDescription()));
-        if (req.getImageUrl() != null)    v.setImageUrl(blankToNull(req.getImageUrl()));
+        // Was blankToNull, i.e. any string the vendor typed. The banner is on a page customers
+        // read, so it has to be bytes we hold rather than a link to somebody else's server.
+        if (req.getImageUrl() != null)    v.setImageUrl(imageOrNull(req.getImageUrl()));
         if (req.getPrepMinutes() != null && req.getPrepMinutes() > 0) {
             v.setPrepMinutes(req.getPrepMinutes());
         }
@@ -257,16 +260,33 @@ public class FoodService {
                 if (!g.getOptions().isEmpty()) item.getGroups().add(g);
             }
         }
+        item.setImageUrl(imageOrNull(req.getImageUrl()));
         menuItemRepo.save(item);
         log.info("[MENU] item created {} for vendor {}", item.getId(), restaurantId);
         return MenuItemResponse.from(item);
     }
 
-    /** Vendor edits one of their items. */
+    /**
+     * Vendor edits one of their items.
+     *
+     * <p><b>Only while the shop is closed</b> — except availability, which is deliberately exempt.
+     * Changing a price or a description mid-service means the menu a customer is reading is not the
+     * menu they will be charged against. Marking something sold out is the opposite: it is a live
+     * signal that only matters while you are open, and blocking it would force a vendor to close
+     * the shop to say they have run out of jollof.
+     */
     public MenuItemResponse updateMenuItem(String ownerId, UUID itemId, UpdateMenuItemRequest req) {
         MenuItem item = menuItemRepo.findById(itemId)
             .orElseThrow(() -> new IllegalStateException("Menu item not found"));
-        requireOwner(ownerId, item.getRestaurant().getId());
+        Vendor vendor = requireOwner(ownerId, item.getRestaurant().getId());
+        boolean onlyAvailability = req.getName() == null && req.getDescription() == null
+            && req.getCategory() == null && req.getPrepMinutes() == null
+            && req.getPrice() == null && req.getImageUrl() == null;
+        if (!onlyAvailability && vendor.getStatus() == Vendor.Status.OPEN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Close the shop to edit your menu. You can still mark items sold out while open.");
+        }
+        if (req.getImageUrl() != null) item.setImageUrl(imageOrNull(req.getImageUrl()));
         if (req.getName() != null && !req.getName().isBlank()) item.setName(req.getName().trim());
         if (req.getDescription() != null) item.setDescription(req.getDescription().trim());
         if (req.getCategory() != null) item.setCategory(req.getCategory().isBlank() ? null : req.getCategory().trim());
@@ -277,11 +297,15 @@ public class FoodService {
         return MenuItemResponse.from(item);
     }
 
-    /** Vendor removes one of their items. */
+    /** Vendor removes one of their items — an edit, so the shop has to be closed. */
     public void deleteMenuItem(String ownerId, UUID itemId) {
         MenuItem item = menuItemRepo.findById(itemId)
             .orElseThrow(() -> new IllegalStateException("Menu item not found"));
-        requireOwner(ownerId, item.getRestaurant().getId());
+        Vendor vendor = requireOwner(ownerId, item.getRestaurant().getId());
+        if (vendor.getStatus() == Vendor.Status.OPEN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Close the shop to remove items from your menu.");
+        }
         menuItemRepo.delete(item);
         log.info("[MENU] item deleted {}", itemId);
     }
@@ -379,6 +403,27 @@ public class FoodService {
     }
 
     /** Ensure the signed-in user owns the given vendor, returning it. */
+    /**
+     * An image reference must be something uploaded through the app, or nothing.
+     *
+     * <p>The storefront used to take any URL a vendor typed in, which meant the picture on the shop
+     * card was hotlinked from wherever they found it — it could rot, or be swapped for something
+     * else after the business was approved, on a page customers read. An uploaded path points at
+     * bytes we hold and never rewrite.
+     *
+     * <p>Blank clears the image, which is how a vendor removes one.
+     */
+    private String imageOrNull(String url) {
+        if (url == null) return null;
+        String u = url.trim();
+        if (u.isEmpty()) return null;
+        if (!u.startsWith("/auth/uploads/")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Choose a photo in the app rather than pasting a link.");
+        }
+        return u;
+    }
+
     private Vendor requireOwner(String ownerId, UUID restaurantId) {
         Vendor vendor = vendorRepo.findById(restaurantId)
             .orElseThrow(() -> new IllegalStateException("Vendor not found"));

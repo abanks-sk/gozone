@@ -14,6 +14,8 @@ public class CreateMenuItemRequest {
     private String category;
     @NotNull @DecimalMin("0.01") private BigDecimal price;
     private Boolean available = true;
+    /** Photo of the dish, uploaded through the app. */
+    private String imageUrl;
     private List<GroupInput> groups;
 
     public static class GroupInput {
@@ -40,6 +42,8 @@ public class CreateMenuItemRequest {
         public void setPrice(BigDecimal price) { this.price = price; }
     }
 
+    public String getImageUrl() { return imageUrl; }
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getCategory() { return category; }

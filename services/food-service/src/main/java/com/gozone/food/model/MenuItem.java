@@ -39,6 +39,10 @@ public class MenuItem {
      * Minutes this dish takes to prepare. Null = not set, so the vendor's flat prepMinutes is
      * used instead — every item predates this column, and a zero would silently promise instant food.
      */
+/** Photo of this dish. Null falls back to the customer app's bundled imagery. */
+    @Column(name = "image_url", columnDefinition = "text")
+    private String imageUrl;
+
     @Column(name = "prep_minutes")
     private Integer prepMinutes;
 
@@ -62,4 +66,7 @@ public class MenuItem {
     public void setPrepMinutes(Integer prepMinutes) { this.prepMinutes = prepMinutes; }
     public boolean isAvailable() { return available; }
     public void setAvailable(boolean available) { this.available = available; }
+
+    public String getImageUrl() { return imageUrl; }
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
 }

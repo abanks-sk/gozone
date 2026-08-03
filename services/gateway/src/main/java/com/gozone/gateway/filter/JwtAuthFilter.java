@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -26,6 +27,21 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
     /** Pre-login paths that bypass the edge JWT check — driven by app.gateway.public-paths. */
     @Value("${app.gateway.public-paths}")
     private List<String> publicPaths;
+
+    /**
+     * Paths that are public **to read** but not to write.
+     *
+     * Vendor shop imagery is served from /auth/uploads/{id} and has to be fetchable by anyone: on
+     * the web an {@code <Image>} cannot attach an Authorization header, so requiring a token would
+     * mean no customer ever sees a shop's logo. Uploading is a different matter and stays behind a
+     * token, which is why this is method-aware rather than another entry in public-paths — that
+     * list is a prefix match and would have opened POST as well.
+     *
+     * Letting the GET through is not letting it read anything: auth-service serves PRIVATE uploads
+     * (every KYC document) only to their owner or an admin, and answers 401 when there is no
+     * caller at all.
+     */
+    private static final List<String> PUBLIC_GET_PATHS = List.of("/auth/uploads/");
 
     /**
      * Internal service-to-service paths (wallet settlement + notify dispatch).
@@ -72,7 +88,7 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
             return exchange.getResponse().setComplete();
         }
 
-        if (isPublicPath(path)) {
+        if (isPublicPath(path) || isPublicRead(exchange, path)) {
             return chain.filter(exchange);
         }
 
@@ -109,6 +125,11 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
     private boolean isPublicPath(String path) {
         return publicPaths.stream().anyMatch(path::startsWith)
             || path.contains("/actuator/");
+    }
+
+    private boolean isPublicRead(ServerWebExchange exchange, String path) {
+        return HttpMethod.GET.equals(exchange.getRequest().getMethod())
+            && PUBLIC_GET_PATHS.stream().anyMatch(path::startsWith);
     }
 
     private boolean isInternalOnly(String path) {

@@ -16,6 +16,8 @@ public record VendorResponse(
     /** Storefront: what the customer reads before ordering. Null until the vendor fills it in. */
     String description,
     String imageUrl,
+    /** Square shop mark, uploaded through the app. Null falls back to bundled imagery. */
+    String logoUrl,
     String address,
     /** Whether an admin has cleared this business to trade — PENDING until they have. */
     String approvalStatus,
@@ -28,7 +30,7 @@ public record VendorResponse(
         return new VendorResponse(
             v.getId(), v.getName(), v.getLat(), v.getLng(),
             v.getStatus().name(), v.getPrepMinutes(), v.getVendorType().name(),
-            v.getDescription(), v.getImageUrl(), v.getAddress(),
+            v.getDescription(), v.getImageUrl(), v.getLogoUrl(), v.getAddress(),
             v.getApprovalStatus().name(), v.getApprovalNote(), v.getOwnerId());
     }
 }

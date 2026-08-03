@@ -19,10 +19,14 @@ public class UpdateVendorRequest {
     private String address;
     private String description;
     private String imageUrl;
+    /** Square shop mark, separate from the wide banner. */
+    private String logoUrl;
     private Integer prepMinutes;
     /** OPEN / CLOSED / PAUSED. */
     private String status;
 
+    public String getLogoUrl() { return logoUrl; }
+    public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getVendorType() { return vendorType; }

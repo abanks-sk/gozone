@@ -9,7 +9,11 @@ public class UpdateMenuItemRequest {
     private String category;
     private BigDecimal price;
     private Boolean available;
+    /** Photo of the dish, uploaded through the app. */
+    private String imageUrl;
 
+    public String getImageUrl() { return imageUrl; }
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getCategory() { return category; }

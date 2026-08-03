@@ -8,7 +8,10 @@ import java.util.UUID;
 
 public record MenuItemResponse(
     UUID id, String name, String description, String category, BigDecimal price, boolean available,
-    Integer prepMinutes, List<Group> groups
+    Integer prepMinutes,
+    /** Photo of this dish. Null falls back to the customer app's bundled imagery. */
+    String imageUrl,
+    List<Group> groups
 ) {
     public record Group(UUID id, String name, boolean multi, boolean required, List<Option> options) {}
     public record Option(UUID id, String label, BigDecimal price) {}
@@ -20,6 +23,6 @@ public record MenuItemResponse(
                 g.getOptions().stream().map(o -> new Option(o.getId(), o.getLabel(), o.getPrice())).toList()))
             .toList();
         return new MenuItemResponse(m.getId(), m.getName(), m.getDescription(), m.getCategory(),
-            m.getPrice(), m.isAvailable(), m.getPrepMinutes(), groups);
+            m.getPrice(), m.isAvailable(), m.getPrepMinutes(), m.getImageUrl(), groups);
     }
 }

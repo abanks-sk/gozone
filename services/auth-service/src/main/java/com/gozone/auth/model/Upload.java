@@ -24,6 +24,20 @@ public class Upload {
     private UUID ownerId;
 
     /**
+     * Who is allowed to read it.
+     *
+     * PRIVATE is the default and covers every KYC document: owner or admin only. PUBLIC is for
+     * vendor storefront and menu imagery, which a customer browsing the shop has to be able to
+     * see — and on the web an {@code <Image>} cannot send an Authorization header, so requiring a
+     * signed-in reader would not work there either.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+    private Visibility visibility = Visibility.PRIVATE;
+
+    public enum Visibility { PRIVATE, PUBLIC }
+
+    /**
      * Filename on disk. Always generated here, never derived from what the client sent — an
      * uploaded filename is attacker-controlled and path traversal is the obvious thing to try.
      */
@@ -51,4 +65,7 @@ public class Upload {
     public void setSizeBytes(long sizeBytes) { this.sizeBytes = sizeBytes; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public Visibility getVisibility() { return visibility; }
+    public void setVisibility(Visibility visibility) { this.visibility = visibility; }
 }

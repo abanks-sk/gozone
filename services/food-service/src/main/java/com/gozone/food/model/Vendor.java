@@ -48,6 +48,10 @@ public class Vendor {
     @Column(name = "image_url", columnDefinition = "text")
     private String imageUrl;
 
+    /** Square shop mark. {@link #imageUrl} is the wide banner — different shapes, different jobs. */
+    @Column(name = "logo_url", columnDefinition = "text")
+    private String logoUrl;
+
     /** Human-readable location line. Coordinates route the courier; this tells the customer. */
     @Column(columnDefinition = "text")
     private String address;
@@ -113,4 +117,7 @@ public class Vendor {
     public void setApprovedBy(UUID approvedBy) { this.approvedBy = approvedBy; }
     public OffsetDateTime getApprovedAt() { return approvedAt; }
     public void setApprovedAt(OffsetDateTime approvedAt) { this.approvedAt = approvedAt; }
+
+    public String getLogoUrl() { return logoUrl; }
+    public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
 }

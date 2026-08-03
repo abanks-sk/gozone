@@ -751,6 +751,27 @@ eq  "  …an admin reviewing can too"   "$(CODE "$UPURL" $ADMIN)"   "200"
 # stranger should not learn about somebody's ID.
 eq  "  …a stranger cannot"            "$(CODE "$UPURL" $RIDER)"   "404"
 eq  "  …and neither can no-one"       "$(curl -s -o /dev/null -w '%{http_code}' $GW$UPURL)" "401"
+
+# Shop imagery is the opposite case and shares this storage. A customer's <Image> cannot attach a
+# token on the web, so a vendor's logo has to be readable by anyone — without that leaking into the
+# documents sitting in the same folder.
+SHOPPNG=$(mktemp -u).png
+make_png "$SHOPPNG"
+SHOPURL=$(curl -s -X POST -H "Authorization: Bearer $VENDOR" -F "file=@$SHOPPNG" "$GW/auth/uploads?visibility=public" | jq_ "d.get('url','')")
+neq "vendor publishes a shop image"    "$SHOPURL" ""
+eq  "  …anyone can read it, signed in or not" "$(curl -s -o /dev/null -w '%{http_code}' $GW$SHOPURL)" "200"
+eq  "  …and a KYC document still cannot be" "$(curl -s -o /dev/null -w '%{http_code}' $GW$UPURL)" "401"
+# Otherwise this is an open image host on the platform's own domain.
+eq  "  …only a vendor may publish one" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DRIVER" -F "file=@$SHOPPNG" "$GW/auth/uploads?visibility=public")" "403"
+eq  "  …and uploading still needs a token" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -F "file=@$SHOPPNG" "$GW/auth/uploads")" "401"
+rm -f "$SHOPPNG"
+if [ -n "$SHOPURL" ]; then
+  SHOPID="${SHOPURL##*/}"
+  docker exec gozone-auth sh -c "rm -f /var/gozone/uploads/$SHOPID.*" >/dev/null 2>&1 || true
+  docker exec gozone-postgres psql -U gozone -d auth_db -q -c "DELETE FROM uploads WHERE id = '$SHOPID';" >/dev/null 2>&1 || true
+fi
 # Declared image/png, actually a script. The declared type is just a header; the bytes decide.
 # Relative path on purpose: under Git Bash, curl's POSIX->Windows path translation breaks when a
 # `;type=` suffix is attached to an absolute /tmp path, and the request never leaves the machine.
