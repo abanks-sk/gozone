@@ -42,6 +42,15 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/**", "/error").permitAll()
+                // The WebSocket handshake is a plain HTTP GET that a browser cannot attach an
+                // Authorization header to — which is why the client passes the token in the query
+                // string, and why this filter chain was answering the upgrade with 403 and killing
+                // live tracking before a single STOMP frame was sent.
+                //
+                // Permitting the handshake opens nothing: the socket is inert until a STOMP CONNECT
+                // frame arrives, and WebSocketConfig authenticates that frame (rejecting a missing
+                // or invalid token) and authorises every SUBSCRIBE against the topic's participants.
+                .requestMatchers("/ws/**").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtFilter(), UsernamePasswordAuthenticationFilter.class)

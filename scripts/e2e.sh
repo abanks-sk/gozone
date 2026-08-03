@@ -403,6 +403,42 @@ DEL=$(GET /food/deliveries/available $COURIER)
 DID=$(echo "$DEL" | python -c "import sys,json;d=json.load(sys.stdin);print(next((x['id'] for x in d if x['orderId']=='$OID'),''))")
 neq "delivery offered to courier" "$DID" ""
 eq "courier accepts delivery" "$(POST "/food/deliveries/$DID/accept" "$COURIER" '{}' | jq_ "d['status']")" "ASSIGNED"
+
+# ── Does the customer's map actually move? ───────────────────────────────────
+# Every assertion around this passed while courier tracking was completely dead, because they all
+# check REST state and the live position travels over a WebSocket. Two things were broken at once:
+# the handshake is a plain GET that a browser cannot put an Authorization header on, so the filter
+# chain answered it 403; and the app never called connect(), so subscribing was a silent no-op.
+if [ -d customer-app/node_modules/@stomp/stompjs ]; then
+  ( sleep 3
+    for i in 1 2 3; do
+      POST /food/deliveries/location "$COURIER" "{\"deliveryId\":\"$DID\",\"lat\":5.60$i,\"lng\":-0.18$i}" >/dev/null
+      sleep 1
+    done ) &
+  WSOUT=$(node scripts/ws-probe.js "$RIDER" "$OID" 14000 2>&1 | tail -1)
+  wait 2>/dev/null
+  case "$WSOUT" in
+    GOT*)  ok   "the customer receives the courier's live position" ;;
+    *)     bad  "the customer receives the courier's live position" "$WSOUT" ;;
+  esac
+
+  # Knowing an order id is not permission to watch somebody's courier.
+  OUTSIDER=$(login "+233201000007")
+  WSOUT2=$(node scripts/ws-probe.js "$OUTSIDER" "$OID" 6000 2>&1 | tail -1)
+  case "$WSOUT2" in
+    REFUSED) ok  "…and a stranger is refused the topic" ;;
+    GOT*)    bad "…and a stranger is refused the topic" "they received it" ;;
+    *)       bad "…and a stranger is refused the topic" "$WSOUT2" ;;
+  esac
+
+  WSOUT3=$(node scripts/ws-probe.js "not-a-token" "$OID" 6000 2>&1 | tail -1)
+  case "$WSOUT3" in
+    REFUSED|WSERROR*) ok "…and an unauthenticated socket cannot connect" ;;
+    *)                bad "…and an unauthenticated socket cannot connect" "$WSOUT3" ;;
+  esac
+else
+  echo "   skip  live-location probe (run npm install in customer-app)"
+fi
 # Both ends as coordinates. The courier app used to get only an address string, so its demo GPS
 # walked a path hardcoded into the app — the customer watched a courier nowhere near their food.
 eq "courier gets both ends as coordinates" \

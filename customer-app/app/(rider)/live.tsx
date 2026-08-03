@@ -243,9 +243,11 @@ export default function LiveRideScreen() {
   // Live driver location over WS.
   useEffect(() => {
     if (!trip || completed || cancelled) return;
-    wsClient.subscribeToRide(trip.id, (loc) => { setDriverLoc({ lat: loc.lat, lng: loc.lng }); setIsStale(false); });
+    const stop = wsClient.subscribeToRide(trip.id, (loc) => { setDriverLoc({ lat: loc.lat, lng: loc.lng }); setIsStale(false); });
     const staleTimer = setInterval(() => setIsStale(true), 6000);
-    return () => clearInterval(staleTimer);
+    // Both, and in one place: dropping the subscription with the screen stops a finished trip
+    // moving the marker on the next one.
+    return () => { stop(); clearInterval(staleTimer); };
   }, [trip?.id, completed, cancelled]);
 
   async function sos() {

@@ -129,18 +129,21 @@ export default function OrderScreen() {
   useEffect(() => {
     if (!order || order.mode !== 'DELIVERY') return;
     if (order.status !== 'READY' && order.status !== 'OUT_FOR_DELIVERY') return;
-    wsClient.subscribeToDelivery(orderId, (loc) => {
+    const stop = wsClient.subscribeToDelivery(orderId, (loc) => {
       setCourierLoc({ lat: loc.lat, lng: loc.lng });
       setIsStale(false);
       if (staleTimerRef.current) clearInterval(staleTimerRef.current);
       staleTimerRef.current = setInterval(() => setIsStale(true), 6000);
     });
-    return () => { if (staleTimerRef.current) clearInterval(staleTimerRef.current); };
+    // Drop the subscription with the screen. Without this each order left one behind, so a second
+    // delivery drove the marker on a screen showing somebody else's.
+    return () => { stop(); if (staleTimerRef.current) clearInterval(staleTimerRef.current); };
   }, [order?.status]);
 
   useEffect(() => {
     if (!order || order.mode !== 'WALKIN') return;
-    wsClient.subscribeToQueue(order.restaurantId, () => { shopApi.queuePosition(orderId).then(setQueue).catch(() => {}); });
+    const stop = wsClient.subscribeToQueue(order.restaurantId, () => { shopApi.queuePosition(orderId).then(setQueue).catch(() => {}); });
+    return () => stop();
   }, [order?.restaurantId]);
 
   // Choosing a score and sending it are separate now — see the note on the ride screens.

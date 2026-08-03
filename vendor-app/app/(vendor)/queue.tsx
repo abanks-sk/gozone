@@ -24,7 +24,8 @@ function VendorQueueScreenBoard() {
   useEffect(() => { load(); }, [vendor?.id]);
   useEffect(() => {
     if (!vendor) return;
-    wsClient.subscribeToQueue(vendor.id, () => load());
+    const stop = wsClient.subscribeToQueue(vendor.id, () => load());
+    return () => stop();
     const poll = setInterval(load, 6000);
     return () => clearInterval(poll);
   }, [vendor?.id]);
