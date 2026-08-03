@@ -2226,3 +2226,35 @@ interrupted mid-section, check `+233201000002` is back to Silver.
 **Rebuild:** `docker compose build auth-service && docker compose up -d auth-service`.
 
 **Still open:** vendor logo/banner (#13); per-item photos + closed-store editing (#14).
+
+### Vendor imagery — pick a photo, don't paste a link (REBUILD auth + food + gateway, e2e 218/218)
+The storefront asked for a "cover photo link" from somebody holding a phone with the photo on it.
+There was no logo at all, and every dish fell back to a stock photo of somebody else's food.
+
+- **Uploads learned who they are for** (auth **V12**: `uploads.visibility`). Every upload until now
+  was a KYC document — owner or admin only. Shop imagery is the opposite: a customer's `<Image>`
+  **cannot attach a token on the web**, so even "signed in" does not work. PRIVATE is the default;
+  only a vendor or admin may create a PUBLIC one, or this becomes an open image host on our domain.
+- ⚠️ Two guards had to widen, both narrower than they look. The gateway's `public-paths` is a
+  **prefix match**, so adding `/auth/uploads` would have opened POST — it now has a separate
+  **GET-only** list. auth-service permits `GET /uploads/**`, which is not permission to read: the
+  controller answers 401 for a private file with no caller and the service still checks the owner.
+- ⚠️ **Spring hands `@AuthenticationPrincipal` the string `"anonymousUser"`, not null.** A plain
+  null check passed straight through and `UUID.fromString` threw — a 500 on exactly the requests
+  meant to be allowed through. Verified: PUBLIC no-token 200 · PRIVATE no-token 401 · other user
+  404 · POST no-token 401 · POST public as a driver 403.
+- **food V14**: `restaurants.logo_url`, `menu_items.image_url`. All three image fields **refuse
+  anything that is not an uploaded path** (400) — a hotlink can rot or be swapped after approval.
+- **Menu edits need the shop CLOSED** (409 while OPEN) — **except `available`**, deliberately: a
+  price changing mid-service is not the price being read, but blocking sold-out would force a
+  vendor to close the shop to say they have run out.
+- `src/lib/imageSrc.ts` (vendor + customer) resolves relative paths at render time; the gateway
+  address changes with the network. Absolute URLs pass through, so bundled imagery is unchanged.
+- ⚠️ **`npm install` in vendor-app** — it gained `expo-image-picker` (done here already).
+
+⚠️ **Demo-data lesson:** a check left a seeded item at GH¢35 instead of GH¢20. Sections that edit
+seeded rows must capture the original and restore it — §7b now does, and it is worth copying.
+
+**Rebuild:** `docker compose build auth-service food-service gateway && docker compose up -d auth-service food-service gateway`.
+
+**Every item from the second device tap-through is now built.** What remains is device verification.
