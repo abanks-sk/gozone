@@ -2194,3 +2194,35 @@ first measurement.
 
 **Still open:** the request-an-edit flow + locking the account name (#9); vendor logo/banner (#13);
 per-item photos + closed-store editing (#14).
+
+### Change requests — "locked" now has a way through (REBUILD auth-service, e2e 205/205)
+Name, vehicle and documents are locked once an admin approves a driver. Until now that meant a
+**dead end** — both screens said "contact support", a request nobody could act on inside the
+system — and **the name was not locked at all**: an approved driver could rename themselves via
+`PATCH /auth/me`.
+
+auth **V11** adds `profile_edit_requests`. The driver proposes a change and says why; an admin sees
+current vs proposed side by side; **only approval writes anything to the account**. Rejection
+requires a reason and the driver reads it on the screen they asked from.
+
+- New endpoints: `POST|GET /auth/me/edit-requests` (driver), `GET /auth/edit-requests?status=` and
+  `PATCH /auth/edit-requests/{id}` (admin).
+- Driver app: **`app/request-change.tsx`**, reached from the locked Vehicle and Documents screens.
+- Admin web: **Change requests** page (nav item `edits`), with before/after and both document
+  images for a photo swap.
+
+Details that matter more than they look:
+- Only fields that **actually differ** join the request — an untouched field never reaches an admin.
+- Documents must be `/auth/uploads/...`, same guard as submission: otherwise a request could point
+  at an image whose contents change after it has been reviewed.
+- **One open request per driver**, enforced by a partial unique index rather than a service check.
+- Approving a document change writes a **new** KYC row rather than editing the old one, so the
+  record approved months ago still says what was approved. Untouched fields carry over.
+- A decided request cannot be decided twice.
+
+⚠️ The e2e section changes a **seeded driver's** vehicle colour and restores it. If the suite is
+interrupted mid-section, check `+233201000002` is back to Silver.
+
+**Rebuild:** `docker compose build auth-service && docker compose up -d auth-service`.
+
+**Still open:** vendor logo/banner (#13); per-item photos + closed-store editing (#14).
