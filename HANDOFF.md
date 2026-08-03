@@ -1967,3 +1967,54 @@ pressing Approve was approving a string. Now real photographs: **driver, licence
 driver + vendor apps, vendor self-serve "apply to promote", the backend catalogue-write API, the
 driver's `tel:` call button, and the server quote in the parcel composer. A stale "next" list is
 worse than none — it sends the next session chasing finished work.)*
+
+### Second device tap-through — auth batch (REBUILD auth-service, e2e 159/159)
+The user ran the app on a phone again and added a **NEW ISSUES FOUND** list to the bottom of
+`docs/TAP_THROUGH.md`, plus `((…))` notes inline and one `[-]` (= *not working at all*). ~24 items
+are now tracked. This entry covers the auth ones; the rest are open.
+
+- **Drivers could not receive requests ("Forbidden").** `status` is stamped into the JWT at mint
+  time and the token lives an hour, so a driver who signed in while PENDING still carried
+  STATUS_PENDING after approval. `/auth/me` reads the DB and says ACTIVE, so the app dropped its
+  "under review" screen and polled into 403s from everything gated on `STATUS_ACTIVE`. **Only a 401
+  triggered a refresh; a 403 never did.** Reproduced live (old token 403, refreshed 200). Fixed in
+  two independent places: `fetchMe()` re-mints the moment the live status disagrees with the token
+  claim, and the API client spends one refresh on any 403 — but never clears the session on one,
+  because a genuine 403 is not an invalid session. **The vendor app had the identical trap**
+  (VendorGate polls the same endpoint).
+- **Refreshes are now single-flight.** The server revokes a refresh token the instant it is used,
+  and the feed polls every 5s alongside other calls, so one expiring token produced several
+  concurrent refreshes and the losers wiped the session — a driver logged out mid-shift. This was
+  latent before, not caused by the above.
+- **Each app now has its own set of users** (auth **V7**). Identity was platform-wide, which caused
+  *two* reported bugs at once: a passenger's number logged into the driver app, and the driver
+  sign-up whose "OTP was never logged" was never sent one — `/auth/register` answered 409 for a
+  passenger account the person never created in that app, and returned before issuing a code.
+  Phone/email/username are now unique **per app** (`users.app` = PASSENGER|DRIVER|VENDOR|ADMIN).
+  V7 backfills from role, so nobody moves; COURIER lands in DRIVER. **OTPs carry the app too** —
+  once two accounts share a number, "newest unconsumed code for this phone" identifies nobody.
+  Clients that send no `app` still work (inferred from role on sign-up, from the single matching
+  account on sign-in), which is why the seeds and admin web needed no changes.
+- ⚠️ **SECURITY — anyone could make themselves an admin.** `register()` passed the client's role
+  string to `User.Role.valueOf` with no allow-list, and ADMIN is not in the needs-approval set, so
+  `POST /auth/register {"role":"ADMIN"}` created a live admin and the OTP flow handed over a working
+  admin token. Verified by doing it and reading `/auth/driver/kyc`, then deleting the row. An app
+  may now only create its own roles, and admins are created solely by a SUPER_ADMIN via
+  `POST /auth/admins`. **This was pre-existing — assume any deployed instance was exposed.**
+- **Resend OTP** (30s countdown) on the main verify screens in all three apps; there was none, so a
+  dropped SMS meant restarting sign-up. **`goBack()`** helper added: `router.back()` is a silent
+  no-op on an empty history, which is what the dead back button on driver sign-up was. Applied to
+  the six auth screens only — the other 36 `router.back()` callers are deliberately untouched.
+
+**Rebuild:** `docker compose build auth-service && docker compose up -d auth-service`.
+No `npm install` needed. e2e **148 → 159** (new §2b guards the separation and the escalation).
+
+### Still open from this run (see the task list / `docs/TAP_THROUGH.md`)
+Ride-sheet rework (label, map strip at the bottom, search bar + 3 circles when pulled down —
+**screenshots are in the session, not the repo**); fare quoted with no destination; `[-]` courier
+live tracking not working at all; keyboard still lands too low; GZ splash mark on some devices;
+camera vs picker in KYC; real KYC status in the driver profile (it hardcodes "Verified" and says
+"KYC mocked"); vehicle at sign-up; locked-after-approval details with an edit-request flow;
+rejection reasons; real driver ratings (4.9 is hardcoded); drag-across star rating; vendor
+logo/banner + per-item photos; second business per vendor; richer admin approvals with KYC merged;
+GoShop default location; vendor cash-confirm on deliveries.
