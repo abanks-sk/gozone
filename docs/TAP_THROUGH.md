@@ -24,7 +24,14 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 ## 2. Splash and branding
 
-- [x] Glow orb is noticeably wider than the GZ mark, and the **mark sits inside the glow** rather than overhanging it ((appears well on some devices but the Gz does not appear or loads wierdly on some devices))
+- [ ] **Retest on the devices where it failed.** Glow orb is noticeably wider than the GZ mark, the
+      **mark sits inside the glow**, and the halo is a **complete circle** — not cut off at the left
+      and right edges. At the design size the halo was 447dp across, wider than every common phone
+      (320–428dp), so it was being clipped on all of them and how that degraded differed by device.
+      It is now clamped to the screen and the mark scales with it, so the proportion is kept
+- [ ] The mark appears **immediately**, not fading in a beat late (Android's default 300ms image
+      fade is now off) and is never hidden behind the glow (explicit z-order, rather than relying on
+      an SVG and a plain view happening to paint in tree order on that particular driver)
 - [x] Not _too_ wide — if it is, `glowScale` in `src/components/brand.tsx` (currently `2.6`) is the single knob; try `2.4`
 - [x] Wordmark sits **well below** the orb, not tucked under it
 - [x] "GoZone" and the motto are **blue**, not white ((app name changed to white and motto remains blue))

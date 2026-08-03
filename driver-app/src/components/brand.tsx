@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator, Image, ImageStyle, Text, TextInput, TextInputProps,
-  TouchableOpacity, View, ViewStyle,
+  TouchableOpacity, useWindowDimensions, View, ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -38,7 +38,19 @@ export function GzMark({
     <Image
       source={color ? GZ_LOGO_WHITE : GZ_LOGO}
       resizeMode="contain"
-      style={[{ width: size, height: size * GZ_ASPECT }, style]}
+      // Android fades a decoded image in over 300ms by default. On a slow device that lands well
+      // after the surrounding layout and reads as the mark "loading weirdly" — or as missing, if
+      // the splash has already redirected. Show it the moment it is ready.
+      fadeDuration={0}
+      style={[
+        { width: size, height: size * GZ_ASPECT },
+        // The glow is an SVG sibling, and on Android an SVG can end up painting over a plain view
+        // depending on the driver and API level — one of the ways this mark "did not appear" on
+        // some handsets and not others. Say which is on top rather than relying on document order.
+        // (zIndex, not elevation: elevation is a ViewStyle property and does nothing on an Image.)
+        { zIndex: 2 },
+        style,
+      ]}
     />
   );
 }
@@ -47,16 +59,30 @@ export function GzMark({
 // Splash/onboarding hero: the GZ mark in white, floating on the signature glow.
 
 export function GzHero({ size = 170, glowScale = 2.6, style }: { size?: number; glowScale?: number; style?: ViewStyle }) {
-  // How far the glow spreads beyond the mark. At the old 2.1 the mark overhung its own halo and
-  // read as sitting in front of the light rather than lit by it; a wider orb puts the GZ inside it.
-  const canvas = size * glowScale;
+  const { width: screenW } = useWindowDimensions();
+
+  /**
+   * How far the glow spreads beyond the mark. At the old 2.1 the mark overhung its own halo and
+   * read as sitting in front of the light rather than lit by it; a wider orb puts the GZ inside it.
+   *
+   * At the design size that halo is 447dp across, which is wider than **every** common phone
+   * (320–428dp). So a circle was being cut off at both edges on all of them, and how a view wider
+   * than its screen degrades is exactly the sort of thing that differs between devices and Android
+   * versions — which is what "appears well on some devices" was describing.
+   *
+   * Clamping to the viewport makes the orb a complete circle everywhere. The mark scales with it so
+   * the proportion that puts the GZ *inside* the light is preserved rather than reintroducing the
+   * overhang that widening the glow was meant to fix.
+   */
+  const canvas = Math.min(size * glowScale, screenW);
+  const markSize = canvas / glowScale;
   return (
     <View
       pointerEvents="none"
       style={[{ width: canvas, height: canvas * 0.85, alignItems: 'center', justifyContent: 'center' }, style]}
     >
       <GlowOrb size={canvas} style={{ position: 'absolute', top: -(canvas * 0.075) }} />
-      <GzMark size={size} color="#F2F7FF" dash={brand.bg} />
+      <GzMark size={markSize} color="#F2F7FF" dash={brand.bg} />
     </View>
   );
 }
@@ -135,7 +161,7 @@ export function BrandOrb({ size = 160, style }: { size?: number; style?: ViewSty
 }
 
 // ── Logo ──────────────────────────────────────────────────────────────────────
-// Squircle with "Go" centered.
+// Squircle app-icon: the GZ mark in white on the brand primary.
 
 export function Logo({ size = 76 }: { size?: number }) {
   return (
