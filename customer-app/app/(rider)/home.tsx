@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Dimensions, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Dimensions, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Defs, LinearGradient as SvgGradient, Stop, Rect } from 'react-native-svg';
@@ -49,9 +49,67 @@ export default function RiderHomeScreen() {
   const recents = useRecents((s) => s.recents);
   const firstName = (name || '').trim().split(' ')[0] || 'there';
   const screenW = Dimensions.get('window').width;
+  const screenH = Dimensions.get('window').height;
   // The map is the hero now, so it gets real estate — roughly the top third, which is what the
   // rest of the category does and what the evaluator expected to see on opening the app.
-  const heroH = Math.max(240, Math.round(Dimensions.get('window').height * 0.34)) + insets.top;
+  const heroH = Math.max(240, Math.round(screenH * 0.34)) + insets.top;
+
+  // ── Pull-down sheet ────────────────────────────────────────────────────────
+  // The map used to be a fixed band across the top: you could see a third of it and no more, on
+  // a screen whose whole job is telling you where you are. Everything below it is now a sheet you
+  // can drag out of the way, so the map goes full-screen with just the search bar left docked at
+  // the bottom — the Bolt arrangement the user asked for.
+  //
+  // Built on PanResponder + Animated rather than a bottom-sheet library: reanimated and
+  // gesture-handler are not in this app, and adding native modules would cost the Expo Go
+  // workflow everything here depends on.
+  const EXPANDED_Y = heroH;                              // resting position — map on top, content below
+  const PEEK = 112 + insets.bottom;                      // handle + search bar left showing
+  const COLLAPSED_Y = Math.max(EXPANDED_Y, screenH - PEEK);
+  // On a very short viewport (a small browser window, mostly) the two positions collapse into one.
+  // Without this the sheet would advertise "pull down to see the map" and then not move, and the
+  // label would flip to the collapsed wording while nothing had actually happened.
+  const canCollapse = COLLAPSED_Y - EXPANDED_Y > 80;
+  const sheetY = useRef(new Animated.Value(EXPANDED_Y)).current;
+  // Where the sheet sits right now. Tracked in a ref rather than read off the Animated.Value,
+  // because a native-driven value cannot be read synchronously from JS — `stopAnimation` hands
+  // back the true position when a drag begins, which is the only moment we need it.
+  const sheetAt = useRef(EXPANDED_Y);
+  const [collapsed, setCollapsed] = useState(false);
+
+  // React Native Web has no native animation module: `useNativeDriver: true` logs a warning on
+  // every call and takes an unsupported path. Ask for the JS driver explicitly there and keep the
+  // native one on device, where it is what makes the drag smooth.
+  const useNative = Platform.OS !== 'web';
+
+  const snapTo = (to: number) => {
+    sheetAt.current = to;
+    setCollapsed(to === COLLAPSED_Y);
+    Animated.spring(sheetY, {
+      toValue: to, useNativeDriver: useNative, bounciness: 2, speed: 14,
+    }).start();
+  };
+
+  const pan = useRef(
+    PanResponder.create({
+      // Claim only real vertical drags, so a tap still reaches the search bar underneath.
+      onMoveShouldSetPanResponder: (_e, g) =>
+        canCollapse && Math.abs(g.dy) > 5 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderGrant: () => { sheetY.stopAnimation((v: number) => { if (typeof v === 'number') sheetAt.current = v; }); },
+      onPanResponderMove: (_e, g) => {
+        const next = Math.min(COLLAPSED_Y, Math.max(EXPANDED_Y, sheetAt.current + g.dy));
+        sheetY.setValue(next);
+      },
+      onPanResponderRelease: (_e, g) => {
+        // A deliberate flick wins over position — releasing mid-way after throwing it downward
+        // should finish the throw, not spring back because you let go too early.
+        const y = Math.min(COLLAPSED_Y, Math.max(EXPANDED_Y, sheetAt.current + g.dy));
+        if (g.vy > 0.5) return snapTo(COLLAPSED_Y);
+        if (g.vy < -0.5) return snapTo(EXPANDED_Y);
+        snapTo(y > (EXPANDED_Y + COLLAPSED_Y) / 2 ? COLLAPSED_Y : EXPANDED_Y);
+      },
+    }),
+  ).current;
 
   // Where the rider is, so the map opens on them rather than on a generic city view.
   const [myLoc, setMyLoc] = useState<LatLng | null>(null);
@@ -179,51 +237,81 @@ export default function RiderHomeScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <StatusBar style="light" />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}>
-        {/* ── Live map hero: you open the app looking at where you are ── */}
-        <View style={{ height: heroH, borderBottomLeftRadius: 36, borderBottomRightRadius: 36, overflow: 'hidden', backgroundColor: c.surfaceAlt }}>
-          <LeafletMap
-            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-            mode="view"
-            center={mapCenter}
-            zoom={origin && dest ? 12 : 15}
-            markers={mapMarkers}
-            userLocation={myLoc}
-          />
 
-          {/* Scrim so the greeting stays readable over whatever the map is showing. */}
-          <Svg width={screenW} height={140} style={{ position: 'absolute', top: 0 }} pointerEvents="none">
-            <Defs>
-              <SvgGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
-                <Stop offset="0" stopColor={scrimColor} stopOpacity="0.82" />
-                <Stop offset="1" stopColor={scrimColor} stopOpacity="0" />
-              </SvgGradient>
-            </Defs>
-            <Rect x="0" y="0" width={screenW} height={140} fill="url(#scrim)" />
-          </Svg>
+      {/* ── The map is the screen now, not a band across the top ── */}
+      <LeafletMap
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+        mode="view"
+        center={mapCenter}
+        zoom={origin && dest ? 12 : 15}
+        markers={mapMarkers}
+        userLocation={myLoc}
+      />
 
-          <View style={{ paddingTop: insets.top + 14, paddingHorizontal: 22 }} pointerEvents="box-none">
-            <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <View>
-                <Text style={{ color: onMapMuted, fontSize: 14 }}>Good to see you</Text>
-                <Text style={{ color: onMapText, fontSize: 25, fontWeight: '800', letterSpacing: -0.6, marginTop: 3 }}>
-                  Where to, {firstName}?
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => router.push('/profile' as any)} activeOpacity={0.8}>
-                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(0,0,0,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{initial(name)}</Text>
-                </View>
-              </TouchableOpacity>
-            </Row>
+      {/* Scrim so the greeting stays readable over whatever the map is showing. */}
+      <Svg width={screenW} height={140} style={{ position: 'absolute', top: 0 }} pointerEvents="none">
+        <Defs>
+          <SvgGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={scrimColor} stopOpacity="0.82" />
+            <Stop offset="1" stopColor={scrimColor} stopOpacity="0" />
+          </SvgGradient>
+        </Defs>
+        <Rect x="0" y="0" width={screenW} height={140} fill="url(#scrim)" />
+      </Svg>
+
+      <View style={{ position: 'absolute', left: 0, right: 0, top: 0, paddingTop: insets.top + 14, paddingHorizontal: 22 }} pointerEvents="box-none">
+        <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View>
+            <Text style={{ color: onMapMuted, fontSize: 14 }}>Good to see you</Text>
+            <Text style={{ color: onMapText, fontSize: 25, fontWeight: '800', letterSpacing: -0.6, marginTop: 3 }}>
+              Where to, {firstName}?
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => router.push('/profile' as any)} activeOpacity={0.8}>
+            <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(0,0,0,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{initial(name)}</Text>
+            </View>
+          </TouchableOpacity>
+        </Row>
+      </View>
+
+      {/* ── Draggable sheet: everything that isn't the map ── */}
+      <Animated.View
+        style={{
+          position: 'absolute', left: 0, right: 0, top: 0,
+          // Exactly the height it occupies when expanded. Taller than this and the ScrollView
+          // believes part of its viewport is on screen when it is actually below the fold, so the
+          // last of the content becomes unreachable — it thinks there is nothing left to scroll.
+          height: screenH - EXPANDED_Y,
+          transform: [{ translateY: sheetY }],
+          backgroundColor: c.bg,
+          borderTopLeftRadius: 28, borderTopRightRadius: 28,
+          shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 16, shadowOffset: { width: 0, height: -4 },
+          elevation: 16,
+        }}
+      >
+        {/* Grab area. The drag lives on the handle and search row rather than the whole sheet, so
+            it never fights the scrolling content below it. */}
+        <View {...pan.panHandlers}>
+          <TouchableOpacity activeOpacity={0.7} disabled={!canCollapse}
+            onPress={() => snapTo(collapsed ? EXPANDED_Y : COLLAPSED_Y)}
+            style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+            <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: c.border }} />
+            {canCollapse && (
+              <Text style={{ fontSize: 11.5, color: c.textMuted, marginTop: 6 }}>
+                {collapsed ? 'Pull up for ride options' : 'Pull down to see the map'}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          {/* Search stays reachable in both positions — when the sheet is down this is the only
+              thing left on screen, which is the point of collapsing it. */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+            <SearchBar placeholder="Where are you going?" trailingLabel={schedLabel} onTrailingPress={() => router.push('/(rider)/schedule' as any)} elevated onPress={() => router.push('/search' as any)} />
           </View>
         </View>
 
-        {/* ── Elevated search overlapping the hero ── */}
-        <View style={{ paddingHorizontal: 16, marginTop: -28 }}>
-          <SearchBar placeholder="Where are you going?" trailingLabel={schedLabel} onTrailingPress={() => router.push('/(rider)/schedule' as any)} elevated onPress={() => router.push('/search' as any)} />
-        </View>
-
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}>
         {/* ── Circular quick actions ── */}
         <Row style={{ paddingHorizontal: 24, marginTop: 20, gap: 8 }}>
           <QuickCircle icon="car-sport" label="Ride" active onPress={() => {}} c={c} />
@@ -332,7 +420,8 @@ export default function RiderHomeScreen() {
             </>
           )}
         </View>
-      </ScrollView>
+        </ScrollView>
+      </Animated.View>
     </View>
   );
 }

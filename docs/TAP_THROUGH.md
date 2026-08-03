@@ -50,7 +50,8 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [x] Greeting text is **dark and readable** over the map, in **both** light and dark mode (toggle via Profile → Appearance)
 - [x] No hard white-on-black seam between the map and the content below it in dark mode
 - [x] Avatar bubble looks as it did before (dark translucent, not blue)
-- [x] Map fills the top ~third, your **blue dot** is on it
+- [x] ~~Map fills the top ~third~~ — **superseded by C5**: the map is now full-screen behind a
+      pull-down sheet, so at rest it *looks* like the top third. Your **blue dot** is on it. See §11
 - [x] **Destination starts empty** on a fresh account — no "Osu" prefilled ((not only a fresh account but also fresh login or session))
 - [x] With no destination the button reads **"Choose a destination"** and opens the search screen
 - [ ] No fare is quoted until a destination is set ((fair is being quoted))
@@ -221,7 +222,27 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 ---
 
-## 11. Keyboard, vendor storefront and one-tap cards (section C)
+## 11. Ride home pull-down map (C5)
+
+> Layout is measured-verified in a browser (map fills the viewport; sheet sits at the right height
+> with its bottom flush to the screen edge; the handle toggles state). **The slide itself has never
+> been seen move** — the test browser suspends animation frames — so the motion is what needs eyes.
+
+- [ ] Ride home opens with the map behind everything and the sheet resting where the old content
+      started — the screen should look much as before at rest
+- [ ] **Drag the handle down** → the sheet slides away and the map goes full-screen, with the
+      search bar left docked at the bottom ← the whole point of C5
+- [ ] Drag back up (or tap the handle) → the sheet returns
+- [ ] **Flick** it down quickly and let go early — it finishes the throw, it does not spring back
+- [ ] Release it half-way → it snaps to whichever end is nearer, never stops mid-air
+- [ ] Tapping the **search bar** still opens the search screen; the drag must not swallow taps
+- [ ] With the sheet up, the content below still **scrolls**, and the last recent row is reachable
+- [ ] Scrolling that content does **not** drag the sheet (drag is on the handle/search row only)
+- [ ] Handle label reads "Pull down to see the map" / "Pull up for ride options" and matches reality
+
+---
+
+## 12. Keyboard, vendor storefront and one-tap cards (section C)
 
 **Keyboard (C6) — check this on a low field in several forms, not just one:**
 
@@ -292,8 +313,8 @@ Run by the user; findings triaged in **`ISSUES_FROM_TESTING.md`** — 17 issues.
 (driver) are largely **untested** because earlier failures blocked them — they are still open, not
 passing.
 
-**Since that run:** sections **A and B are fixed**, and **C2/C3/C4/C6/C7** with them — only
-**C1** (unmock driver KYC) and **C5** (Bolt-style scrollable map) remain.
+**Since that run:** sections **A and B are fixed**, and **C2–C7** with them — only **C1**
+(unmock driver KYC) remains.
 `scripts/e2e.sh` is **140/140** against the rebuilt stack and now guards the new behaviour
 directly: the collection estimate counts down, the awaiting-class list works, and a delivery keeps
 both of its endpoints as coordinates.
@@ -302,5 +323,5 @@ Verified against the running stack: A6, A7, B1 (the API was never broken — the
 B3's backend. Only checkable on a phone, so **still open**: A4, A5 (splash appearance), B1's
 front-end path, B2 (feed states), B3's map. New checks for all of them are in the sections above.
 
-**C1 and C5 are the remaining work.** Both were flagged in triage as jobs to do alone:
-C1 needs file storage decided up front, C5 is a visual rework of the ride home.
+**C1 is the remaining work** — unmocking driver KYC, which needs the file-storage decision
+made up front.

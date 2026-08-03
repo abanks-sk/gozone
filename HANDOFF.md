@@ -1811,10 +1811,36 @@ The grouped half of `docs/ISSUES_FROM_TESTING.md` §C. Only **C1** (unmock drive
   the map picker and one-tap cards all need a phone. New `TAP_THROUGH.md` §11 covers them.
   One-tap cards additionally need a **real `PAYSTACK_SECRET_KEY`**; in `mock` no card is ever saved.
 
+### C5 — pull-down map on the ride home (frontend only, no rebuild)
+The map was a fixed band across the top: a third visible and no more, on the screen whose entire
+job is showing you where you are. It is now **full-screen**, with search / Ride-Shop-Parcel /
+composer / recents in a **sheet you can drag down**, leaving the search bar docked at the bottom.
+- **PanResponder + Animated**, not a bottom-sheet library — reanimated and gesture-handler are not
+  in this app and adding native modules would cost the Expo Go workflow. Drag lives on the handle
+  and search row only, so it never fights the ScrollView beneath. A flick beats position on
+  release, so throwing it down finishes the throw instead of springing back.
+- **Sheet height is exactly `screenH - EXPANDED_Y`.** Taller and the inner ScrollView thinks part
+  of its viewport is on screen when it is below the fold, making the last content unreachable —
+  it believes there is nothing left to scroll. Worth remembering if the geometry is ever touched.
+- `useNativeDriver` off on web (RNW has no native animated module and warns on every call), on
+  everywhere else. `canCollapse` guards a viewport too short for the two positions to differ.
+- **Verified in a browser, with measurements:** map fills all 812pt of a 375×812 viewport (it was
+  a 276pt band), sheet sits at 276 with its bottom flush to the screen edge, and pressing the
+  handle really does toggle state.
+- ⚠️ **The slide itself was never observed.** The headless pane never composites, so
+  `document.hidden` is true and the browser suspends `requestAnimationFrame` — which freezes every
+  JS-driven animation, RN's included. I initially read that as "the sheet is broken on web" and
+  was wrong; it is a harness limitation and says nothing either way. **The motion needs a device**
+  — `TAP_THROUGH.md` §11.
+- *Method note for future sessions: the ride home can be reached in a browser without tapping
+  through login — mint a token with the e2e `login()` helper and write `accessToken` /
+  `refreshToken` into `localStorage`, then load the web export. Measuring the DOM works even
+  though screenshots and animation do not.*
+
 ### Next
-1. **`docs/ISSUES_FROM_TESTING.md` C1 and C5** — the two left, each to be done alone. C1 (unmock
-   driver KYC: real photo/licence/vehicle uploads) needs the file-storage decision made up front;
-   C5 is a visual rework of the ride home.
+1. **`docs/ISSUES_FROM_TESTING.md` C1** — the last one, to be done alone: unmock driver KYC (real
+   driver photo, vehicle photo and licence). Needs the file-storage decision made up front
+   (S3/Cloudinary vs a served volume), an upload endpoint, and admin review UI showing the images.
 2. **Convert `dest` to a proper nullable type** (retire the `NO_DEST` sentinel). Still outstanding —
    it is the root cause behind A1, and ~8 files read `dest.lat`/`dest.label` directly.
 3. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set

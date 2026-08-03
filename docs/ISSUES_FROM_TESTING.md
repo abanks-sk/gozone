@@ -3,7 +3,7 @@
 Raised by the user during the first real tap-through (see `TAP_THROUGH.md` for the run itself,
 where `[/]` means partly passing and `((notes))` are the user's own).
 
-**Status: A (A1–A7), B (B1–B3) and most of C are fixed — only C1 and C5 remain.** `dest` is still the `NO_DEST`
+**Status: A (A1–A7), B (B1–B3) and C2–C7 are fixed. Only C1 (unmock driver KYC) remains.** `dest` is still the `NO_DEST`
 sentinel — converting it to a proper nullable type remains the right fix, and would have made A1 a
 compile error rather than a bug report. Ordered by cost-to-fix so a session can clear the cheap
 correctness bugs first and not stall on the feature work. Each entry says where to look, because
@@ -182,15 +182,38 @@ of the four payment points.
 
 ---
 
+**C5. Bolt-style scrollable map on the customer home.** — ✅ FIXED
+The map was a fixed band across the top: you could see a third of it and no more, on the screen
+whose whole job is showing you where you are. It is now full-screen, with everything else (search,
+Ride/Shop/Parcel, the GoRide composer, recents) in a sheet you can pull down — leaving the search
+bar docked at the bottom.
+Built on **PanResponder + Animated**, not a bottom-sheet library: reanimated and gesture-handler
+are not in this app and adding native modules would cost the Expo Go workflow. The drag lives on
+the handle and search row only, so it never fights the scrolling content underneath. A flick beats
+position on release, so throwing it down finishes the throw instead of springing back.
+Two things worth knowing about the implementation:
+- The sheet's height is **exactly** `screenH - EXPANDED_Y`. Any taller and the inner ScrollView
+  believes part of its viewport is on screen when it is actually below the fold, which makes the
+  last of the content unreachable — it thinks there is nothing left to scroll.
+- `useNativeDriver` is off on web (React Native Web has no native animated module and warns on
+  every call) and on everywhere else, which is what keeps the drag smooth on a phone.
+
+⚠️ **Verified in a browser as far as the environment allows.** Confirmed with real measurements:
+the map now fills all 812pt of a 375×812 viewport (it was a 276pt band), the sheet sits at 276
+with its bottom flush to the screen edge, and pressing the handle really does toggle the state
+(the label changes). **The slide itself could not be observed** — the headless pane never
+composites, so `document.hidden` is true and the browser suspends `requestAnimationFrame`, which
+freezes every JS-driven animation including RN's. That is a limitation of the harness, not
+evidence either way. **The pull-down still needs a real device.**
+
+---
+
 ## C. Remaining — scope each before starting
 
 **C1. Unmock driver KYC.** Needs real uploads: driver photo, vehicle photo, licence. This is file
 storage (S3/Cloudinary or a served volume), an upload endpoint, and admin review UI showing the
 images. **The single biggest item on this list** — do not start it in the same session as anything
 else.
-
-**C5. Bolt-style scrollable map on the customer home.** Pull the sheet down to reveal the full map,
-search bar docked at the bottom. A layout change to `(rider)/home.tsx`.
 
 ---
 
@@ -200,9 +223,9 @@ search bar docked at the bottom. A layout change to `(rider)/home.tsx`.
    nullable type was *not* done and is still outstanding — it is the root cause behind A1.
 2. ~~**B1–B3**; B1 unblocks the prep-time tests that could not run.~~ **DONE** — so §8 of
    `TAP_THROUGH.md` (prep time, leave time) is now testable and should be run.
-3. **C6, C2, C3, C4, C7** — grouped; C6 first since it touches every form.
-4. **C5** — on its own, it is a visual rework.
-5. **C1** — on its own, with storage decided up front.
+3. ~~**C6, C2, C3, C4, C7** — grouped; C6 first since it touches every form.~~ **DONE**, and
+   **C5** with them (the pull-down map).
+4. **C1** — on its own, with storage decided up front.
 
 Re-run `scripts/e2e.sh` (**135/135** after the A and B batches — the suite gained a "6c. COLLECTION
 ESTIMATE" section that winds `preparing_at` back ten minutes and asserts the figure actually drops,
