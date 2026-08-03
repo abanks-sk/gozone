@@ -14,6 +14,34 @@ tags:
   - name: kyc
 
 paths:
+
+  /auth/users/{id}:
+    get:
+      tags: [Admin]
+      summary: One applicant in full — account details, and a driver's documents with them
+      description: >
+        The approvals list showed a name and a role, which is not enough to approve anybody. Note
+        that approving a driver through PATCH /auth/users/{id}/status also marks their latest KYC
+        submission reviewed: they are one judgement about one person.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Applicant
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/UserResponse' }
+                  createdAt: { type: string, format: date-time }
+                  kyc:
+                    allOf: [{ $ref: '#/components/schemas/KycResponse' }]
+                    nullable: true
+                    description: Drivers and couriers only; null when nothing has been submitted.
+        '403': { description: Not an admin }
+        '404': { description: No such user }
   /register:
     post:
       tags: [auth]

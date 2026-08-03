@@ -18,4 +18,17 @@ public interface VendorRepository extends JpaRepository<Vendor, UUID> {
      */
     List<Vendor> findByStatusOrderByNameAsc(Vendor.Status status);
     List<Vendor> findByOwnerIdOrderByNameAsc(UUID ownerId);
+
+    /**
+     * What a customer is allowed to see: trading AND cleared by an admin.
+     *
+     * Both halves matter. A business the owner has closed is not open for orders; one that has not
+     * been approved has never been looked at by anybody, and listing it would let a shop go live
+     * simply by existing.
+     */
+    List<Vendor> findByStatusAndApprovalStatusOrderByNameAsc(Vendor.Status status, Vendor.Approval approvalStatus);
+
+    /** The admin review queue. */
+    List<Vendor> findByApprovalStatusOrderByCreatedAtDesc(Vendor.Approval approvalStatus);
+    List<Vendor> findAllByOrderByCreatedAtDesc();
 }

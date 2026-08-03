@@ -32,7 +32,14 @@ export function VendorGate({ children }: { children: React.ReactNode }) {
   const loaded = useVendorStore((s) => s.loaded);
 
   // Approved and set up — get out of the way.
-  if (status === 'ACTIVE' && vendor) return <>{children}</>;
+  //
+  // Both halves have to be clear. The account is a decision about the person and the business is a
+  // decision about the shop; an approved owner opening a second shop has the first and not yet the
+  // second, and letting that through would put an unreviewed business straight in front of
+  // customers. Businesses that predate this are grandfathered in as APPROVED, so nothing that was
+  // trading stops.
+  const businessApproved = !vendor || (vendor.approvalStatus ?? 'APPROVED') === 'APPROVED';
+  if (status === 'ACTIVE' && vendor && businessApproved) return <>{children}</>;
 
   // Every gated state carries a way to Profile.
   //
@@ -80,6 +87,22 @@ export function VendorGate({ children }: { children: React.ReactNode }) {
           your personal details under Profile in the meantime.
         </Body>
         <Action c={c} label="Set up my business" onPress={() => router.push('/onboarding' as any)} />
+      </>,
+    );
+  }
+
+  // The account is fine; this particular shop is not.
+  if (status === 'ACTIVE' && vendor && vendor.approvalStatus === 'REJECTED') {
+    return wrap(
+      <>
+        <Badge icon="close-circle-outline" tint="#ef4444" bg="rgba(239,68,68,0.16)" />
+        <Title c={c}>{vendor.name} wasn’t approved</Title>
+        <Body c={c}>
+          {vendor.approvalNote
+            ? vendor.approvalNote
+            : 'This business couldn’t be verified. Update its details and submit again.'}
+        </Body>
+        <Action c={c} label="Update business" onPress={() => router.push('/storefront' as any)} />
       </>,
     );
   }

@@ -708,8 +708,54 @@ public class AuthService {
         u.setStatusReviewedBy(adminUserId == null ? null : UUID.fromString(adminUserId));
         u.setStatusReviewedAt(OffsetDateTime.now());
         userRepo.save(u);
+
+        // Approving a driver approves their documents with them.
+        //
+        // These were two separate decisions on two separate screens, and an admin who approved the
+        // account on the Approvals page left the KYC sitting at PENDING — so the driver's own app
+        // said "Documents: in review" while they were out working, and nothing ever moved it. They
+        // are one judgement about one person, so they are made together. Reviewing documents on
+        // their own still works, for a resubmission after approval.
+        if (u.getRole() == User.Role.DRIVER || u.getRole() == User.Role.COURIER) {
+            kycRepo.findTopByUserIdOrderByCreatedAtDesc(u.getId()).ifPresent(kyc -> {
+                if (next == User.Status.ACTIVE) {
+                    kyc.setStatus(DriverKyc.KycStatus.VERIFIED);
+                    kyc.setReviewNote(null);
+                } else if (next == User.Status.REJECTED) {
+                    kyc.setStatus(DriverKyc.KycStatus.REJECTED);
+                    kyc.setReviewNote(trimNote(note));
+                } else {
+                    return;
+                }
+                if (adminUserId != null) kyc.setReviewedBy(UUID.fromString(adminUserId));
+                kycRepo.save(kyc);
+                log.info("[ADMIN] …and their KYC {} -> {}", kyc.getId(), kyc.getStatus());
+            });
+        }
+
         log.info("[ADMIN] user {} status -> {} by {}", userId, u.getStatus(), adminUserId);
         return toUserResponse(u);
+    }
+
+    /**
+     * Everything an admin needs to decide about one applicant, in one call.
+     *
+     * The approvals list showed a name and whether they were a driver or a vendor, which is not
+     * enough to approve anybody — the reviewer had to take it on trust or go hunting on another
+     * screen. Drivers come back with their documents attached.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> applicantDetail(UUID userId) {
+        User u = userRepo.findById(userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("user", toUserResponse(u));
+        out.put("createdAt", u.getCreatedAt());
+        if (u.getRole() == User.Role.DRIVER || u.getRole() == User.Role.COURIER) {
+            out.put("kyc", kycRepo.findTopByUserIdOrderByCreatedAtDesc(u.getId())
+                .map(this::toKycResponse).orElse(null));
+        }
+        return out;
     }
 
     /** Notes are shown in a phone-sized space and stored in a 500-char column. */

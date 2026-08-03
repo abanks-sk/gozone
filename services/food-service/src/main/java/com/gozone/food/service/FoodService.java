@@ -6,8 +6,10 @@ import com.gozone.food.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -71,10 +73,53 @@ public class FoodService {
 
     // ── Restaurants ───────────────────────────────────────────────────────────
 
+    /**
+     * What a customer browses: trading and approved.
+     *
+     * Approval used to be implicit — a business existed, therefore customers could order from it,
+     * and the only thing anyone had reviewed was the owner's account. A second shop added by an
+     * already-approved vendor would have gone live without anybody looking at it.
+     */
     @Transactional(readOnly = true)
     public List<VendorResponse> listOpenRestaurants() {
-        return vendorRepo.findByStatusOrderByNameAsc(Vendor.Status.OPEN)
+        return vendorRepo.findByStatusAndApprovalStatusOrderByNameAsc(Vendor.Status.OPEN, Vendor.Approval.APPROVED)
             .stream().map(VendorResponse::from).toList();
+    }
+
+    // ── Admin: reviewing businesses ────────────────────────────────────────────
+
+    /** The review queue, or everything when no filter is given. */
+    @Transactional(readOnly = true)
+    public List<VendorResponse> listVendorsForAdmin(String approval) {
+        List<Vendor> rows = (approval == null || approval.isBlank())
+            ? vendorRepo.findAllByOrderByCreatedAtDesc()
+            : vendorRepo.findByApprovalStatusOrderByCreatedAtDesc(Vendor.Approval.valueOf(approval.toUpperCase()));
+        return rows.stream().map(VendorResponse::from).toList();
+    }
+
+    /**
+     * An admin clears a business to trade, or refuses it.
+     *
+     * A refusal must say why: the owner is shown it, and without one their app can only tell them
+     * no. Approving clears any earlier refusal so a working vendor is not still being told why they
+     * were once turned down.
+     */
+    public VendorResponse reviewVendor(UUID vendorId, String adminUserId, String status, String note) {
+        Vendor v = vendorRepo.findById(vendorId)
+            .orElseThrow(() -> new IllegalStateException("Business not found"));
+        Vendor.Approval next = Vendor.Approval.valueOf(status.toUpperCase());
+        if (next == Vendor.Approval.REJECTED && (note == null || note.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Give a reason for the rejection — the owner is shown it.");
+        }
+        v.setApprovalStatus(next);
+        v.setApprovalNote(next == Vendor.Approval.APPROVED ? null
+            : (note == null ? null : note.trim().substring(0, Math.min(note.trim().length(), 500))));
+        v.setApprovedBy(adminUserId == null ? null : UUID.fromString(adminUserId));
+        v.setApprovedAt(OffsetDateTime.now());
+        vendorRepo.save(v);
+        log.info("[VENDOR] {} approval -> {} by {}", vendorId, next, adminUserId);
+        return VendorResponse.from(v);
     }
 
     /** Vendor onboarding: create the owner's business record. */
@@ -85,6 +130,9 @@ public class FoodService {
         v.setVendorType(Vendor.VendorType.valueOf(req.getVendorType().toUpperCase()));
         v.setLat(BigDecimal.valueOf(req.getLat()));
         v.setLng(BigDecimal.valueOf(req.getLng()));
+        // Unreviewed until an admin looks at it — including the second and third shop an
+        // already-approved owner adds, which is the case that had no check at all before.
+        v.setApprovalStatus(Vendor.Approval.PENDING);
         vendorRepo.save(v);
         log.info("[VENDOR] created vendor {} type={} owner={}", v.getId(), v.getVendorType(), ownerId);
         return VendorResponse.from(v);

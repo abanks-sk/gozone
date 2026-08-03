@@ -54,6 +54,18 @@ CODE()  { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $2" "
 POST()  { curl -s -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $2" -d "$3" "$GW$1"; }
 PATCH_(){ curl -s -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $2" -d "$3" "$GW$1"; }
 
+# A real 8x8 PNG. Uploads are sniffed by magic bytes, so a fixture that merely ends in .png is
+# refused — which is the point of the check in section 10, and a trap when writing a new test.
+make_png() {
+  python -c "
+import struct, zlib, io, sys
+w=h=8; raw=b''.join(b'\x00'+bytes((10,120,200))*w for _ in range(h))
+def ch(t,d):
+    c=t+d; return struct.pack('>I',len(d))+c+struct.pack('>I',zlib.crc32(c)&0xffffffff)
+io.open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))
+" "$1" 2>/dev/null
+}
+
 echo "=============================================="
 echo " 1. INFRASTRUCTURE"
 echo "=============================================="
@@ -216,6 +228,60 @@ docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
   "DELETE FROM refresh_tokens WHERE user_id='$REJID'; DELETE FROM otp_codes WHERE phone='$REJP'; DELETE FROM users WHERE id='$REJID';" >/dev/null 2>&1
 eq "…and the test applicant is cleaned up" \
   "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT COUNT(*) FROM users WHERE phone='$REJP'" | tr -d ' \r')" "0"
+
+echo
+echo "=============================================="
+echo " 2d. APPROVING A PERSON vs APPROVING A SHOP"
+echo "=============================================="
+# A business is reviewed separately from its owner. It used to be neither: approving the account
+# was the only decision, the shop's name never reached the admin screen, and a second shop opened
+# by an approved vendor went live with nobody looking at it.
+eq "admin can list businesses by approval" \
+  "$(CODE '/food/admin/vendors?approval=PENDING' "$ADMIN")" "200"
+eq "a vendor cannot"        "$(CODE '/food/admin/vendors' "$VENDOR")" "403"
+eq "nor can a passenger"    "$(CODE '/food/admin/vendors' "$RIDER")"  "403"
+
+SHOPS_BEFORE=$(GET /food/restaurants "$RIDER" | jq_ "len(d)")
+NEWBIZ=$(POST /food/vendors "$VENDOR" '{"name":"E2E Approval Shop","vendorType":"CONVENIENCE","lat":5.60,"lng":-0.18}')
+BIZID=$(echo "$NEWBIZ" | jq_ "d['id']")
+eq "a new business starts unreviewed" "$(echo "$NEWBIZ" | jq_ "d['approvalStatus']")" "PENDING"
+eq "…and customers cannot see it"     "$(GET /food/restaurants "$RIDER" | jq_ "len(d)")" "$SHOPS_BEFORE"
+eq "rejecting it without a reason is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/food/admin/vendors/$BIZID/approval" \
+     -H 'Content-Type: application/json' -H "Authorization: Bearer $ADMIN" -d '{"status":"REJECTED"}')" "400"
+PATCH_ "/food/admin/vendors/$BIZID/approval" "$ADMIN" '{"status":"APPROVED"}' >/dev/null
+eq "…and approving it puts it in front of customers" \
+  "$(GET /food/restaurants "$RIDER" | jq_ "len(d)")" "$((SHOPS_BEFORE + 1))"
+docker exec gozone-postgres psql -U gozone -d food_db -q -c "DELETE FROM restaurants WHERE id='$BIZID';" >/dev/null 2>&1
+eq "…and the test shop is cleaned up" "$(GET /food/restaurants "$RIDER" | jq_ "len(d)")" "$SHOPS_BEFORE"
+
+# Approving a driver approves their documents with them. These were two decisions on two screens,
+# so an admin who approved the account left the KYC at PENDING for ever — the driver's own app said
+# "Documents: in review" while they were out working.
+eq "the applicant detail carries the driver's documents" \
+  "$(GET /auth/users/aaaaaaaa-0000-0000-0000-000000000002 "$ADMIN" | jq_ "d['user']['role']")" "DRIVER"
+CASP="+233559999811"
+curl -s -o /dev/null -X POST $GW/auth/register -H 'Content-Type: application/json' \
+  -d "{\"phone\":\"$CASP\",\"role\":\"DRIVER\",\"name\":\"E2E Cascade\",\"app\":\"DRIVER\"}"
+sleep 0.4
+CASID=$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT id FROM users WHERE phone='$CASP' AND app='DRIVER'" | tr -d ' \r')
+CASTOK=$(login "$CASP")
+CASPNG=$(mktemp -u).png
+make_png "$CASPNG"
+CASUP=$(curl -s -X POST $GW/auth/uploads -H "Authorization: Bearer $CASTOK" -F "file=@$CASPNG" | jq_ "d['url']")
+POST /auth/driver/kyc "$CASTOK" "{\"licenceNo\":\"E2E-CAS\",\"vehicleReg\":\"GT-1-24\",\"idSelfieUrl\":\"$CASUP\",\"licenceUrl\":\"$CASUP\",\"vehiclePhotoUrl\":\"$CASUP\"}" >/dev/null
+eq "a fresh submission is unreviewed" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT status FROM driver_kyc WHERE user_id='$CASID'" | tr -d ' \r')" "PENDING"
+PATCH_ "/auth/users/$CASID/status" "$ADMIN" '{"status":"ACTIVE"}' >/dev/null
+eq "approving the account approves the documents too" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT status FROM driver_kyc WHERE user_id='$CASID'" | tr -d ' \r')" "VERIFIED"
+
+rm -f "$CASPNG"
+docker exec gozone-auth sh -c "rm -f /var/gozone/uploads/${CASUP##*/}.*" >/dev/null 2>&1
+docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+  "DELETE FROM driver_kyc WHERE user_id='$CASID'; DELETE FROM refresh_tokens WHERE user_id='$CASID'; DELETE FROM otp_codes WHERE phone='$CASP'; DELETE FROM uploads WHERE owner_id='$CASID'; DELETE FROM users WHERE id='$CASID';" >/dev/null 2>&1
+eq "…and the test driver is cleaned up" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT COUNT(*) FROM users WHERE phone='$CASP'" | tr -d ' \r')" "0"
 
 echo
 echo "=============================================="
@@ -547,13 +613,7 @@ eq "KYC list (admin)"      "$(CODE '/auth/driver/kyc' $ADMIN)" "200"
 # looked at a string. These assertions pin the three things that make that not the case any more:
 # the bytes are stored, junk dressed as an image is refused, and holding the URL is not permission.
 KYCPNG=$(mktemp -u).png
-python -c "
-import struct, zlib, io, sys
-w=h=8; raw=b''.join(b'\x00'+bytes((10,120,200))*w for _ in range(h))
-def ch(t,d):
-    c=t+d; return struct.pack('>I',len(d))+c+struct.pack('>I',zlib.crc32(c)&0xffffffff)
-io.open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))
-" "$KYCPNG" 2>/dev/null
+make_png "$KYCPNG"
 UPJSON=$(curl -s -X POST -H "Authorization: Bearer $DRIVER" -F "file=@$KYCPNG" $GW/auth/uploads)
 UPURL=$(echo "$UPJSON" | jq_ "d.get('url','')")
 neq "driver uploads a KYC document"   "$UPURL" ""

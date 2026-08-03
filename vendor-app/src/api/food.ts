@@ -14,6 +14,10 @@ export interface Restaurant {
   description?: string | null;
   imageUrl?: string | null;
   address?: string | null;
+  /** Whether an admin has cleared this business to trade. Customers only ever see APPROVED. */
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  /** Why it was refused. Null unless rejected. */
+  approvalNote?: string | null;
 }
 
 export interface MenuItem {

@@ -82,6 +82,29 @@ public class FoodController {
         return ResponseEntity.ok(foodService.myVendors(ownerId));
     }
 
+    // ── Admin: reviewing businesses ─────────────────────────────────────────────
+    //
+    // A business is reviewed separately from the person who owns it. Approving an account is a
+    // check on somebody's identity; this is a check on a shop, and the two are not the same
+    // decision — nor the same event, once an approved owner opens a second one.
+
+    @GetMapping("/admin/vendors")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<List<VendorResponse>> listVendorsForAdmin(
+            @RequestParam(required = false) String approval) {
+        return ResponseEntity.ok(foodService.listVendorsForAdmin(approval));
+    }
+
+    @PatchMapping("/admin/vendors/{id}/approval")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<VendorResponse> reviewVendor(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String adminUserId,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(foodService.reviewVendor(
+            id, adminUserId, body.getOrDefault("status", ""), body.get("note")));
+    }
+
     /**
      * A vendor edits their own business, including the storefront customers read.
      *

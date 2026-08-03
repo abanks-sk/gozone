@@ -52,10 +52,32 @@ public class Vendor {
     @Column(columnDefinition = "text")
     private String address;
 
+    /**
+     * Whether an admin has cleared this business to trade.
+     *
+     * Distinct from {@link #status}, which is the shop's own open/closed switch. Approving the
+     * owner's account is a check on a person; this is a check on a business, and a vendor with a
+     * second shop needs the second one looked at too.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "approval_status", nullable = false, length = 20)
+    private Approval approvalStatus = Approval.PENDING;
+
+    /** Why it was refused — shown to the owner, so it has to say what to change. */
+    @Column(name = "approval_note", length = 500)
+    private String approvalNote;
+
+    @Column(name = "approved_by")
+    private UUID approvedBy;
+
+    @Column(name = "approved_at")
+    private OffsetDateTime approvedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
     public enum Status { OPEN, CLOSED, PAUSED }
+    public enum Approval { PENDING, APPROVED, REJECTED }
 
     /** A vendor sells one category of goods; orders/queue/delivery work the same for all. */
     public enum VendorType { RESTAURANT, PHARMACY, GROCERY, CONVENIENCE, OTHER }
@@ -82,4 +104,13 @@ public class Vendor {
     public String getAddress() { return address; }
     public void setAddress(String address) { this.address = address; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+
+    public Approval getApprovalStatus() { return approvalStatus; }
+    public void setApprovalStatus(Approval approvalStatus) { this.approvalStatus = approvalStatus; }
+    public String getApprovalNote() { return approvalNote; }
+    public void setApprovalNote(String approvalNote) { this.approvalNote = approvalNote; }
+    public UUID getApprovedBy() { return approvedBy; }
+    public void setApprovedBy(UUID approvedBy) { this.approvedBy = approvedBy; }
+    public OffsetDateTime getApprovedAt() { return approvedAt; }
+    public void setApprovedAt(OffsetDateTime approvedAt) { this.approvedAt = approvedAt; }
 }

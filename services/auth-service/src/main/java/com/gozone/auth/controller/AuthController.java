@@ -174,6 +174,13 @@ public class AuthController {
         return ResponseEntity.ok(authService.listUsersByStatus(status));
     }
 
+    /** One applicant in full — their account details, and for a driver their documents too. */
+    @GetMapping("/users/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<Map<String, Object>> applicantDetail(@PathVariable UUID id) {
+        return ResponseEntity.ok(authService.applicantDetail(id));
+    }
+
     /**
      * Drivers awaiting a vehicle class. Not reachable through /users?status=, because these
      * accounts are already ACTIVE — grading the car is a separate job from approving the person.

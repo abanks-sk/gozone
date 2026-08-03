@@ -20,6 +20,55 @@ tags:
   - name: ratings
 
 paths:
+
+  /food/admin/vendors:
+    get:
+      tags: [Admin]
+      summary: Businesses awaiting review (or all of them)
+      description: >
+        A business is approved separately from the account that owns it. Approving a person is a
+        check on who they are; this is a check on a shop, and an already-approved owner can open a
+        second one.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: approval, in: query, required: false, schema: { type: string, enum: [PENDING, APPROVED, REJECTED] } }
+      responses:
+        '200':
+          description: Businesses
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/VendorResponse' } }
+        '403': { description: Not an admin }
+
+  /food/admin/vendors/{id}/approval:
+    patch:
+      tags: [Admin]
+      summary: Clear a business to trade, or refuse it
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [APPROVED, REJECTED] }
+                note:
+                  type: string
+                  description: >
+                    Why. Required when rejecting — the owner is shown it, so it has to say what to
+                    change. Cleared on approval.
+      responses:
+        '200':
+          description: Updated business
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorResponse' }
+        '400': { description: Rejected without a reason }
+        '403': { description: Not an admin }
   /restaurants:
     get:
       tags: [restaurants]
@@ -765,6 +814,17 @@ components:
     VendorResponse:
       type: object
       properties:
+        approvalStatus:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+          description: >
+            Whether an admin has cleared this business to trade. Distinct from `status`, which is
+            the shop's own open/closed switch. GET /food/restaurants only returns APPROVED ones.
+        approvalNote:
+          type: string
+          nullable: true
+          description: Why it was refused — shown to the owner.
+        ownerId: { type: string, format: uuid }
         id:
           type: string
           format: uuid
