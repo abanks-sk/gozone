@@ -814,6 +814,13 @@ components:
     VendorResponse:
       type: object
       properties:
+        logoUrl:
+          type: string
+          nullable: true
+          description: >
+            Square shop mark; imageUrl is the wide banner. Both must be paths returned by
+            POST /auth/uploads?visibility=public — a pasted link is refused with 400, because the
+            banner sits on a page customers read and a hotlink can rot or be swapped after approval.
         approvalStatus:
           type: string
           enum: [PENDING, APPROVED, REJECTED]
@@ -875,6 +882,10 @@ components:
     MenuItemResponse:
       type: object
       properties:
+        imageUrl:
+          type: string
+          nullable: true
+          description: Photo of the dish. Null falls back to the customer app's bundled imagery.
         id:
           type: string
           format: uuid

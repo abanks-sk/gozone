@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Alert, Modal, RefreshControl, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, RefreshControl, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { foodApi, MenuItem } from '../../src/api/food';
 import { useVendorStore } from '../../src/store/vendorStore';
+import { capturePhoto, uploadPhoto, captureFailureMessage } from '../../src/lib/photo';
+import { imageSrc } from '../../src/lib/imageSrc';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Row } from '../../src/components/ui';
 import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
@@ -13,6 +15,13 @@ function VendorMenuScreenBoard() {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const vendor = useVendorStore((s) => s.vendor);
+  // Editing the catalogue is only allowed while the shop is closed — a price that changes
+  // mid-service is not the price the customer is reading. Availability is exempt: marking
+  // something sold out is a live signal, and blocking it would force a vendor to close the shop
+  // to say they have run out of jollof.
+  const shopOpen = (vendor?.status ?? 'OPEN') === 'OPEN';
+  const [itemImage, setItemImage] = useState('');
+  const [imageBusy, setImageBusy] = useState(false);
   const isFood = (vendor?.vendorType ?? 'RESTAURANT') === 'RESTAURANT';
   const title = isFood ? 'Menu' : 'Catalogue';
 
@@ -93,13 +102,31 @@ function VendorMenuScreenBoard() {
         category: category.trim() || undefined, price: Math.round(p * 100) / 100,
         // Blank leaves it unset, and the business's overall prep time applies to this dish.
         prepMinutes: parseInt(prep, 10) > 0 ? parseInt(prep, 10) : undefined,
+        imageUrl: itemImage || undefined,
         groups: groupsPayload.length ? groupsPayload : undefined,
       });
-      setName(''); setDescription(''); setCategory(''); setPrice(''); setPrep(''); setGroups([]); setAdding(false);
+      setName(''); setDescription(''); setCategory(''); setPrice(''); setPrep(''); setGroups([]);
+      setItemImage(''); setAdding(false);
       await load();
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.message ?? 'Could not add the item');
     } finally { setBusy(false); }
+  }
+
+  /** Photograph the dish, or choose one. Published publicly so customers can see it. */
+  async function pickItemPhoto(useCamera: boolean) {
+    setImageBusy(true);
+    try {
+      const res = await capturePhoto(useCamera);
+      if (!res.ok) {
+        const msg = captureFailureMessage(res.reason);
+        if (msg) Alert.alert(useCamera ? 'Can’t open the camera' : 'Can’t open your photos', msg);
+        return;
+      }
+      setItemImage(await uploadPhoto(res.photo));
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.response?.data?.message ?? 'Could not upload that photo.');
+    } finally { setImageBusy(false); }
   }
 
   async function toggleAvailable(it: MenuItem, v: boolean) {
@@ -134,6 +161,18 @@ function VendorMenuScreenBoard() {
         </Row>
         <Text style={{ fontSize: 13.5, color: c.textMuted, marginBottom: 18 }}>{vendor?.name ?? 'Your business'} · {items.length} items</Text>
 
+        {/* Told up front rather than discovered by a failed save. The rule is not arbitrary: a
+            price that changes while someone is ordering is not the price they were reading. */}
+        {shopOpen && items.length > 0 && (
+          <Row style={{ gap: 10, alignItems: 'flex-start', backgroundColor: c.surfaceAlt, borderRadius: 14, padding: 12, marginBottom: 16 }}>
+            <Ionicons name="lock-closed-outline" size={16} color={c.textMuted} />
+            <Text style={{ flex: 1, fontSize: 12.5, color: c.textMuted, lineHeight: 18 }}>
+              Your shop is open, so prices and details are fixed for now. You can still mark items
+              sold out. Close the shop from Orders to edit the {isFood ? 'menu' : 'catalogue'}.
+            </Text>
+          </Row>
+        )}
+
         {loadError ? (
           <View style={{ alignItems: 'center', paddingVertical: 36, gap: 10, paddingHorizontal: 20 }}>
             <Ionicons name="alert-circle-outline" size={34} color={c.danger} />
@@ -161,6 +200,10 @@ function VendorMenuScreenBoard() {
             return (
               <View key={it.id} style={{ backgroundColor: c.surface, borderRadius: 16, borderWidth: 1, borderColor: c.border, padding: 14, marginBottom: 10 }}>
                 <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  {it.imageUrl ? (
+                    <Image source={{ uri: imageSrc(it.imageUrl) }}
+                      style={{ width: 54, height: 54, borderRadius: 12, marginRight: 12, opacity: on ? 1 : 0.5 }} />
+                  ) : null}
                   <View style={{ flex: 1, paddingRight: 12 }}>
                     <Text style={{ fontSize: 15.5, fontWeight: '700', color: on ? c.text : c.textMuted }}>{it.name}</Text>
                     {it.description ? <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 3, lineHeight: 17 }} numberOfLines={2}>{it.description}</Text> : null}
@@ -181,8 +224,12 @@ function VendorMenuScreenBoard() {
                   <View style={{ alignItems: 'flex-end', gap: 10 }}>
                     <Switch value={on} onValueChange={(v) => toggleAvailable(it, v)}
                       trackColor={{ true: c.primary, false: c.border }} thumbColor="#fff" />
-                    <TouchableOpacity onPress={() => confirmDelete(it)} hitSlop={8}>
-                      <Ionicons name="trash-outline" size={17} color={c.danger} />
+                    <TouchableOpacity
+                      onPress={() => shopOpen
+                        ? Alert.alert('Close the shop first', 'You can remove items when your shop is closed. While you’re open you can still mark something sold out.')
+                        : confirmDelete(it)}
+                      hitSlop={8}>
+                      <Ionicons name="trash-outline" size={17} color={shopOpen ? c.textMuted : c.danger} />
                     </TouchableOpacity>
                   </View>
                 </Row>
@@ -211,6 +258,27 @@ function VendorMenuScreenBoard() {
                   Optional — left blank, your overall prep time is used for this dish. */}
               <Field label="Prep time (minutes, optional)" value={prep} onChangeText={setPrep}
                      placeholder="e.g. 20" keyboardType="number-pad" c={c} />
+
+              {/* A picture of the actual dish. Without one the customer app falls back to a stock
+                  photo of somebody else's food, which is what every item looked like before. */}
+              <View>
+                <Text style={{ fontSize: 12.5, fontWeight: '600', color: c.textMuted, marginBottom: 6 }}>Photo (optional)</Text>
+                <Row style={{ gap: 10, alignItems: 'center' }}>
+                  <View style={{ width: 72, height: 72, borderRadius: 14, backgroundColor: c.surfaceAlt, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                    {imageBusy ? <ActivityIndicator color={c.primary} />
+                      : itemImage ? <Image source={{ uri: imageSrc(itemImage) }} style={{ width: '100%', height: '100%' }} />
+                      : <Ionicons name="fast-food-outline" size={24} color={c.textMuted} />}
+                  </View>
+                  <TouchableOpacity onPress={() => pickItemPhoto(true)} disabled={imageBusy} activeOpacity={0.8}
+                    style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12, backgroundColor: c.surfaceAlt, opacity: imageBusy ? 0.5 : 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: c.text }}>Take photo</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => pickItemPhoto(false)} disabled={imageBusy} activeOpacity={0.8}
+                    style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12, backgroundColor: c.surfaceAlt, opacity: imageBusy ? 0.5 : 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: c.text }}>Choose</Text>
+                  </TouchableOpacity>
+                </Row>
+              </View>
 
               {/* Add-on groups */}
               <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>

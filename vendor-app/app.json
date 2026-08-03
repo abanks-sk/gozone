@@ -28,7 +28,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "GoZone Vendor needs your photos so you can add a shop logo, a menu banner and pictures of what you sell.",
+          "cameraPermission": "GoZone Vendor needs the camera so you can photograph your shop and the items you sell."
+        }
+      ]
     ],
     "scheme": "gozonevendor"
   }

@@ -642,6 +642,53 @@ PATCH_ "/food/orders/$WID/status" "$VENDOR" '{"status":"CANCELLED"}' >/dev/null
 
 echo
 echo "=============================================="
+echo " 7b. SHOP IMAGERY AND EDITING THE MENU"
+echo "=============================================="
+# The storefront asked for a "cover photo link" — a text box wanting a URL from somebody holding a
+# phone with the photo on it. Image fields now take uploaded paths only: a hotlink can rot, or be
+# swapped for something else after the business was approved, on a page customers read.
+IMGVID=$(GET /food/vendors/mine "$VENDOR" | jq_ "d[0]['id']")
+eq "a pasted link is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/food/vendors/$IMGVID" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $VENDOR" -d '{"logoUrl":"https://example.com/logo.png"}')" "400"
+LOGOPNG=$(mktemp -u).png
+make_png "$LOGOPNG"
+LOGOURL=$(curl -s -X POST -H "Authorization: Bearer $VENDOR" -F "file=@$LOGOPNG" "$GW/auth/uploads?visibility=public" | jq_ "d.get('url','')")
+eq "…an uploaded one is accepted" \
+  "$(PATCH_ "/food/vendors/$IMGVID" "$VENDOR" "{\"logoUrl\":\"$LOGOURL\"}" | jq_ "d['logoUrl']")" "$LOGOURL"
+
+# Editing the menu needs the shop closed: a price that changes mid-service is not the price the
+# customer is reading. Availability is deliberately exempt — otherwise a vendor would have to close
+# the shop to say they have run out of something.
+IMGITEM=$(GET "/food/restaurants/$IMGVID/catalogue" "$VENDOR" | jq_ "d[0]['id']")
+IMGPRICE=$(GET "/food/restaurants/$IMGVID/catalogue" "$VENDOR" | jq_ "d[0]['price']")
+eq "shop is open"          "$(GET /food/vendors/mine "$VENDOR" | jq_ "d[0]['status']")" "OPEN"
+eq "…so a price edit is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/food/menu-items/$IMGITEM" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $VENDOR" -d '{"price":99.99}')" "409"
+eq "…but sold-out still works" \
+  "$(PATCH_ "/food/menu-items/$IMGITEM" "$VENDOR" '{"available":false}' | jq_ "d['available']")" "False"
+PATCH_ "/food/menu-items/$IMGITEM" "$VENDOR" '{"available":true}' >/dev/null
+
+PATCH_ "/food/vendors/$IMGVID" "$VENDOR" '{"status":"CLOSED"}' >/dev/null
+eq "closed: a dish photo can be set" \
+  "$(PATCH_ "/food/menu-items/$IMGITEM" "$VENDOR" "{\"imageUrl\":\"$LOGOURL\"}" | jq_ "d['imageUrl']")" "$LOGOURL"
+eq "…and the customer's menu carries it" \
+  "$(GET "/food/restaurants/$IMGVID/menu" "$RIDER" | jq_ "[i['imageUrl'] for i in d if i['id']=='$IMGITEM'][0]")" "$LOGOURL"
+
+# Put the demo shop back exactly as the seed leaves it — price included, which is the one that bit.
+PATCH_ "/food/menu-items/$IMGITEM" "$VENDOR" "{\"imageUrl\":\"\",\"price\":$IMGPRICE}" >/dev/null
+PATCH_ "/food/vendors/$IMGVID" "$VENDOR" '{"status":"OPEN","logoUrl":""}' >/dev/null
+rm -f "$LOGOPNG"
+if [ -n "$LOGOURL" ]; then
+  LOGOID="${LOGOURL##*/}"
+  docker exec gozone-auth sh -c "rm -f /var/gozone/uploads/$LOGOID.*" >/dev/null 2>&1 || true
+  docker exec gozone-postgres psql -U gozone -d auth_db -q -c "DELETE FROM uploads WHERE id = '$LOGOID';" >/dev/null 2>&1 || true
+fi
+eq "…and the demo shop is restored" "$(GET /food/vendors/mine "$VENDOR" | jq_ "d[0]['status'] + '/' + str(d[0]['logoUrl'])")" "OPEN/None"
+
+echo
+echo "=============================================="
 echo " 8. PROMOS / VENDOR SELF-SERVE"
 echo "=============================================="
 # A vendor can edit the storefront customers read — the one part of the business that had no

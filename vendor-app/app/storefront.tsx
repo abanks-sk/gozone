@@ -3,6 +3,8 @@ import { ActivityIndicator, Alert, Image, ScrollView, Text, TextInput, Touchable
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { capturePhoto, uploadPhoto, captureFailureMessage } from '../src/lib/photo';
+import { imageSrc } from '../src/lib/imageSrc';
 import { foodApi } from '../src/api/food';
 import { useVendorStore } from '../src/store/vendorStore';
 import { usePickedLocation } from '../src/store/pickedLocationStore';
@@ -40,6 +42,9 @@ export default function StorefrontScreen() {
   const [vendorType, setVendorType] = useState('RESTAURANT');
   const [description, setDescription] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  // Which picker is mid-upload, so the right tile shows a spinner rather than both.
+  const [busyImage, setBusyImage] = useState<'cover' | 'logo' | null>(null);
   const [address, setAddress] = useState('');
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -52,6 +57,7 @@ export default function StorefrontScreen() {
     setVendorType(vendor.vendorType ?? 'RESTAURANT');
     setDescription(vendor.description ?? '');
     setImageUrl(vendor.imageUrl ?? '');
+    setLogoUrl(vendor.logoUrl ?? '');
     setAddress(vendor.address ?? '');
     setCoords({ lat: Number(vendor.lat), lng: Number(vendor.lng) });
   }, [vendor?.id]);
@@ -70,6 +76,29 @@ export default function StorefrontScreen() {
 
   const edit = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setDirty(true); };
 
+  /**
+   * Take or choose a photo and publish it.
+   *
+   * This screen used to ask for a "cover photo link" — a text box wanting a URL from somebody
+   * holding a phone with the photo on it. The upload is public, so customers can actually see it.
+   */
+  async function pickImage(which: 'cover' | 'logo', useCamera: boolean) {
+    setBusyImage(which);
+    try {
+      const res = await capturePhoto(useCamera);
+      if (!res.ok) {
+        const msg = captureFailureMessage(res.reason);
+        if (msg) Alert.alert(useCamera ? 'Can’t open the camera' : 'Can’t open your photos', msg);
+        return;
+      }
+      const url = await uploadPhoto(res.photo);
+      if (which === 'cover') setImageUrl(url); else setLogoUrl(url);
+      setDirty(true);
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.response?.data?.message ?? 'Could not upload that photo. Please try again.');
+    } finally { setBusyImage(null); }
+  }
+
   async function save() {
     if (!vendor) return;
     if (!name.trim()) return Alert.alert('Name needed', 'Your business needs a name.');
@@ -82,6 +111,7 @@ export default function StorefrontScreen() {
         vendorType,
         description,
         imageUrl,
+        logoUrl,
         address,
         ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
       });
@@ -124,7 +154,7 @@ export default function StorefrontScreen() {
         {/* Cover preview — show them the thing they are editing. */}
         <View style={{ height: 150, borderRadius: 18, overflow: 'hidden', backgroundColor: c.surfaceAlt, borderWidth: 1, borderColor: c.border }}>
           {imageUrl.trim() ? (
-            <Image source={{ uri: imageUrl.trim() }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            <Image source={{ uri: imageSrc(imageUrl) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
           ) : (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               <Ionicons name="image-outline" size={30} color={c.textMuted} />
@@ -154,9 +184,19 @@ export default function StorefrontScreen() {
         <Field label="About your business" value={description} onChangeText={edit(setDescription)} multiline
                placeholder="Home-style Ghanaian cooking — jollof, waakye and grilled tilapia, made fresh to order." c={c} />
 
-        <Field label="Cover photo link" value={imageUrl} onChangeText={edit(setImageUrl)} autoCapitalize="none"
-               placeholder="https://…" c={c}
-               hint="Paste a link to a photo of your food or shopfront. Uploading from your phone is coming later." />
+        <View>
+          <Label c={c}>Photos</Label>
+          <Text style={{ fontSize: 12.5, color: c.textMuted, marginBottom: 10, lineHeight: 18 }}>
+            The banner runs across the top of your page; the logo is the small mark on your card in
+            the shop list. Both are saved when you press Save.
+          </Text>
+          <Row style={{ gap: 10 }}>
+            <PhotoTile label="Banner" url={imageUrl} busy={busyImage === 'cover'} wide
+              onPick={(cam) => pickImage('cover', cam)} onClear={() => { setImageUrl(''); setDirty(true); }} c={c} />
+            <PhotoTile label="Logo" url={logoUrl} busy={busyImage === 'logo'}
+              onPick={(cam) => pickImage('logo', cam)} onClear={() => { setLogoUrl(''); setDirty(true); }} c={c} />
+          </Row>
+        </View>
 
         {/* Location — the part that was hardcoded to Accra with no way to change it. */}
         <View>
@@ -211,5 +251,49 @@ function Field({ label, value, onChangeText, placeholder, multiline, autoCapital
       />
       {hint ? <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 6, lineHeight: 17 }}>{hint}</Text> : null}
     </View>
+  );
+}
+
+/**
+ * One image slot: what is there, and the two ways to replace it.
+ *
+ * Camera and gallery are separate buttons rather than one that guesses. Asking for the camera and
+ * silently getting a file picker is exactly the confusion this replaces.
+ */
+function PhotoTile({ label, url, busy, wide, onPick, onClear, c }: {
+  label: string; url: string; busy: boolean; wide?: boolean;
+  onPick: (useCamera: boolean) => void; onClear: () => void; c: any;
+}) {
+  return (
+    <View style={{ flex: wide ? 2 : 1 }}>
+      <View style={{ height: 96, borderRadius: 14, overflow: 'hidden', backgroundColor: c.surfaceAlt, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}>
+        {busy ? (
+          <ActivityIndicator color={c.primary} />
+        ) : url ? (
+          <Image source={{ uri: imageSrc(url) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+        ) : (
+          <Ionicons name="image-outline" size={24} color={c.textMuted} />
+        )}
+      </View>
+      <Text style={{ fontSize: 12, fontWeight: '700', color: c.text, marginTop: 6 }}>{label}</Text>
+      <Row style={{ gap: 6, marginTop: 6 }}>
+        <TileBtn icon="camera-outline" onPress={() => onPick(true)} disabled={busy} c={c} />
+        <TileBtn icon="images-outline" onPress={() => onPick(false)} disabled={busy} c={c} />
+        {url ? <TileBtn icon="close" onPress={onClear} disabled={busy} c={c} danger /> : null}
+      </Row>
+    </View>
+  );
+}
+
+function TileBtn({ icon, onPress, disabled, danger, c }: any) {
+  return (
+    <TouchableOpacity onPress={onPress} disabled={disabled} activeOpacity={0.8}
+      style={{
+        flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 10,
+        backgroundColor: danger ? 'rgba(239,68,68,0.12)' : c.surfaceAlt,
+        opacity: disabled ? 0.5 : 1,
+      }}>
+      <Ionicons name={icon} size={16} color={danger ? c.danger : c.text} />
+    </TouchableOpacity>
   );
 }

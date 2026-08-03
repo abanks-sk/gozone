@@ -8,6 +8,7 @@ import { useTheme } from '../../src/theme/ThemeProvider';
 import { useShopCart, cartCount, cartTotal } from '../../src/store/shopCart';
 import { useFavourites } from '../../src/store/favouritesStore';
 import { itemMeta, restaurantMeta, distanceKm } from '../../src/data/shopCatalog';
+import { imageSrc } from '../../src/lib/imageSrc';
 import { Empty, Row } from '../../src/components/ui';
 
 const PILLS_H = 60;
@@ -46,7 +47,9 @@ export default function MenuScreen() {
   }, [restaurantId]);
 
   const meta = restaurantMeta(name);
-  const banner = store?.imageUrl?.trim() || meta.banner;
+  // The vendor's own photo wins; the bundled imagery is the fallback, so seeded shops that have
+  // never uploaded anything look exactly as they did.
+  const banner = imageSrc(store?.imageUrl) || meta.banner;
   const addressLine = store?.address?.trim() || meta.address;
   const dist = lat && lng ? distanceKm(Number(lat), Number(lng)) : null;
   const myLines = cartRestId === restaurantId ? lines : [];
@@ -191,6 +194,8 @@ export default function MenuScreen() {
                 <Text style={{ fontSize: 17, fontWeight: '800', color: c.text, marginTop: 18, marginBottom: 6 }}>{cat}</Text>
                 {grouped[cat].map((item) => {
                   const im = itemMeta(item.name);
+                  // A photo of the actual dish, if the vendor has added one.
+                  const photo = imageSrc(item.imageUrl) || im.image;
                   return (
                     <TouchableOpacity key={item.id} activeOpacity={0.85} onPress={() => openItem(item)}
                       style={{ flexDirection: 'row', gap: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.border }}>
@@ -200,7 +205,7 @@ export default function MenuScreen() {
                         <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 6 }}>GH₵ {item.price.toFixed(2)}</Text>
                       </View>
                       <View>
-                        <Image source={{ uri: im.image }} style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: c.surfaceAlt }} />
+                        <Image source={{ uri: photo }} style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: c.surfaceAlt }} />
                         <View style={{ position: 'absolute', right: 6, bottom: 6, width: 30, height: 30, borderRadius: 15, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}>
                           <Ionicons name="add" size={18} color={c.primary} />
                         </View>
@@ -252,6 +257,7 @@ export default function MenuScreen() {
             ) : (
               searchResults.map((item) => {
                 const im = itemMeta(item.name);
+                const photo = imageSrc(item.imageUrl) || im.image;
                 return (
                   <TouchableOpacity key={item.id} activeOpacity={0.85} onPress={() => openFromSearch(item)}
                     style={{ flexDirection: 'row', gap: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.border }}>
@@ -260,7 +266,7 @@ export default function MenuScreen() {
                       <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 3, lineHeight: 18 }} numberOfLines={2}>{im.description}</Text>
                       <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 6 }}>GH₵ {item.price.toFixed(2)}</Text>
                     </View>
-                    <Image source={{ uri: im.image }} style={{ width: 84, height: 84, borderRadius: 16, backgroundColor: c.surfaceAlt }} />
+                    <Image source={{ uri: photo }} style={{ width: 84, height: 84, borderRadius: 16, backgroundColor: c.surfaceAlt }} />
                   </TouchableOpacity>
                 );
               })

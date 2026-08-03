@@ -28,6 +28,8 @@ export interface Restaurant {
    */
   description?: string | null;
   imageUrl?: string | null;
+  /** Square shop mark the vendor uploaded. The banner is imageUrl. */
+  logoUrl?: string | null;
   address?: string | null;
   /** Whether an admin has cleared this business to trade. Customers only ever see APPROVED. */
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -47,6 +49,8 @@ export interface MenuItem {
   price: number;
   available: boolean;
   groups?: AddonGroup[];
+  /** Photo the vendor uploaded. Null falls back to the bundled catalogue imagery. */
+  imageUrl?: string | null;
 }
 
 export interface Order {

@@ -15,6 +15,55 @@ tags:
 
 paths:
 
+  /auth/uploads:
+    post:
+      tags: [Uploads]
+      summary: Store an image
+      description: >
+        Private by default (KYC documents — readable only by their owner or an admin).
+        `?visibility=public` publishes it for shop imagery and is allowed only for a vendor or an
+        admin; anything else would make this an open image host on the platform's domain.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: visibility, in: query, required: false, schema: { type: string, enum: [private, public] } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  url: { type: string, description: 'Relative path, e.g. /auth/uploads/{id}' }
+        '401': { description: Not signed in }
+        '403': { description: Asked for public without being a vendor or admin }
+        '413': { description: Too large }
+        '415': { description: Not an image — the bytes are sniffed, the declared type is ignored }
+
+  /auth/uploads/{id}:
+    get:
+      tags: [Uploads]
+      summary: Fetch an upload
+      description: >
+        PUBLIC uploads are served to anyone, signed in or not — a customer's <Image> cannot attach
+        an Authorization header on the web. PRIVATE ones require the owner or an admin; anybody
+        else gets 404 rather than 403, since a 403 would confirm the document exists.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The image }
+        '401': { description: Private, and nobody is signed in }
+        '404': { description: Missing, or private and not yours }
+
   /auth/me/edit-requests:
     post:
       tags: [Account]

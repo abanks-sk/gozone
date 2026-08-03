@@ -13,6 +13,8 @@ export interface Restaurant {
   /** Storefront — what a customer reads before ordering. Null until the vendor fills it in. */
   description?: string | null;
   imageUrl?: string | null;
+  /** Square shop mark, uploaded through the app. The banner is imageUrl. */
+  logoUrl?: string | null;
   address?: string | null;
   /** Whether an admin has cleared this business to trade. Customers only ever see APPROVED. */
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -30,6 +32,8 @@ export interface MenuItem {
   category?: string | null;
   price: number;
   available: boolean;
+  /** Photo of the dish. Null falls back to the customer app's bundled imagery. */
+  imageUrl?: string | null;
 }
 
 export interface Order {
@@ -107,7 +111,7 @@ export const foodApi = {
   updateVendor: (vendorId: string, body: {
     name?: string; vendorType?: string;
     lat?: number; lng?: number;
-    address?: string; description?: string; imageUrl?: string;
+    address?: string; description?: string; imageUrl?: string; logoUrl?: string;
     prepMinutes?: number; status?: string;
   }) => api.patch<Restaurant>(`/food/vendors/${vendorId}`, body).then(r => r.data),
 
@@ -120,11 +124,15 @@ export const foodApi = {
 
   createMenuItem: (restaurantId: string, body: {
     name: string; description?: string; category?: string; price: number; available?: boolean;
-    prepMinutes?: number;
+    prepMinutes?: number; imageUrl?: string;
     groups?: { name: string; multi: boolean; required: boolean; options: { label: string; price: number }[] }[];
   }) => api.post<MenuItem>(`/food/restaurants/${restaurantId}/menu`, body).then(r => r.data),
 
-  updateMenuItem: (itemId: string, body: { name?: string; description?: string; category?: string; price?: number; available?: boolean; prepMinutes?: number }) =>
+  /**
+   * Edit an item. Answers 409 while the shop is OPEN for anything except `available` — a price
+   * that changes mid-service is not the price the customer is reading.
+   */
+  updateMenuItem: (itemId: string, body: { name?: string; description?: string; category?: string; price?: number; available?: boolean; prepMinutes?: number; imageUrl?: string }) =>
     api.patch<MenuItem>(`/food/menu-items/${itemId}`, body).then(r => r.data),
 
   deleteMenuItem: (itemId: string) =>
