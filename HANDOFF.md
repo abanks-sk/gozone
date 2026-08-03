@@ -2018,3 +2018,47 @@ camera vs picker in KYC; real KYC status in the driver profile (it hardcodes "Ve
 rejection reasons; real driver ratings (4.9 is hardcoded); drag-across star rating; vendor
 logo/banner + per-item photos; second business per vendor; richer admin approvals with KYC merged;
 GoShop default location; vendor cash-confirm on deliveries.
+
+### Driver batch + real ratings and rejection reasons (REBUILD auth + ride, e2e 168/168)
+Front-end half first, then the backend half. Both committed separately.
+
+- **The driver profile lied about verification.** Status was the literal string "Verified" and the
+  Documents row opened an alert saying "(KYC mocked)" — written when documents really were a
+  placeholder and never revisited after C1 made them real. A driver waiting on an admin was told
+  they were already approved. Both now read the account status and the KYC record, **kept
+  separate** (an account can be ACTIVE while a later document submission is still in review).
+  New **`driver-app/app/documents.tsx`** shows what was actually submitted, images fetched with
+  the credentials the served copies require (native gets the header, web fetches a blob).
+- **"Take photo" opened a picker** because `capturePhoto` fell through to the photo library
+  whenever the camera was unavailable — on web, always. It no longer substitutes one for the
+  other, and a refused permission says so instead of doing nothing. **`expo-image-picker` was also
+  never declared in `app.json`** — Expo Go lends its own manifest, so a dev build would have had no
+  CAMERA permission.
+- **Tapping a star submitted it.** All four rating screens fired on first touch. New shared
+  `StarRating` (customer + driver `ui.tsx`): drag across the row or tap, then **Submit**. Reads the
+  row geometry rather than per-star handlers, so a drag crosses the gaps without dropping the value.
+- **Every driver was 4.9** — hardcoded, next to an "Acceptance 95%" nothing measured.
+  `RideRatingRepository.avgScoreForRatee` already existed and had **never been called**. New
+  `GET /rides/ratings/me` and `/rides/ratings/{userId}`; `average` is **null under 3 ratings** and
+  the apps show "New" (one bad night would otherwise put a new driver on 1.0). The profile's fake
+  acceptance rate is now the rating.
+- **Rejections now say why** (auth **V8**: `users.status_note`, `driver_kyc.review_note`, plus who
+  decided and when). Rejecting **without a reason is refused (400)**; approving clears the note.
+  Admin web prompts for it. Driver and vendor rejected screens show it.
+- ⚠️ **A rejected user could not log in at all**, so the reason was unreachable by the person it is
+  for. They can now; every work/money endpoint is gated on `STATUS_ACTIVE`, so they can read the
+  decision and resubmit and nothing else. **SUSPENDED stays locked out.** That check existed
+  **twice** — `requireLoginableStatus` (Google + password) and an inline copy in `verifyOtp`, the
+  route real drivers use — so changing one changed nothing they would see. One rule now.
+- Vendor profile's identity card was the only one of the three that did not open account details.
+
+**Rebuild:** `docker compose build auth-service ride-service && docker compose up -d auth-service ride-service`.
+⚠️ If a change seems not to take effect, check for a **second copy of the same rule** before
+suspecting the build — that is what happened here and cost three rebuilds.
+
+**Still open from the second tap-through:** vehicle at sign-up; locked-after-approval details with
+the driver-requests-an-edit flow (the documents screen is read-only and says changes go through
+support — the request flow is NOT built); richer admin approvals (vendor account vs business, driver
+detail + KYC merged); vendor logo/banner + per-item photos + second business; GoShop default
+location; vendor cash-confirm on deliveries; `[-]` courier live tracking; keyboard still too low;
+GZ splash mark on some devices.
