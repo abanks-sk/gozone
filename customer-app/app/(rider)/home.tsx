@@ -69,7 +69,19 @@ export default function RiderHomeScreen() {
   // gesture-handler are not in this app, and adding native modules would cost the Expo Go
   // workflow everything here depends on.
   const EXPANDED_Y = heroH;                              // resting position — map on top, content below
-  const PEEK = 210 + insets.bottom;                      // handle + search bar + the three circles
+
+  /**
+   * How much of the sheet stays on screen when it is pulled down: exactly the grab area — handle,
+   * search bar, the three circles — measured rather than guessed.
+   *
+   * A fixed 210 left about twenty spare pixels below the circles, and the top of the RECENT
+   * heading showed through them. Any constant has that problem on some device, because the block
+   * it is standing in for changes height with the font scale. Deriving it from the block itself
+   * means nothing below can ever peek, and the breathing room under the circles is padding
+   * *inside* the measured area rather than slack outside it.
+   */
+  const [peekH, setPeekH] = useState(210);
+  const PEEK = peekH + insets.bottom;
 
   /**
    * How far the sheet can travel, measured from its own laid-out height.
@@ -252,7 +264,13 @@ export default function RiderHomeScreen() {
             sheet, so it never fights the scrolling content below it. The handle carries no caption:
             a grab bar reads as one without being told, and the label was just noise on the screen
             people look at most. */}
-        <View {...pan.panHandlers}>
+        <View
+          {...pan.panHandlers}
+          onLayout={(e) => {
+            const h = Math.round(e.nativeEvent.layout.height);
+            if (h > 0 && h !== peekH) setPeekH(h);
+          }}
+        >
           <TouchableOpacity activeOpacity={0.7} disabled={!canCollapse}
             onPress={() => snapTo(collapsed ? 0 : SLIDE)}
             style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 8 }}>
@@ -267,7 +285,10 @@ export default function RiderHomeScreen() {
               onPress={() => router.push('/search?next=request' as any)} />
           </View>
 
-          <Row style={{ paddingHorizontal: 24, marginTop: 18, gap: 8 }}>
+          {/* The bottom padding is deliberately inside the grab area: it is the gap under the
+              circles when the sheet is down, and being measured with them it cannot become a
+              window onto whatever comes next. */}
+          <Row style={{ paddingHorizontal: 24, marginTop: 18, paddingBottom: 16, gap: 8 }}>
             <QuickCircle icon="car-sport" label="Ride" active onPress={() => {}} c={c} />
             <QuickCircle icon="storefront" label="Shop" onPress={() => router.replace('/(shop)/restaurants' as any)} c={c} />
             <QuickCircle icon="cube" label="Parcel" onPress={() => router.replace('/(parcel)' as any)} c={c} />
@@ -275,7 +296,7 @@ export default function RiderHomeScreen() {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}>
-          <View style={{ paddingHorizontal: 16, marginTop: 22 }}>
+          <View style={{ paddingHorizontal: 16, marginTop: 10 }}>
             {recents.length > 0 ? (
               <>
                 <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
