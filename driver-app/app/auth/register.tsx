@@ -3,7 +3,7 @@ import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
-import { roleHome } from '../../src/lib/routes';
+import { roleHome, goBack } from '../../src/lib/routes';
 import { normalizeGhPhone } from '../../src/lib/phone';
 import { BrandScreen, GlowOrb, BrandInput, PillButton } from '../../src/components/brand';
 import { brand } from '../../src/theme/tokens';
@@ -96,7 +96,7 @@ export default function AuthEntryScreen() {
     <BrandScreen>
       <GlowOrb size={280} style={{ position: 'absolute', top: -80, right: -100 }} />
       <View style={{ flex: 1, paddingHorizontal: 24 }}>
-        <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 4, width: 40 }}>
+        <TouchableOpacity onPress={() => goBack(router, '/welcome')} style={{ marginTop: 4, width: 40 }}>
           <Ionicons name="chevron-back" size={26} color={brand.text} />
         </TouchableOpacity>
 

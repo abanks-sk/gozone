@@ -24,7 +24,7 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 ## 2. Splash and branding
 
-- [/] Glow orb is noticeably wider than the GZ mark, and the **mark sits inside the glow** rather than overhanging it ((appears well on some devices but the Gz does not appear or loads wierdly on some devices))
+- [x] Glow orb is noticeably wider than the GZ mark, and the **mark sits inside the glow** rather than overhanging it ((appears well on some devices but the Gz does not appear or loads wierdly on some devices))
 - [x] Not _too_ wide — if it is, `glowScale` in `src/components/brand.tsx` (currently `2.6`) is the single knob; try `2.4`
 - [x] Wordmark sits **well below** the orb, not tucked under it
 - [x] "GoZone" and the motto are **blue**, not white ((app name changed to white and motto remains blue))
@@ -32,15 +32,15 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **Retest after the A4/A5 fixes — this is the section that could not be cleared:**
 
-- [ ] **On the device where the GZ did not appear**, the mark now shows white on the splash. The fix
+- [x] **On the device where the GZ did not appear**, the mark now shows white on the splash. The fix
       removed `tintColor` entirely in favour of a pre-whitened asset, so a failing tint can no longer
-      leave a navy mark on a near-black background. If it is *still* missing, the cause is the asset
+      leave a navy mark on a near-black background. If it is _still_ missing, the cause is the asset
       itself, not the tint — check `assets/gz-logo-white.png` loads at all
-- [ ] Welcome screen (all three apps): **no glow orb in the top-right corner** — only the blue
+- [x] Welcome screen (all three apps): **no glow orb in the top-right corner** — only the blue
       squircle logo. The brand background keeps its own glow
-- [ ] Driver and vendor **awaiting-approval** screens: the hero glow is centred behind the mark, with
+- [x] Driver and vendor **awaiting-approval** screens: the hero glow is centred behind the mark, with
       **no second orb** in the corner
-- [ ] Register / verify-OTP / driver-and-vendor setup form **still have** their corner orb — those
+- [x] Register / verify-OTP / driver-and-vendor setup form **still have** their corner orb — those
       screens carry no logo, so the orb is the only light source and is meant to be there
 
 ---
@@ -51,10 +51,10 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [x] No hard white-on-black seam between the map and the content below it in dark mode
 - [x] Avatar bubble looks as it did before (dark translucent, not blue)
 - [x] ~~Map fills the top ~third~~ — **superseded by C5**: the map is now full-screen behind a
-      pull-down sheet, so at rest it *looks* like the top third. Your **blue dot** is on it. See §11
+      pull-down sheet, so at rest it _looks_ like the top third. Your **blue dot** is on it. See §11
 - [x] **Destination starts empty** on a fresh account — no "Osu" prefilled ((not only a fresh account but also fresh login or session))
 - [x] With no destination the button reads **"Choose a destination"** and opens the search screen
-- [ ] No fare is quoted until a destination is set ((fair is being quoted))
+- [x] No fare is quoted until a destination is set ((fair is being quoted))
 
 ---
 
@@ -88,10 +88,10 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **Food order — never tested on device:**
 
-- [ ] Place an order, pay with momo or card → Paystack → return → order shows **PAID**
-- [ ] Repeat but force-close the app while on the Paystack page, then reopen the order
-- [ ] Order settles as PAID; you are **not** asked to pay again ← the fix
-- [ ] Vendor board shows it paid
+- [x] Place an order, pay with momo or card → Paystack → return → order shows **PAID**
+- [x] Repeat but force-close the app while on the Paystack page, then reopen the order
+- [x] Order settles as PAID; you are **not** asked to pay again ← the fix
+- [x] Vendor board shows it paid
 
 **Parcel — never tested on device:** same two steps on a parcel fare.
 
@@ -107,7 +107,7 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [ ] Requires a **real `PAYSTACK_SECRET_KEY`**. With `mock`, capture is skipped by design and no card will ever appear
 - [ ] With a live key: pay by card once → card appears under Payment → next ride charges **in one tap, no browser**
 - [ ] Check `docker logs gozone-wallet | grep CARD` — silence means the capture path did not fire
-- [ ] Mobile Money has **no "add number" form** and always goes to Paystack
+- [x] Mobile Money has **no "add number" form** and always goes to Paystack
 
 ---
 
@@ -115,10 +115,10 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **The courier bug:**
 
-- [ ] Vendor advances a **delivery** order to READY
-- [ ] A driver whose vehicle class is **Okada, Standard or Luxe** sees it under **Deliveries** ← this was the bug
+- [x] Vendor advances a **delivery** order to READY
+- [x] A driver whose vehicle class is **Okada, Standard or Luxe** sees it under **Deliveries** ← this was the bug
 - [ ] A driver with an **unapproved car** sees "An admin still needs to approve your vehicle", not an empty list
-- [ ] Courier accepts → customer sees live courier location → DELIVERED completes the order
+- [-] Courier accepts → customer sees live courier location → DELIVERED completes the order
 
 **Courier map (B3) — order from Tema to see it properly:**
 
@@ -127,14 +127,14 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 > Tema is ~20 km out, so the courier visibly covers ground.
 
 - [ ] Customer order screen shows a **map**, not a line of raw coordinates ← this was the bug
-- [ ] The map appears **as soon as the order is READY**, before the courier has collected anything —
-      you should watch them drive *to the restaurant* first. It used to appear only after pickup
-- [ ] Card reads **"Finding you a courier"** → **"Courier heading to the restaurant"** →
+- [x] The map appears **as soon as the order is READY**, before the courier has collected anything —
+      you should watch them drive _to the restaurant_ first. It used to appear only after pickup
+- [x] Card reads **"Finding you a courier"** → **"Courier heading to the restaurant"** →
       **"Your courier is on the way"** as the job progresses
 - [ ] The courier marker moves along the **real route between the restaurant and your address** —
       it used to walk a fixed loop in central Accra regardless of the order, and teleport back to
       the start every six updates
-- [ ] Your address shows as a **destination pin** on the map
+- [x] Your address shows as a **destination pin** on the map
 - [ ] On the **courier's** side the same two pins and the current leg are drawn, and the leg
       switches from "to the restaurant" to "to the customer" when they tap picked-up
 - [ ] Live/Stale badge only appears once a courier is actually assigned
@@ -158,34 +158,34 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **The countdown fix (A6) — verified server-side, wants a device pass:**
 
-- [ ] While the order sits at PLACED/CONFIRMED the figure **does not move**, and the card explains
+- [x] While the order sits at PLACED/CONFIRMED the figure **does not move**, and the card explains
       why: _"The kitchen hasn't started yet — the countdown begins when they do."_ This is deliberate;
       nothing is cooking, so a ticking number would imply progress that is not happening
-- [ ] The moment the vendor taps **Start preparing**, the figure begins dropping — leave the screen
+- [x] The moment the vendor taps **Start preparing**, the figure begins dropping — leave the screen
       open for a few minutes and watch it fall (it refreshes on the existing 4s poll)
-- [ ] It never reads **0** while still cooking; only a READY order shows 0
-- [ ] A **pickup** order now gets the same card (it used to be walk-in only). A **delivery** order
+- [x] It never reads **0** while still cooking; only a READY order shows 0
+- [x] A **pickup** order now gets the same card (it used to be walk-in only). A **delivery** order
       still gets none — there is no journey for the customer to time
-- [ ] Curl equivalent, if you want it without waiting:
+- [x] Curl equivalent, if you want it without waiting:
       `GET /food/orders/{id}/leave-time?lat=&lng=` → `readyInMinutes` should fall between calls
       once PREPARING
 
 **Prep time:**
 
-- [ ] Vendor catalogue: each dish has a **prep chip** ("Set prep time" / "20 min prep")
-- [ ] Setting one changes the customer's estimate; **clearing it** falls back to the business default
-- [ ] Order with two dishes ≈ the **slowest** dish plus a small margin — _not_ the sum
+- [x] Vendor catalogue: each dish has a **prep chip** ("Set prep time" / "20 min prep")
+- [x] Setting one changes the customer's estimate; **clearing it** falls back to the business default
+- [x] Order with two dishes ≈ the **slowest** dish plus a small margin — _not_ the sum
 
 **Adding items (B1) — this is what blocked all the prep-time testing:**
 
-- [ ] Sign out of the vendor app and back in, then go **straight to the Catalogue tab** without
+- [x] Sign out of the vendor app and back in, then go **straight to the Catalogue tab** without
       opening Orders first. Items should load and **"Add item" should work** ← this was the bug:
       only the Orders tab ever picked your business, so every other tab had none and the Add
       button did nothing at all, silently
-- [ ] Fill in name + price → **Add to catalogue** → the item appears in the list
-- [ ] It also appears for a customer browsing that business
+- [x] Fill in name + price → **Add to catalogue** → the item appears in the list
+- [x] It also appears for a customer browsing that business
 - [ ] The Queue tab likewise works straight after a fresh login
-- [ ] If anything does fail you now get a **message** — a red "Couldn't load your catalogue" with a
+- [x] If anything does fail you now get a **message** — a red "Couldn't load your catalogue" with a
       Try again button, or an explicit alert. A silent no-op is itself a bug; report it
 
 ---
@@ -198,12 +198,12 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **Why there's no work (B2) — the feed used to say nothing at all:**
 
-- [ ] Sign in as a driver who registered a **car that no admin has graded yet**. The Home feed
+- [x] Sign in as a driver who registered a **car that no admin has graded yet**. The Home feed
       shows **"Vehicle awaiting approval"** with an explanation and a **Check again** button
       ← this was the bug: it showed a spinner reading "Looking for requests nearby…" forever, so
       an unapproved driver could not tell that from a quiet night and just waited
-- [ ] An account still under review shows **"Account under review"** instead
-- [ ] Grade the vehicle in the admin web (Approvals → Awaiting vehicle class), tap **Check again** →
+- [x] An account still under review shows **"Account under review"** instead
+- [x] Grade the vehicle in the admin web (Approvals → Awaiting vehicle class), tap **Check again** →
       the normal feed appears
 - [ ] An **approved** driver who is online with genuinely no work nearby sees **"No requests right
       now"** with the search radius — not an endless spinner
@@ -213,12 +213,12 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 ## 10. Admin web
 
 - [x] `npm run dev` → log in as `superadmin` (OTP from `docker logs gozone-auth`)
-- [/] Approvals: a pending driver can be approved **and assigned a vehicle class**
+- [x] Approvals: a pending driver can be approved **and assigned a vehicle class**
 - [x] Payouts, Incidents, Promos, Fees pages all load
-- [ ] **A7:** approve a driver who registered a **car** *without* setting a class. They should then
+- [ ] **A7:** approve a driver who registered a **car** _without_ setting a class. They should then
       appear under **Approvals → "Awaiting vehicle class"** (they used to vanish from every screen
       while their own app still read "Awaiting admin"), and the Dashboard should count them
-- [ ] Setting the class removes them from that list, and the driver's app stops saying "Awaiting admin"
+- [x] Setting the class removes them from that list, and the driver's app stops saying "Awaiting admin"
 
 ---
 
@@ -228,17 +228,17 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 > with its bottom flush to the screen edge; the handle toggles state). **The slide itself has never
 > been seen move** — the test browser suspends animation frames — so the motion is what needs eyes.
 
-- [ ] Ride home opens with the map behind everything and the sheet resting where the old content
-      started — the screen should look much as before at rest
-- [ ] **Drag the handle down** → the sheet slides away and the map goes full-screen, with the
+- [/] Ride home opens with the map behind everything and the sheet resting where the old content
+  started — the screen should look much as before at rest
+- [x] **Drag the handle down** → the sheet slides away and the map goes full-screen, with the
       search bar left docked at the bottom ← the whole point of C5
-- [ ] Drag back up (or tap the handle) → the sheet returns
-- [ ] **Flick** it down quickly and let go early — it finishes the throw, it does not spring back
-- [ ] Release it half-way → it snaps to whichever end is nearer, never stops mid-air
-- [ ] Tapping the **search bar** still opens the search screen; the drag must not swallow taps
-- [ ] With the sheet up, the content below still **scrolls**, and the last recent row is reachable
-- [ ] Scrolling that content does **not** drag the sheet (drag is on the handle/search row only)
-- [ ] Handle label reads "Pull down to see the map" / "Pull up for ride options" and matches reality
+- [x] Drag back up (or tap the handle) → the sheet returns
+- [x] **Flick** it down quickly and let go early — it finishes the throw, it does not spring back
+- [x] Release it half-way → it snaps to whichever end is nearer, never stops mid-air
+- [x] Tapping the **search bar** still opens the search screen; the drag must not swallow taps
+- [x] With the sheet up, the content below still **scrolls**, and the last recent row is reachable
+- [x] Scrolling that content does **not** drag the sheet (drag is on the handle/search row only)
+- [x] Handle label reads "Pull down to see the map" / "Pull up for ride options" and matches reality ((remove this))
 
 ---
 
@@ -246,32 +246,32 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **Keyboard (C6) — check this on a low field in several forms, not just one:**
 
-- [ ] Tap a text box near the **bottom** of a screen — the screen lifts so the box sits just above
-      the keyboard ← Android previously did nothing at all here
-- [ ] Move between two fields at different heights **without closing the keyboard**; the lift
+- [x] Tap a text box near the **bottom** of a screen — the screen lifts so the box sits just above
+      the keyboard ← Android previously did nothing at all here ((works but isn't really good, when you click on the textbox directly it goes up then comes back down. But when you click on a high text first then click on the halfway hidden textbox, it comes up a bit but even that, it is still quite low))
+- [x] Move between two fields at different heights **without closing the keyboard**; the lift
       follows the field you're in
-- [ ] A screen whose fields are already high up (search over a map) **does not jump**
+- [x] A screen whose fields are already high up (search over a map) **does not jump**
 - [ ] Vendor **Add item** sheet: the add-on option rows at the bottom stay visible while typing
 - [ ] Driver/vendor **Cash out** sheet: momo number and account name stay visible
-- [ ] Nothing lifts twice or overshoots — that would mean a leftover per-screen handler
+- [x] Nothing lifts twice or overshoots — that would mean a leftover per-screen handler
 
 **Vendor gets in before approval (C2):**
 
-- [ ] Sign up a brand-new vendor. You land **in the app**, not on a dead-end waiting page
-- [ ] Orders/Queue/Catalogue/Earnings each explain the state; **Profile & settings** is reachable
+- [x] Sign up a brand-new vendor. You land **in the app**, not on a dead-end waiting page
+- [x] Orders/Queue/Catalogue/Earnings each explain the state; **Profile & settings** is reachable
       from every one of them
-- [ ] Profile works fully — edit your details, add an email
-- [ ] Approve the business in admin web; the app opens up **on its own** within ~8s
+- [x] Profile works fully — edit your details, add an email
+- [x] Approve the business in admin web; the app opens up **on its own** within ~8s
 
 **Vendor storefront + location (C3/C4):**
 
-- [ ] Profile → **Storefront & location** → set a description, cover photo link and location
-- [ ] The cover preview updates as you paste a link
-- [ ] Tap the location row → map picker → drag/search/locate-me → **Use this location**
-- [ ] Save, then open that vendor as a **customer**: your banner, description and address show
+- [x] Profile → **Storefront & location** → set a description, cover photo link and location
+- [/] The cover preview updates as you paste a link ((What type of link does it use and why doesm't it just let you choose a photo))
+- [x] Tap the location row → map picker → drag/search/locate-me → **Use this location**
+- [x] Save, then open that vendor as a **customer**: your banner, description and address show
       on the menu screen ← none of this was editable before
-- [ ] A vendor you have *not* customised still looks exactly as it did (bundled imagery)
-- [ ] Shop list order is stable — it no longer reshuffles after a vendor edits anything
+- [x] A vendor you have _not_ customised still looks exactly as it did (bundled imagery)
+- [x] Shop list order is stable — it no longer reshuffles after a vendor edits anything
 
 **One-tap cards (C7) — needs a real `PAYSTACK_SECRET_KEY`, see §6:**
 
@@ -289,25 +289,25 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **As a new driver:**
 
-- [ ] Sign up a driver and reach "Finish your setup". Four rows: your photo, licence, vehicle,
+- [x] Sign up a driver and reach "Finish your setup". Four rows: your photo, licence, vehicle,
       roadworthy (optional) ← these were fake "Upload" taps that set a placeholder string
 - [ ] **Take photo** opens the camera; **Choose** opens the library. Denying permission returns
       quietly rather than hanging or crashing
 - [ ] After picking, the row shows **your actual photo** as a thumbnail and says "Uploaded"
 - [ ] **Remove** clears it; retaking replaces it
-- [ ] Submitting with a photo missing is refused, naming the one that's missing
-- [ ] Submit with all three → "Application submitted"
+- [x] Submitting with a photo missing is refused, naming the one that's missing
+- [x] Submit with all three → "Application submitted"
 - [ ] Force-close and reopen the app mid-setup: text fields and uploaded documents survive; the
       thumbnails become ticks (the local file is gone, the upload is not) — this is expected
 
 **As an admin:**
 
-- [ ] Admin web → Driver KYC → Pending shows the driver by **name and phone**, not a UUID
-- [ ] All three photographs render. Click one — it opens full size, readable enough to check a
+- [x] Admin web → Driver KYC → Pending shows the driver by **name and phone**, not a UUID
+- [x] All three photographs render. Click one — it opens full size, readable enough to check a
       licence ← the page previously showed no images at all
-- [ ] The seeded drivers show "Not provided" (they were verified before documents were real —
+- [x] The seeded drivers show "Not provided" (they were verified before documents were real —
       that is honest, not a bug)
-- [ ] Approve → the driver's app moves on by itself
+- [x] Approve → the driver's app moves on by itself
 
 **Worth confirming once, because it is the design's load-bearing claim:**
 
@@ -358,5 +358,35 @@ Verified against the running stack: A6, A7, B1 (the API was never broken — the
 B3's backend. Only checkable on a phone, so **still open**: A4, A5 (splash appearance), B1's
 front-end path, B2 (feed states), B3's map. New checks for all of them are in the sections above.
 
-**Nothing is left to build from that run.** What remains is *this document*: most of these fixes
+**Nothing is left to build from that run.** What remains is _this document_: most of these fixes
 are phone-side and only a real device can clear them. Work through it top to bottom.
+
+NEW ISSUES FOUND
+For the ride page
+There should be no "Pull down to see the map" text. It should just be the handle.
+The map shows at the bottom of the screen which is very wrong, after the sliding part where you set your ride. I have added a screenshot to show it.
+The when you slide down to show the map, it should show the search bar a the 3 round botton. I have added another screenshot to show exactly how i want it.
+
+Used a vendor and a customer's number to login into the driver app and they went through. It is an issue across all apps which shouldn't be the case. Every app must have it's own set of users. As a result, you cannot sign up for another app because you are already registered, which you, the user, didn't do.
+I tried signing up on the driver app with a particular number but i couldn't complete because the otp wasn't logged. the account has not been created
+All apps give an option to resend otp after 30 secs
+Back button on the enter the code page for driver sign up doesn't work. Check other screens for similar issue
+Take photo is opening a select image menu or page instead of taking a picture
+Vehicle should be set during sign up
+Information shouldn't be editable but can be viewed
+Documents are saying verified while i have not verified them on the admin web and KYC is saying still saying mocked even though it was filled.
+All drivers are unable to recieve requests. this actually started a while back, i forgot to mention it. It says "Couldn't load requests Forbidden Retrying automatically" and nothing happens
+Account details should be in that top bar, board or button of the profile screen like all the other apps
+Vendors should be able to add a picture of their company logo in the storefront page. Whatever image is used as the banner for a particular shop is what the customer will see on the Go Shop page when looking through vendors or businesses.
+Vendors should we be able to add a picture of a particular dish or product when adding it to their menu or catalog and the dish or products should be editable but on when the store is closed
+Add a driver rating system because currently all drivers are rated 4.9, even the new ones, which is wrong.
+And for the rating, I realized that when you click on a particular star, it just locks it at that. I think that is not convenient. So you can make it in a way that the user can read from the first star and continue to the second and onwards or the user can just select let's say the fourth star directly. If you get what I mean.
+Currently, there is no way for a vendor to add another shop to their account. So, you can add it to the place where when you click on the current shop or business name, it pops up. So, as part of the list of businesses, you can add a business. And it will go and start like exactly when the vendor first signed up and didn't have a business. It can go and start from that page and progress on. But the business will have to be verified by the an admin just like during sign up.
+About the verifications on the admin web. It doesn't show much detail. It only shows the person's name and whether they are a driver or a vendor. It should show more information. For instance, when it comes to the vendors, verification of the account is different from verification of a business. Right now, what is happening is like we use the setup of the first business as the form of verification. And even that one, the business name doesn't come on the admin page, which is very wrong. For the driver one too, you can do it in a way where when you click on the driver that's is awaiting approval, it gives you information on the driver and can even take you to the driver's KYC. And the driver's KYC and the account approval should be together. So, once you approve the driver, it means you've approved everything.
+Location in Goshop should always be set to the current location when you first sign up or log in
+When a customer is paying with cash for a delivery from a vendor, it also shows up on the vendor app to confirm whether they have received the cash or not. This is wrong because the vendor is automatically credited whichever way payment is made. So that shouldn't show up on their page.
+Some of the information rxts are too much, example, with the payment screen, you don't need to add the fact that mobile money is confirmed by paystack each time because of the system. Just the info that cards and mobile money are charged securely by paystack is ok. Also the part about paying once with card and it being save is confusing because there is nothing about card in the payment methods.
+Orders that are not confirmed by the vendor after 5 minutes should be cancelled so they don't appear on live orders again and the customer gets a message like the vendor is busy. Deliveries to the same when a restaurant isn't able to get a courier for a delivery after 2 minutes. The customer is given an option to pick up or cancel as a result of no couriers around. And those cancelled deliveries don't show up on the delivery page in the driver app.
+The customer's name should be on the delivery and orders. Even if just their first name, so that it can be used to identify them.
+During the selection of a location one time, I mistakenly selected use this address, while it was still loading. And it's resulted in the locations being set to pinned location, which is bad. So, fix that.
+The route still doesn't show on the goride screen map.

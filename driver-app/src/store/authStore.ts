@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api from '../api/client';
+import api, { refreshSession } from '../api/client';
 import { storage } from '../lib/storage';
 import { clearUserData } from '../lib/session';
 
@@ -112,6 +112,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const { data } = await api.get('/auth/me');
       const me = toProfile(data);
+      // The token carries the status it was minted with. When an admin approves the account the
+      // database changes but the token in hand still reads PENDING, and every endpoint gated on
+      // STATUS_ACTIVE keeps refusing — the feed's "Forbidden" with no way out. Re-mint as soon as
+      // this call notices the disagreement, so the app opens up on the poll that saw the approval
+      // rather than an hour later when the token happens to expire.
+      if (me.status && me.status !== (await tokenStatus())) {
+        await refreshSession().catch(() => {});
+      }
       set({ status: me.status, name: me.name, vehicleClass: me.vehicleClass, serviceMode: me.serviceMode });
       return me;
     } catch {
@@ -191,6 +199,23 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 }));
+
+/**
+ * The account status the access token in hand was minted with — which is not necessarily today's
+ * truth. Base64url, so the two URL-safe characters have to be mapped back before decoding.
+ * Returns null if anything about the token is unreadable; the 403 retry in api/client.ts is the
+ * independent second line of defence.
+ */
+async function tokenStatus(): Promise<string | null> {
+  try {
+    const token = await storage.get('accessToken');
+    if (!token) return null;
+    const body = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(body)).status ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function toProfile(data: any): MeProfile {
   return {

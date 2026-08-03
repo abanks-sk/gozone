@@ -1,25 +1,59 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { useProfileStore } from '../../src/store/profileStore';
 import { clearUserData } from '../../src/lib/session';
-import { roleHome } from '../../src/lib/routes';
+import { roleHome, goBack } from '../../src/lib/routes';
 import { BrandScreen, GlowOrb, BrandInput, PillButton } from '../../src/components/brand';
 import { brand } from '../../src/theme/tokens';
+
+/** How long before a fresh code can be requested. */
+const RESEND_AFTER_SECONDS = 30;
 
 export default function VerifyOtpScreen() {
   const { phone, email, channel, name } = useLocalSearchParams<{ phone?: string; email?: string; channel?: string; name?: string }>();
   const router = useRouter();
-  const { verifyOtp, verifyEmailOtp, fetchMe } = useAuthStore();
+  const { verifyOtp, verifyEmailOtp, fetchMe, login, loginEmail } = useAuthStore();
   const setProfile = useProfileStore((s) => s.setProfile);
   const setFromServer = useProfileStore((s) => s.setFromServer);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  // Codes go astray — a dropped SMS used to leave the only way forward as backing out and
+  // starting the whole sign-up again. Offer another one, but not instantly: a resend re-issues a
+  // code and invalidates the one in flight, so an impatient double-tap would break a code that
+  // was about to arrive.
+  const [wait, setWait] = useState(RESEND_AFTER_SECONDS);
 
   const isEmail = channel === 'email';
   const target = isEmail ? (email ?? '') : (phone ?? '');
+
+  useEffect(() => {
+    if (wait <= 0) return;
+    const t = setTimeout(() => setWait((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [wait]);
+
+  async function handleResend() {
+    if (wait > 0 || resending) return;
+    setResending(true);
+    try {
+      // /auth/register already created the account before sending the first code, so by the time
+      // anyone is on this screen the number exists and the login path can issue another one —
+      // that holds for sign-up and sign-in alike.
+      if (isEmail) await loginEmail(target);
+      else await login(target);
+      setWait(RESEND_AFTER_SECONDS);
+      setCode('');
+      Alert.alert('Code sent', `We sent a new code to ${target}.`);
+    } catch (e: any) {
+      Alert.alert('Could not resend', e?.response?.data?.message ?? 'Please try again.');
+    } finally {
+      setResending(false);
+    }
+  }
 
   async function handleVerify() {
     if (code.length !== 6) return Alert.alert('Enter the 6-digit code');
@@ -48,7 +82,7 @@ export default function VerifyOtpScreen() {
     <BrandScreen>
       <GlowOrb size={280} style={{ position: 'absolute', top: -80, left: -90 }} />
       <View style={{ flex: 1, paddingHorizontal: 24 }}>
-        <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 4, width: 40 }}>
+        <TouchableOpacity onPress={() => goBack(router, '/welcome')} style={{ marginTop: 4, width: 40 }}>
           <Ionicons name="chevron-back" size={26} color={brand.text} />
         </TouchableOpacity>
 
@@ -70,6 +104,17 @@ export default function VerifyOtpScreen() {
           />
 
           <PillButton label="Verify" onPress={handleVerify} loading={loading} style={{ marginTop: 6 }} />
+
+          <TouchableOpacity
+            onPress={handleResend}
+            disabled={wait > 0 || resending}
+            activeOpacity={0.7}
+            style={{ marginTop: 18, alignItems: 'center' }}
+          >
+            <Text style={{ fontSize: 13.5, fontWeight: '600', color: wait > 0 ? brand.textMuted : brand.primary }}>
+              {resending ? 'Sending…' : wait > 0 ? `Resend code in ${wait}s` : 'Resend code'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
     </BrandScreen>

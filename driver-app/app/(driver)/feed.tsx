@@ -117,7 +117,17 @@ export default function DriverFeedScreen() {
         const data = await rideApi.nearbyRequests(pos.lat, pos.lng, SEARCH_RADIUS_KM, vehicleClass, serviceMode);
         if (active) { setRequests(data.filter((r) => r.status === 'OPEN')); setFeedError(null); }
       } catch (e: any) {
-        if (active) setFeedError(e?.response?.data?.message ?? e?.message ?? 'Could not reach the server');
+        if (!active) return;
+        // A 403 here means the account is not cleared for work. api/client.ts has already spent a
+        // token refresh on it, so reaching this point is about the account itself, not a stale
+        // claim — ask the server what the account looks like now and let blockedReason explain it
+        // properly. Showing the raw "Forbidden" was the old behaviour and told the driver nothing.
+        if (e?.response?.status === 403) {
+          setFeedError('Your account isn’t cleared to take trips yet. Checking why…');
+          fetchMe();
+        } else {
+          setFeedError(e?.response?.data?.message ?? e?.message ?? 'Could not reach the server');
+        }
       } finally { if (active) { setSearching(false); setPolled(true); } }
     };
     tick();
