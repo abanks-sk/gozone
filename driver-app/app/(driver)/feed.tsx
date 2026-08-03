@@ -88,6 +88,11 @@ export default function DriverFeedScreen() {
 
   useEffect(() => { walletApi.getBalance('DRIVER').then((b) => setBalance(b.balance)).catch(() => {}); }, []);
 
+  // Every driver in the app showed 4.9, including one who had never carried anybody. This is the
+  // real average, and it stays "New" until enough passengers have rated them to mean something.
+  const [rating, setRating] = useState<{ average: number | null; count: number } | null>(null);
+  useEffect(() => { rideApi.rating().then(setRating).catch(() => {}); }, []);
+
   // Resolve the driver's real position (once) + reverse-geocode a readable name.
   async function locate() {
     const loc = await getCurrentLocation();
@@ -266,7 +271,7 @@ export default function DriverFeedScreen() {
             <Sep c={c} />
             <Stat label="Trips today" value={String(acceptedToday)} c={c} />
             <Sep c={c} />
-            <Stat label="Rating" value="4.9" c={c} />
+            <Stat label="Rating" value={rating?.average != null ? rating.average.toFixed(1) : 'New'} c={c} />
           </Row>
         </View>
 

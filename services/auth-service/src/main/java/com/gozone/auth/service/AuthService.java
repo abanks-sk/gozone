@@ -224,13 +224,14 @@ public class AuthService {
         otp.setConsumedAt(OffsetDateTime.now());
         otpRepo.save(otp);
 
-        // Banned accounts can't obtain a token at all. PENDING is allowed to log in so
-        // drivers/vendors can reach their onboarding / awaiting-approval screen; the JWT
-        // carries the status so services can block privileged actions for non-ACTIVE users.
-        if (user.getStatus() == User.Status.SUSPENDED || user.getStatus() == User.Status.REJECTED) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "This account is " + user.getStatus().name().toLowerCase() + ". Contact support.");
-        }
+        // PENDING and REJECTED are both allowed to log in so drivers and vendors can reach their
+        // onboarding / awaiting-approval / rejected screen; the JWT carries the status so services
+        // block privileged actions for anyone who is not ACTIVE.
+        //
+        // This used to be a second copy of the rule, and the two drifted the moment one was
+        // changed: `requireLoginableStatus` covers Google and password login, while OTP — the only
+        // route real drivers use — came through here and kept its own older answer.
+        requireLoginableStatus(user);
 
         String accessToken  = jwtService.generateAccessToken(user);
         String refreshToken = generateAndSaveRefreshToken(user);
@@ -595,7 +596,13 @@ public class AuthService {
         DriverKyc kyc = kycRepo.findById(kycId)
             .orElseThrow(() -> new IllegalStateException("KYC record not found"));
 
-        kyc.setStatus(DriverKyc.KycStatus.valueOf(req.getStatus().toUpperCase()));
+        DriverKyc.KycStatus next = DriverKyc.KycStatus.valueOf(req.getStatus().toUpperCase());
+        if (next == DriverKyc.KycStatus.REJECTED && (req.getNote() == null || req.getNote().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Give a reason for the rejection — the driver is shown it.");
+        }
+        kyc.setStatus(next);
+        kyc.setReviewNote(next == DriverKyc.KycStatus.VERIFIED ? null : trimNote(req.getNote()));
         kyc.setReviewedBy(UUID.fromString(adminUserId));
         if (req.getExpiryDate() != null) {
             kyc.setExpiryDate(req.getExpiryDate());
@@ -681,13 +688,36 @@ public class AuthService {
     }
 
     /** Admin approves (ACTIVE) or rejects (REJECTED) a pending account. */
-    public UserResponse reviewUser(UUID userId, String status) {
+    public UserResponse reviewUser(UUID userId, String status, String note, String adminUserId) {
         User u = userRepo.findById(userId)
             .orElseThrow(() -> new IllegalStateException("User not found"));
-        u.setStatus(User.Status.valueOf(status.toUpperCase()));
+        User.Status next = User.Status.valueOf(status.toUpperCase());
+
+        // A refusal has to say why. The applicant sees this, and without it their app can only tell
+        // them they were turned down — which leaves ringing support as the sole way to find out
+        // what to change about a decision that was already made and recorded.
+        if (next == User.Status.REJECTED && (note == null || note.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Give a reason for the rejection — the applicant is shown it.");
+        }
+
+        u.setStatus(next);
+        // Approving clears any earlier refusal: leaving the old reason on an approved account would
+        // have their app explaining why they were rejected while they are working.
+        u.setStatusNote(next == User.Status.ACTIVE ? null : trimNote(note));
+        u.setStatusReviewedBy(adminUserId == null ? null : UUID.fromString(adminUserId));
+        u.setStatusReviewedAt(OffsetDateTime.now());
         userRepo.save(u);
-        log.info("[ADMIN] user {} status -> {}", userId, u.getStatus());
+        log.info("[ADMIN] user {} status -> {} by {}", userId, u.getStatus(), adminUserId);
         return toUserResponse(u);
+    }
+
+    /** Notes are shown in a phone-sized space and stored in a 500-char column. */
+    private String trimNote(String note) {
+        if (note == null) return null;
+        String t = note.trim();
+        if (t.isEmpty()) return null;
+        return t.length() > 500 ? t.substring(0, 500) : t;
     }
 
     private UserResponse toUserResponse(User u) {
@@ -695,7 +725,8 @@ public class AuthService {
             u.getId(), u.getPhone(), u.getEmail(), u.getName(), u.getUsername(),
             u.getRole().name(), u.getStatus().name(),
             u.getVehicleClass() != null ? u.getVehicleClass().name() : null,
-            u.getServiceMode() != null ? u.getServiceMode().name() : "BOTH");
+            u.getServiceMode() != null ? u.getServiceMode().name() : "BOTH",
+            u.getStatusNote());
     }
 
     /** Map the driver's self-selected vehicle class (OKADA/CARGO). A car → null (admin sets the tier). */
@@ -885,11 +916,23 @@ public class AuthService {
         return raw == null ? null : raw.trim().toLowerCase();
     }
 
-    /** Suspended/rejected accounts can never obtain a token, whichever login route is used. */
+    /**
+     * Suspended accounts can never obtain a token, whichever login route is used.
+     *
+     * <p>Rejected ones can. That looks like a loosening and is the opposite: a rejection now carries
+     * a reason the applicant is meant to read and act on, and locking them out of every route into
+     * the app made that reason unreachable — they would meet "This account is rejected. Contact
+     * support." and have to ask a human to read back a decision the system had already written
+     * down. Being signed in buys them nothing on its own: every endpoint that dispatches work or
+     * moves money is gated on {@code STATUS_ACTIVE}, so a rejected driver can see why and submit
+     * new documents, and can do nothing else until an admin approves them.
+     *
+     * <p>Suspension is a punishment rather than a decision to be appealed in-app, so it stays shut.
+     */
     private void requireLoginableStatus(User user) {
-        if (user.getStatus() == User.Status.SUSPENDED || user.getStatus() == User.Status.REJECTED) {
+        if (user.getStatus() == User.Status.SUSPENDED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "This account is " + user.getStatus().name().toLowerCase() + ". Contact support.");
+                "This account is suspended. Contact support.");
         }
     }
 
@@ -940,7 +983,8 @@ public class AuthService {
             kyc.getIdSelfieUrl(),
             kyc.getLicenceUrl(),
             kyc.getVehiclePhotoUrl(),
-            kyc.getRoadworthyUrl()
+            kyc.getRoadworthyUrl(),
+            kyc.getReviewNote()
         );
     }
 }

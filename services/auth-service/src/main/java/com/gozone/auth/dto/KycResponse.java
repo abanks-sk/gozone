@@ -25,5 +25,7 @@ public record KycResponse(
     /** Photograph of the vehicle. */
     String vehiclePhotoUrl,
     /** Optional roadworthy certificate — predates the three required photos. */
-    String roadworthyUrl
+    String roadworthyUrl,
+    /** Why the reviewer decided as they did — shown to the driver, so a refusal can be acted on. */
+    String reviewNote
 ) {}

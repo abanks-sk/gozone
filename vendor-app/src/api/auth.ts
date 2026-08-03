@@ -7,6 +7,8 @@ export interface Me {
   name?: string;
   role: string;
   status: string;
+  /** Why the account is in this status — written by the admin who rejected it. */
+  statusNote?: string | null;
 }
 
 export const authApi = {

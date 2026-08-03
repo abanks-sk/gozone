@@ -780,6 +780,13 @@ components:
     UserResponse:
       type: object
       properties:
+        statusNote:
+          type: string
+          nullable: true
+          description: >
+            Why the account is in this status, written by the reviewing admin. Required when
+            rejecting (the server answers 400 without one) and cleared on approval — the applicant
+            is shown it, so a refusal can be acted on instead of prompting a call to support.
         id:
           type: string
           format: uuid
@@ -851,6 +858,10 @@ components:
     KycResponse:
       type: object
       properties:
+        reviewNote:
+          type: string
+          nullable: true
+          description: Why the documents were accepted or refused — shown to the driver.
         id:
           type: string
           format: uuid

@@ -6,6 +6,8 @@ import { clearUserData } from '../lib/session';
 /** The server-side profile (`GET /auth/me`) — the source of truth for account details. */
 export interface MeProfile {
   status: string | null;
+  /** Why the account is in this status — set by the reviewing admin on a rejection. */
+  statusNote: string | null;
   name: string | null;
   username: string | null;
   email: string | null;
@@ -15,7 +17,7 @@ export interface MeProfile {
 }
 
 const EMPTY_ME: MeProfile = {
-  status: null, name: null, username: null, email: null, phone: null,
+  status: null, statusNote: null, name: null, username: null, email: null, phone: null,
   vehicleClass: null, serviceMode: null,
 };
 
@@ -229,6 +231,7 @@ async function tokenStatus(): Promise<string | null> {
 function toProfile(data: any): MeProfile {
   return {
     status: data?.status ?? null,
+    statusNote: data?.statusNote ?? null,
     name: data?.name ?? null,
     username: data?.username ?? null,
     email: data?.email ?? null,

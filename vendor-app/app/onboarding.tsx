@@ -39,6 +39,8 @@ export default function VendorOnboarding() {
   const draft = useVendorSetup();
   const setVendor = useVendorStore((s) => s.setVendor);
   const [view, setView] = useState<Stage>('loading');
+  // What the reviewer said — see the note on the driver app's copy of this screen.
+  const [reason, setReason] = useState<string | null>(null);
   const [goApp, setGoApp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Location chosen on the map picker, if they used it. Peeked rather than consumed so it
@@ -50,7 +52,7 @@ export default function VendorOnboarding() {
   // resubmitting. Anything else belongs in the app, where the gate does the explaining.
   async function refresh() {
     const me = await authApi.me().catch(() => null);
-    if (me?.status === 'REJECTED') { setView('rejected'); return; }
+    if (me?.status === 'REJECTED') { setReason(me.statusNote ?? null); setView('rejected'); return; }
     const vendors = await authApi.myVendors().catch(() => []);
     if (vendors.length > 0) { setGoApp(true); return; }
     setView('setup');
@@ -94,8 +96,16 @@ export default function VendorOnboarding() {
           </View>
           <Text style={{ fontSize: 24, fontWeight: '800', color: brand.text, marginTop: 20, textAlign: 'center' }}>Not approved</Text>
           <Text style={{ fontSize: 14.5, color: brand.textMuted, marginTop: 12, textAlign: 'center', lineHeight: 21 }}>
-            Your business couldn’t be verified. Update your details and try again, or contact support.
+            {reason
+              ? 'The reviewer left you a note about what to change.'
+              : 'Your business couldn’t be verified. Update your details and try again, or contact support.'}
           </Text>
+          {reason ? (
+            <View style={{ marginTop: 16, alignSelf: 'stretch', backgroundColor: 'rgba(239,68,68,0.12)', borderRadius: 16, padding: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#ef4444', textTransform: 'uppercase', letterSpacing: 0.5 }}>Why</Text>
+              <Text style={{ fontSize: 14, color: brand.text, marginTop: 6, lineHeight: 20 }}>{reason}</Text>
+            </View>
+          ) : null}
           <PillButton label="Update & resubmit" onPress={() => setView('setup')} style={{ marginTop: 24, alignSelf: 'stretch' }} />
           <TouchableOpacity onPress={signOut} style={{ marginTop: 18 }}><Text style={{ fontSize: 13, color: brand.textMuted }}>Log out</Text></TouchableOpacity>
         </View>

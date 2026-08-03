@@ -176,6 +176,49 @@ eq "…and the second account is cleaned up" \
 
 echo
 echo "=============================================="
+echo " 2c. RATINGS AND REJECTION REASONS"
+echo "=============================================="
+# Every driver showed a hardcoded 4.9, including one who had never carried anybody.
+DAVG=$(GET /rides/ratings/me "$DRIVER" | jq_ "d['average']")
+DCNT=$(GET /rides/ratings/me "$DRIVER" | jq_ "d['count']")
+PSQL_AVG=$(docker exec gozone-postgres psql -U gozone -d ride_db -tAc \
+  "SELECT round(avg(score)::numeric,1) FROM ride_ratings WHERE ratee_id='aaaaaaaa-0000-0000-0000-000000000002'" | tr -d ' \r')
+eqm "driver's rating is the real average" "$DAVG" "$PSQL_AVG"
+neq "…backed by real ratings"            "$DCNT" "0"
+# A rider nobody has rated has no average at all — the app shows "New" rather than inventing one.
+eq "an unrated user has no average" \
+  "$(GET /rides/ratings/aaaaaaaa-0000-0000-0000-000000000007 "$RIDER" | jq_ "d['average']")" "None"
+
+# A refusal has to say why: without a reason the applicant's app can only tell them they were
+# turned down, which leaves ringing support as the only way to find out what to change.
+REJP="+233559999801"
+curl -s -o /dev/null -X POST $GW/auth/register -H 'Content-Type: application/json' \
+  -d "{\"phone\":\"$REJP\",\"role\":\"DRIVER\",\"name\":\"E2E Reject\",\"app\":\"DRIVER\"}"
+sleep 0.5
+REJID=$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT id FROM users WHERE phone='$REJP' AND app='DRIVER'" | tr -d ' \r')
+eq "rejecting without a reason is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/auth/users/$REJID/status" \
+     -H 'Content-Type: application/json' -H "Authorization: Bearer $ADMIN" -d '{"status":"REJECTED"}')" "400"
+PATCH_ "/auth/users/$REJID/status" "$ADMIN" '{"status":"REJECTED","note":"Licence photo is too blurred to read."}' >/dev/null
+
+# …and the rejected driver has to be able to get in far enough to read it. They used to be locked
+# out of every route into the app, which made the reason unreachable by the person it is for.
+REJTOK=$(login "$REJP")
+eq "a rejected driver can still sign in"   "$(GET /auth/me "$REJTOK" | jq_ "d['status']")" "REJECTED"
+eq "…and is told why"                      "$(GET /auth/me "$REJTOK" | jq_ "d['statusNote']")" "Licence photo is too blurred to read."
+eq "…but is still given no work"           "$(CODE '/rides/requests/nearby?lat=5.6&lng=-0.18&radiusKm=8' "$REJTOK")" "403"
+PATCH_ "/auth/users/$REJID/status" "$ADMIN" '{"status":"ACTIVE"}' >/dev/null
+eq "approving clears the reason" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc \
+     "SELECT coalesce(status_note,'cleared') FROM users WHERE id='$REJID'" | tr -d ' \r')" "cleared"
+
+docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+  "DELETE FROM refresh_tokens WHERE user_id='$REJID'; DELETE FROM otp_codes WHERE phone='$REJP'; DELETE FROM users WHERE id='$REJID';" >/dev/null 2>&1
+eq "…and the test applicant is cleaned up" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT COUNT(*) FROM users WHERE phone='$REJP'" | tr -d ' \r')" "0"
+
+echo
+echo "=============================================="
 echo " 3. PRICING — server quote"
 echo "=============================================="
 Q=$(POST /rides/quote "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6500,"destLng":-0.1960,"rideType":"STANDARD"}')

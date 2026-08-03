@@ -15,4 +15,7 @@ public interface RideRatingRepository extends JpaRepository<RideRating, UUID> {
 
     @Query("SELECT AVG(r.score) FROM RideRating r WHERE r.rateeId = :rateeId")
     Double avgScoreForRatee(@Param("rateeId") UUID rateeId);
+
+    /** How many people have rated them — the average means nothing without it. */
+    long countByRateeId(UUID rateeId);
 }

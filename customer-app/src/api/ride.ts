@@ -145,6 +145,14 @@ export const rideApi = {
   rateTrip: (tripId: string, rateeId: string, score: number, comment?: string) =>
     api.post(`/rides/trips/${tripId}/rate`, { rateeId, score, comment }),
 
+  /**
+   * Someone's rating. `average` is null until enough people have rated them — the app shows
+   * "New" rather than a number computed from one or two scores.
+   */
+  rating: (userId?: string) =>
+    api.get<{ userId: string; average: number | null; count: number }>(
+      userId ? `/rides/ratings/${userId}` : '/rides/ratings/me').then((r) => r.data),
+
   sos: (tripId: string, coords?: { lat: number; lng: number }) =>
     api.post(`/rides/trips/${tripId}/sos`, coords ?? {}),
 

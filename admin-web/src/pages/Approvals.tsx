@@ -78,9 +78,14 @@ export default function Approvals() {
   useEffect(() => { load(); }, []);
 
   async function review(id: string, status: 'ACTIVE' | 'REJECTED') {
+    let note: string | null = null;
+    if (status === 'REJECTED') {
+      note = askReason('account');
+      if (note === null) return;
+    }
     setBusyId(id);
     try {
-      await api.patch(`/auth/users/${id}/status`, { status });
+      await api.patch(`/auth/users/${id}/status`, { status, note });
       await load();
     } catch (e: any) {
       alert(e?.response?.data?.message ?? 'Failed to update');
@@ -148,4 +153,19 @@ export default function Approvals() {
       )}
     </div>
   );
+}
+
+/**
+ * Ask why, when the answer is no.
+ *
+ * The applicant is shown this, so it has to say what to change — the server refuses a rejection
+ * without one. Approvals need no explanation and are not asked for one.
+ */
+function askReason(what: string): string | null {
+  const note = window.prompt(`Why is this ${what} being rejected?
+
+The applicant sees this, so say what they need to change.`);
+  if (note === null) return null;           // cancelled
+  if (!note.trim()) { alert('A reason is required to reject.'); return null; }
+  return note.trim();
 }

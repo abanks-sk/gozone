@@ -3,6 +3,7 @@ import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { authApi, Kyc } from '../src/api/auth';
+import { rideApi } from '../src/api/ride';
 import { useAuthStore } from '../src/store/authStore';
 import { useDriverStore } from '../src/store/driverStore';
 import { useVehicle, vehicleSummary } from '../src/store/vehicleStore';
@@ -44,6 +45,11 @@ export default function ProfileScreen() {
   useEffect(() => {
     authApi.myKyc().then((k) => { setKyc(k); }).finally(() => setKycLoaded(true));
   }, []);
+
+  // Was a hardcoded "Acceptance 95%" — a number nothing measured. Acceptance is not tracked
+  // anywhere, so the slot now carries the rating, which is.
+  const [rating, setRating] = useState<{ average: number | null; count: number } | null>(null);
+  useEffect(() => { rideApi.rating().then(setRating).catch(() => {}); }, []);
 
   const accountLabel =
     accountStatus === 'ACTIVE' ? 'Verified'
@@ -102,7 +108,7 @@ export default function ProfileScreen() {
         <URow style={{ justifyContent: 'space-around' }}>
           <Stat label="Trips today" value={String(trips)} c={c} />
           <View style={{ width: 1, height: 28, backgroundColor: c.border }} />
-          <Stat label="Acceptance" value="95%" c={c} />
+          <Stat label="Rating" value={rating?.average != null ? rating.average.toFixed(1) : 'New'} c={c} />
           <View style={{ width: 1, height: 28, backgroundColor: c.border }} />
           <Stat label="Status" value={accountLabel} tone={accountTone} c={c} />
         </URow>

@@ -620,6 +620,24 @@ public class RideService {
     }
 
     /**
+     * How many ratings before an average is worth showing.
+     *
+     * <p>Below this the client is told there is no average yet and shows "New driver". A single
+     * rough night would otherwise put a brand-new driver on 1.0 and finish them, which is a worse
+     * lie than the hardcoded 4.9 this replaces — that one at least was not actively unfair.
+     */
+    private static final int MIN_RATINGS_TO_AVERAGE = 3;
+
+    /** Someone's rating, rounded to one decimal — null until enough people have rated them. */
+    @Transactional(readOnly = true)
+    public RatingSummary ratingFor(UUID userId) {
+        long count = ratingRepo.countByRateeId(userId);
+        Double avg = count >= MIN_RATINGS_TO_AVERAGE ? ratingRepo.avgScoreForRatee(userId) : null;
+        Double rounded = avg == null ? null : Math.round(avg * 10.0) / 10.0;
+        return new RatingSummary(userId, rounded, count);
+    }
+
+    /**
      * SOS: recorded as an incident and surfaced on the admin web app, where the
      * safety team triages it (and decides whether to involve the authorities).
      */

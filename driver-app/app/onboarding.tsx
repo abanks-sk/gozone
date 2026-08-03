@@ -17,6 +17,10 @@ export default function DriverOnboarding() {
   const draft = useDriverSetup();
   const [view, setView] = useState<Stage>('loading');
   const [goFeed, setGoFeed] = useState(false);
+  // What the reviewer said. A refusal used to be a status and nothing else, so the screen could
+  // only offer to "contact support" — which meant asking a person to read back a decision the
+  // system had already written down.
+  const [reason, setReason] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -56,7 +60,7 @@ export default function DriverOnboarding() {
     const me = await authApi.me().catch(() => null);
     if (!me) { setView('setup'); return; }
     if (me.status === 'ACTIVE') { setGoFeed(true); return; }
-    if (me.status === 'REJECTED') { setView('rejected'); return; }
+    if (me.status === 'REJECTED') { setReason(me.statusNote ?? null); setView('rejected'); return; }
     // PENDING — submitted already?
     const kyc: Kyc | null = await authApi.myKyc();
     if (kyc && kyc.status !== 'REJECTED') setView('awaiting');
@@ -70,7 +74,7 @@ export default function DriverOnboarding() {
     pollRef.current = setInterval(async () => {
       const me = await authApi.me().catch(() => null);
       if (me?.status === 'ACTIVE') setGoFeed(true);
-      if (me?.status === 'REJECTED') setView('rejected');
+      if (me?.status === 'REJECTED') { setReason(me.statusNote ?? null); setView('rejected'); }
     }, 5000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [view]);
@@ -153,8 +157,16 @@ export default function DriverOnboarding() {
           </View>
           <Text style={{ fontSize: 24, fontWeight: '800', color: brand.text, marginTop: 20, textAlign: 'center' }}>Application not approved</Text>
           <Text style={{ fontSize: 14.5, color: brand.textMuted, marginTop: 12, textAlign: 'center', lineHeight: 21 }}>
-            Your details couldn’t be verified. Update your documents and try again, or contact support.
+            {reason
+              ? 'The reviewer left you a note about what to change.'
+              : 'Your details couldn’t be verified. Update your documents and try again, or contact support.'}
           </Text>
+          {reason ? (
+            <View style={{ marginTop: 16, alignSelf: 'stretch', backgroundColor: 'rgba(239,68,68,0.12)', borderRadius: 16, padding: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#ef4444', textTransform: 'uppercase', letterSpacing: 0.5 }}>Why</Text>
+              <Text style={{ fontSize: 14, color: brand.text, marginTop: 6, lineHeight: 20 }}>{reason}</Text>
+            </View>
+          ) : null}
           <PillButton label="Update & resubmit" onPress={() => setView('setup')} style={{ marginTop: 24, alignSelf: 'stretch' }} />
           <TouchableOpacity onPress={signOut} style={{ marginTop: 18 }}>
             <Text style={{ fontSize: 13, color: brand.textMuted }}>Log out</Text>

@@ -11,10 +11,12 @@ export interface MeProfile {
   phone: string | null;
   role: string | null;
   status: string | null;
+  /** Why the account is in this status — set by the reviewing admin on a rejection. */
+  statusNote: string | null;
 }
 
 const EMPTY_ME: MeProfile = {
-  name: null, username: null, email: null, phone: null, role: null, status: null,
+  name: null, username: null, email: null, phone: null, role: null, status: null, statusNote: null,
 };
 
 interface AuthState {
@@ -188,6 +190,7 @@ function toProfile(data: any): MeProfile {
     phone: data?.phone ?? null,
     role: data?.role ?? null,
     status: data?.status ?? null,
+    statusNote: data?.statusNote ?? null,
   };
 }
 

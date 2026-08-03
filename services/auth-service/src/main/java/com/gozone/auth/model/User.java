@@ -59,6 +59,22 @@ public class User {
     @Column(name = "service_mode", nullable = false, length = 20)
     private ServiceMode serviceMode = ServiceMode.BOTH;
 
+    /**
+     * Why the account is in its current status, written by the reviewing admin.
+     *
+     * A rejection used to be a bare status: the driver's app said they had been turned down and
+     * could not say what to change, so the only route forward was to ring support and ask someone
+     * to look up a decision that had already been made.
+     */
+    @Column(name = "status_note", length = 500)
+    private String statusNote;
+
+    @Column(name = "status_reviewed_by")
+    private UUID statusReviewedBy;
+
+    @Column(name = "status_reviewed_at")
+    private OffsetDateTime statusReviewedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -119,5 +135,11 @@ public class User {
     public void setVehicleClass(VehicleClass vehicleClass) { this.vehicleClass = vehicleClass; }
     public ServiceMode getServiceMode() { return serviceMode; }
     public void setServiceMode(ServiceMode serviceMode) { this.serviceMode = serviceMode; }
+    public String getStatusNote() { return statusNote; }
+    public void setStatusNote(String statusNote) { this.statusNote = statusNote; }
+    public UUID getStatusReviewedBy() { return statusReviewedBy; }
+    public void setStatusReviewedBy(UUID statusReviewedBy) { this.statusReviewedBy = statusReviewedBy; }
+    public OffsetDateTime getStatusReviewedAt() { return statusReviewedAt; }
+    public void setStatusReviewedAt(OffsetDateTime statusReviewedAt) { this.statusReviewedAt = statusReviewedAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 }

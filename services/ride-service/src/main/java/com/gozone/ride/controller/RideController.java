@@ -182,6 +182,23 @@ public class RideController {
 
     // ── Ratings ───────────────────────────────────────────────────────────────
 
+    /** The caller's own rating — what the driver app shows them about themselves. */
+    @GetMapping("/ratings/me")
+    public ResponseEntity<RatingSummary> myRating(@AuthenticationPrincipal String userId) {
+        return ResponseEntity.ok(rideService.ratingFor(UUID.fromString(userId)));
+    }
+
+    /**
+     * Somebody else's rating — a passenger comparing the drivers who have offered.
+     *
+     * Signed-in callers only. A driver's rating is the thing a rider is meant to choose on, so it
+     * is not private; the average is all that comes back, never who said what.
+     */
+    @GetMapping("/ratings/{userId}")
+    public ResponseEntity<RatingSummary> ratingOf(@PathVariable UUID userId) {
+        return ResponseEntity.ok(rideService.ratingFor(userId));
+    }
+
     @PostMapping("/trips/{id}/rate")
     public ResponseEntity<Map<String, String>> rateTrip(
             @PathVariable UUID id,

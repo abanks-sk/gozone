@@ -42,6 +42,10 @@ public class DriverKyc {
     @Column(nullable = false, length = 20)
     private KycStatus status = KycStatus.PENDING;
 
+/** Why the documents were accepted or refused — shown to the driver, not just recorded. */
+    @Column(name = "review_note", length = 500)
+    private String reviewNote;
+
     @Column(name = "reviewed_by")
     private UUID reviewedBy;
 
@@ -75,4 +79,7 @@ public class DriverKyc {
     public LocalDate getExpiryDate() { return expiryDate; }
     public void setExpiryDate(LocalDate expiryDate) { this.expiryDate = expiryDate; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+
+    public String getReviewNote() { return reviewNote; }
+    public void setReviewNote(String reviewNote) { this.reviewNote = reviewNote; }
 }

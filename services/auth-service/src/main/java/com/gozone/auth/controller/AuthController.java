@@ -188,8 +188,10 @@ public class AuthController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public ResponseEntity<UserResponse> reviewUser(
             @PathVariable UUID id,
+            @AuthenticationPrincipal String adminUserId,
             @RequestBody Map<String, String> body) {
-        return ResponseEntity.ok(authService.reviewUser(id, body.getOrDefault("status", "")));
+        return ResponseEntity.ok(authService.reviewUser(
+            id, body.getOrDefault("status", ""), body.get("note"), adminUserId));
     }
 
     @PatchMapping("/users/{id}/class")

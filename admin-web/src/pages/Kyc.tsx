@@ -43,9 +43,14 @@ export default function Kyc() {
   useEffect(() => { load(); }, [filter]);
 
   async function review(id: string, status: 'VERIFIED' | 'REJECTED') {
+    let note: string | null = null;
+    if (status === 'REJECTED') {
+      note = askReason('driver’s documents');
+      if (note === null) return;
+    }
     setBusyId(id);
     try {
-      await api.patch(`/auth/driver/kyc/${id}`, { status });
+      await api.patch(`/auth/driver/kyc/${id}`, { status, note });
       await load();
     } catch (e: any) {
       alert(e?.response?.data?.message ?? 'Failed to update');
@@ -136,4 +141,19 @@ function Doc({ label, path, onZoom }: { label: string; path?: string | null; onZ
       <AuthImage path={path} alt={label} onClick={onZoom} />
     </div>
   );
+}
+
+/**
+ * Ask why, when the answer is no.
+ *
+ * The applicant is shown this, so it has to say what to change — the server refuses a rejection
+ * without one. Approvals need no explanation and are not asked for one.
+ */
+function askReason(what: string): string | null {
+  const note = window.prompt(`Why is this ${what} being rejected?
+
+The applicant sees this, so say what they need to change.`);
+  if (note === null) return null;           // cancelled
+  if (!note.trim()) { alert('A reason is required to reject.'); return null; }
+  return note.trim();
 }

@@ -20,6 +20,32 @@ tags:
   - name: ratings
 
 paths:
+
+  /rides/ratings/me:
+    get:
+      tags: [Ratings]
+      summary: Your own rating
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Rating summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RatingSummary' }
+
+  /rides/ratings/{userId}:
+    get:
+      tags: [Ratings]
+      summary: Someone else's rating (a passenger comparing drivers who have offered)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Rating summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RatingSummary' }
   /quote:
     post:
       tags: [pricing]
@@ -476,6 +502,19 @@ components:
       bearerFormat: JWT
 
   schemas:
+    RatingSummary:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        average:
+          type: number
+          nullable: true
+          description: >
+            Mean score to one decimal, or null until at least three people have rated them —
+            clients show "New driver" rather than an average of one or two scores.
+        count:
+          type: integer
+          description: How many ratings exist, whether or not they are enough to average.
     QuoteRequest:
       type: object
       required: [originLat, originLng, destLat, destLng]
