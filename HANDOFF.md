@@ -2116,3 +2116,31 @@ live tracking (#21); keyboard still too low (#22); GZ splash mark (#23).
 the host). Every service then 500s with `UnknownHostException: postgres`. `docker compose up -d`
 brings it back and the volume is intact; check `docker ps` for **six** containers before assuming a
 code fault.
+
+### `[-]` Courier live tracking — it had never worked at all (REBUILD food + ride, e2e 185/185)
+The one item marked "not working at all". **Two independent breaks, both silent**, and every
+delivery assertion in the suite passed throughout because they all check REST state while the
+position travels over a WebSocket nothing ever opened.
+
+1. **The handshake was answered 403.** food and ride both had `.anyRequest().authenticated()`, and
+   a WS upgrade is a plain GET that a browser **cannot** attach an `Authorization` header to —
+   which is precisely why the client puts the token in the query string, and nothing read it.
+   `/ws/**` is now `permitAll` in both. That opens nothing: the socket is inert until a STOMP
+   CONNECT frame arrives, and `WebSocketConfig` authenticates that frame and authorises every
+   SUBSCRIBE against the topic's participants. Those checks existed and were simply **unreachable**.
+2. **`wsClient.connect()` was never called by anybody.** Every screen called `subscribeToX` on a
+   null client, and `this.client?.subscribe(...)` discarded it with no error and no retry. Ride
+   screens masked it by also polling; courier location has no fallback, so the map never moved.
+   Subscribing now connects, topics are re-established on reconnect (the broker replays nothing),
+   and each returns an unsubscribe — they used to leak, so a finished trip could drive the marker
+   on the next one. `wsClient` also called SecureStore directly, which throws on web.
+
+**`scripts/ws-probe.js`** subscribes and reports whether a message arrives; the suite runs it after
+the courier accepts (skipped with a note if `customer-app/node_modules` is missing). It asserts the
+customer receives the position, a stranger is **refused** the topic, and an unauthenticated socket
+cannot connect.
+
+⚠️ **Lesson worth keeping:** a green REST suite said nothing about the live layer. If something
+"real-time" is reported dead, check the socket actually opens before reading any application code.
+
+**Rebuild:** `docker compose build food-service ride-service && docker compose up -d food-service ride-service`.
