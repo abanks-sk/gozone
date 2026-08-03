@@ -1,11 +1,58 @@
 # GoZone — Session Handoff
 
-A complete context dump so a new session can continue seamlessly. Read this top to bottom.
+A complete context dump so a new session can continue seamlessly.
 
 > **Start with `README.md` in the repo root** — it is the maintained, structured documentation of
 > the whole system (architecture, stack, layout, flows, security, trade-offs, runbook). This file is
 > the *chronological* record of how the system got here and why specific fixes were made; the two
 > complement each other. Where they disagree, the README is current.
+>
+> **This file is append-only history and is now ~1900 lines.** Do not read it top to bottom.
+> Read the state block immediately below, then jump to the last few `###` entries. Older sections
+> describe how things *were*; where a later change superseded them they carry an inline
+> *(superseded — see …)* note.
+
+---
+
+## 0. WHERE THE PROJECT STANDS (read this first)
+
+**Everything raised in the user's device tap-through is now built.** All 17 issues across
+sections A, B and C of `docs/ISSUES_FROM_TESTING.md` are implemented and that file is the triage
+record. `scripts/e2e.sh` is **148/148** green against the running stack.
+
+**The one thing left is device verification.** Most of the recent work is phone-side and has
+never been run on a handset — the harness can drive the backend but not a camera, a keyboard, or
+a dragged sheet. **`docs/TAP_THROUGH.md` is the job**: 13 sections, each stating what the old
+broken behaviour was so a real fix can be told from a coincidence. §11 (pull-down map), §12
+(keyboard / vendor storefront / one-tap cards) and §13 (KYC) are the newest and least proven.
+
+### What changed in the most recent sessions (newest last)
+
+| Entry (find by `###` heading) | What it covers |
+|---|---|
+| Device-testing batch A (A4–A7) | GZ mark, duplicate glow orb, collection estimate counting down, drivers awaiting a vehicle class |
+| Device-testing batch B (B1–B3) | Catalogue add, unexplained empty driver feed, courier live location |
+| Section C batch (C2/C3/C4/C6/C7) | Global keyboard avoidance, vendors admitted before approval, vendor map picker, storefront editing, one-tap cards |
+| C5 — pull-down map | Ride home map goes full-screen behind a draggable sheet |
+| C1 — driver KYC unmocked | Real driver/licence/vehicle photos on a served volume, privately served |
+
+### Things that will bite you if you don't know them
+
+- **`npm install` is required in `driver-app` and `vendor-app`** — both gained native deps
+  (`expo-image-picker`; `react-native-webview` + `expo-location`).
+- **Rebuild `auth-service` and `food-service`** — migrations auth **V6** and food **V10/V11/V12**.
+- **KYC documents live on a Docker volume** (`kyc_uploads`). They are *meant* to survive rebuilds;
+  if you ever move that path, every driver's documents are destroyed by the next build.
+- **The e2e suite disturbs demo data.** It consumes the staged walk-in customer every run —
+  re-stage by flipping the existing entry, never by placing a new order:
+  `UPDATE queue_entries SET status='WAITING' WHERE order_id='7b223015-6710-4ac4-ac27-5db53843a9ff';`
+- **A failed Maven build is usually the network.** `DependencyResolutionException` after several
+  minutes means a download timed out; a straight retry normally succeeds.
+- **Verifying front-ends in a browser**: mint a token with the e2e `login()` helper and write
+  `accessToken`/`refreshToken` into `localStorage`, then load a web export — this reaches any
+  signed-in screen without tapping through login. Measuring the DOM works; **screenshots and
+  animation do not**, because the pane never composites and the browser therefore suspends
+  `requestAnimationFrame`. Silence from an animation there is not evidence of a bug.
 
 ---
 
@@ -132,7 +179,9 @@ All three apps were confirmed **running** by the user at handoff time.
 - Needs **`babel.config.js`** (`babel-preset-expo`) and **`metro.config.js`** (expo metro-config).
 - **zustand** ESM uses `import.meta` → breaks web. Fixed in `metro.config.js` by forcing zustand's
   CommonJS build (`resolveRequest` with `unstable_enablePackageExports: false` for zustand only).
-- **expo-notifications** removed entirely (push doesn't work in Expo Go SDK 53+; it crashed startup).
+- ~~**expo-notifications** removed entirely~~ — **stale**: it is installed again and used through
+  `src/lib/push.ts`, which detects Expo Go via `expo-constants` and never touches the module there
+  (importing it at all throws on Android in Expo Go). Real push still needs a dev build.
 - **Navigation**: root `_layout.tsx` only renders `<Stack>`; routing is declarative via
   `customer-app/app/index.tsx` `<Redirect>` (imperative nav before mount throws in expo-router v6).
 - **White flash on screen transitions** (ugly in dark mode): the real cause is React Navigation's
@@ -339,6 +388,10 @@ Shop data/stores (in `customer-app/src/`, renamed food→shop this session): `da
 
 ## 10. WHAT'S NEXT (the user's priorities)
 
+> ⚠️ **Historical.** This was the priority list at the time; every item in it has since been
+> built. For what is actually outstanding, see **§0** at the top and the `### Next` list at the
+> very bottom of this file.
+
 1. **Driver app redesign — DONE** (see §8): foundation, `driverStore`, themed tabs, feed (online toggle
    + live request cards), trip (passenger/route cards, status timeline, GPS, rate passenger), earnings
    (period selector + 7-day chart), profile. Only optional: real map view (needs `react-native-maps`).
@@ -387,7 +440,12 @@ restaurant-owner phone → dashboard shows orders for the seeded restaurant → 
 
 ---
 
-## 12. Onboarding & auth overhaul (IN PROGRESS) + real backlog
+## 12. Onboarding & auth overhaul (COMPLETE) + real backlog
+
+> ⚠️ **Historical.** "IN PROGRESS" when written; the overhaul finished, and later work changed
+> parts of it again — the driver's placeholder document "uploads" and the vendor's dead-end
+> awaiting-approval screen are both gone. Inline *(superseded)* notes point at the entries that
+> replaced them.
 
 The user pushed back that we're NOT done — lots is stubbed/missing. Current initiative: a proper
 **sign-up / auth system**. Agreed design:
@@ -421,6 +479,8 @@ The user pushed back that we're NOT done — lots is stubbed/missing. Current in
   account / Log in; `register?mode=`), lands on a gated **`onboarding.tsx`** that fetches `/auth/me`:
   ACTIVE → `/(driver)/feed`; REJECTED → rejected screen; PENDING → a **resumable KYC setup** (licence,
   vehicle, doc "uploads" — draft persisted in `driverSetupStore`) → **Submit** (`POST /auth/driver/kyc`)
+  *(the doc "uploads" were placeholder strings — **superseded**, see "C1 — driver KYC unmocked" at the
+  end of this file: real camera/gallery photos on a served volume.)*
   → **awaiting-approval** screen that **polls `/auth/me`** and auto-advances when an admin approves.
   Backend: new `GET /auth/driver/kyc/mine` (returns the driver's latest KYC or null). `authStore` gained
   `register(…,name)` + `fetchMe()`; `roleHome` → `/onboarding`. **Rebuild auth-service.**
@@ -432,6 +492,9 @@ The user pushed back that we're NOT done — lots is stubbed/missing. Current in
   businesses only). `authStore` gained `register(…,name)`+`fetchMe()`; `roleHome`→`/onboarding`.
   **Rebuild food-service** (vendor endpoints) **and auth-service** (already needed). Default vendor
   coords are Accra (real "choose on map" is backlog).
+  *(Both **superseded** — see the "Section C batch" entry: C2 lets unapproved vendors into the app
+  instead of parking them on a dead-end page, and C3 adds a real map picker, so a vendor is no longer
+  stuck on the Accra default.)*
 - **Onboarding overhaul COMPLETE** (Phases 1–3). Remaining backlog (live ride map, choose-on-map) in §10/§12.
 - **Phase 3 — original (revised) plan:** Driver & Vendor sign up with just **name + a few details**, then a
   **resumable in-app setup wizard** (driver: licence/vehicle/docs; vendor: business name/type/location)
@@ -445,12 +508,10 @@ The user pushed back that we're NOT done — lots is stubbed/missing. Current in
 shop pill reorg, promo system, pricing, choose-on-map ×3, parcel redesign, wallet/payments/Paystack,
 saved places, company website + ToS/Privacy, etc.). Work through it from there.
 
-**Broader backlog the user explicitly named (not yet built):**
-- **Live ride tracking page**: after match, a dedicated screen with a **live map** of the driver moving
-  to you + driver info/vehicle (today it's coords + a hardcoded "Kwame A." card; no map — would need
-  `react-native-maps`).
-- **"Choose on map"**: currently a dead stub — must work in the **ride search** page AND be added to the
-  **GoShop location** picker.
+**Broader backlog the user explicitly named** — ✅ **all three built since**:
+- ~~**Live ride tracking page**~~ — `(rider)/live.tsx`, full-screen map with the real driver card.
+- ~~**"Choose on map"**~~ — `app/map-picker.tsx`, wired into ride search and the GoShop address
+  picker (and, as of C3, the vendor app too).
 - (Plus the optional/deferred items listed in §10.)
 
 ---
@@ -806,7 +867,11 @@ addressed except the LOW polish (generic errors, OTP request rate-limit, Spring 
 
 ---
 
-## Integrations + auth overhaul (LATEST — read this first)
+## Integrations + auth overhaul (was "read this first" — now historical)
+
+> ⚠️ Superseded as the entry point by **§0** at the top of this file. Still accurate about the
+> integrations themselves (Paystack, Maps, SMS/email OTP, Google sign-in backend) and about
+> the demo accounts, which are unchanged.
 
 Everything below is **built and verified against the running stack**. All third-party credentials live in
 the gitignored `GoZone/.env` (never in the apps). Every integration **fails soft**: if a key is missing or a
@@ -1885,10 +1950,13 @@ pressing Approve was approving a string. Now real photographs: **driver, licence
    `GOOGLE_CLIENT_IDS`, make a **dev build**, add the "Continue with Google" button + add-phone screen.
 4. **Before any real deployment**: set `OTP_LOG_CODES=false`, set `GOOGLE_CLIENT_IDS`, tighten the Maps SDK
    key to Android/iOS app restrictions, and rotate every credential in `.env`.
-5. Driver/vendor apps lack the client-side Ghana phone helper (`src/lib/phone.ts`) — backend still validates,
-   so errors arrive after a round-trip.
-6. Per-topic WebSocket authorisation is done for trip/delivery location topics; queue topics stay open (count
+5. Per-topic WebSocket authorisation is done for trip/delivery location topics; queue topics stay open (count
    only).
-7. Older backlog: vendor self-serve "apply to promote"; ride quote in the parcel composer; external GoZone
-   Inc. website; backend catalogue-write API for vendors; driver call via `tel:`; RIDER→PASSENGER backend
-   rename (destructive — needs explicit go-ahead).
+6. **External GoZone Inc. website** — out of this repo's scope, still unbuilt.
+7. **RIDER → PASSENGER backend rename** — destructive (DB + all four apps); needs an explicit go-ahead.
+   Same for the deeper `food-service`/`com.gozone.food`/`food_db`/`/food` → shop/vendor rename.
+
+*(Checked and removed from this list because they are already built: the Ghana phone helper in
+driver + vendor apps, vendor self-serve "apply to promote", the backend catalogue-write API, the
+driver's `tel:` call button, and the server quote in the parcel composer. A stale "next" list is
+worse than none — it sends the next session chasing finished work.)*
