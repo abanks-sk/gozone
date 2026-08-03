@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { Redirect, useRouter } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { authApi } from '../src/api/auth';
 import { useAuthStore } from '../src/store/authStore';
@@ -48,9 +48,26 @@ export default function VendorOnboarding() {
   const picked = usePickedLocation((s) => s.picked);
   const clearPicked = usePickedLocation((s) => s.consume);
 
-  // Only two reasons to be here: you have no business yet, or yours was turned down and you are
-  // resubmitting. Anything else belongs in the app, where the gate does the explaining.
+  /**
+   * Opened deliberately to add another business, rather than because you have none.
+   *
+   * A vendor with shops already gets bounced into the app by the check below — which is right on
+   * launch and wrong when they came here on purpose from the business switcher. Same form, same
+   * submission, same approval: the only difference is that having a business already is not a
+   * reason to send them away.
+   */
+  const adding = useLocalSearchParams<{ add?: string }>().add === '1';
+
+  // Otherwise there are only two reasons to be here: you have no business yet, or yours was turned
+  // down and you are resubmitting. Anything else belongs in the app, where the gate explains.
   async function refresh() {
+    if (adding) {
+      // A fresh form. The draft is persisted for resuming a first sign-up, so without this the
+      // second business opens pre-filled with the first one's name.
+      draft.clear();
+      setView('setup');
+      return;
+    }
     const me = await authApi.me().catch(() => null);
     if (me?.status === 'REJECTED') { setReason(me.statusNote ?? null); setView('rejected'); return; }
     const vendors = await authApi.myVendors().catch(() => []);
@@ -69,8 +86,9 @@ export default function VendorOnboarding() {
         lat: picked?.lat ?? DEFAULT_LAT,
         lng: picked?.lng ?? DEFAULT_LNG,
       });
-      setVendor(v);
-      clearPicked(); // spent — it belongs to this business now
+      setVendor(v);          // switch to what they just made, whether it is their first or fifth
+      draft.clear();         // spent — leaving it would pre-fill the next one
+      clearPicked();         // spent — it belongs to this business now
       // Straight into the app rather than onto a waiting screen. The gate on each operational tab
       // reports the approval state, and profile/settings stay usable throughout.
       setGoApp(true);

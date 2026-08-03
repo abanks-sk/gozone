@@ -95,12 +95,17 @@ function VendorOrdersScreenBoard() {
   const [switcher, setSwitcher] = useState(false);
 
   // Load the owner's own vendors; default to the first if none selected.
-  useEffect(() => {
-    authApi.myVendors().then((list) => {
+  function loadVendors() {
+    return authApi.myVendors().then((list) => {
       setVendors(list);
       if (!vendor && list.length) setVendor(list[0]);
     }).catch(() => {});
-  }, []);
+  }
+  useEffect(() => { loadVendors(); }, []);
+
+  // …and again whenever the switcher opens, so a business added since launch — or one an admin has
+  // approved in the meantime — is actually in the list you are choosing from.
+  useEffect(() => { if (switcher) loadVendors(); }, [switcher]);
 
   async function load() {
     if (!vendor) return;
@@ -259,12 +264,34 @@ function VendorOrdersScreenBoard() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 15, fontWeight: '700', color: c.text }}>{v.name}</Text>
-                    <Text style={{ fontSize: 12.5, color: c.textMuted }}>{TYPE_LABEL[v.vendorType]}</Text>
+                    <Text style={{ fontSize: 12.5, color: c.textMuted }}>
+                      {TYPE_LABEL[v.vendorType]}
+                      {/* A shop is approved separately from its owner, so a vendor who is already
+                          trading can have a second one still waiting. Saying which is which here
+                          is the difference between "not approved yet" and "broken". */}
+                      {v.approvalStatus === 'PENDING' ? ' · awaiting approval' : ''}
+                      {v.approvalStatus === 'REJECTED' ? ' · not approved' : ''}
+                    </Text>
                   </View>
                   {sel && <Ionicons name="checkmark-circle" size={22} color={c.primary} />}
                 </TouchableOpacity>
               );
             })}
+
+            {/* Adding a shop runs the same form a new vendor fills in, and needs the same approval. */}
+            <TouchableOpacity
+              onPress={() => { setSwitcher(false); router.push('/onboarding?add=1' as any); }}
+              activeOpacity={0.85}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: 16, marginTop: 4, backgroundColor: c.surfaceAlt, borderWidth: 1, borderStyle: 'dashed', borderColor: c.border }}
+            >
+              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="add" size={22} color={c.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: c.text }}>Add a business</Text>
+                <Text style={{ fontSize: 12.5, color: c.textMuted }}>An admin reviews it before it goes live</Text>
+              </View>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
