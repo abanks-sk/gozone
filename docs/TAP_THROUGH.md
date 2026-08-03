@@ -222,23 +222,44 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 ---
 
-## 11. Ride home pull-down map (C5)
+## 11. Ride home, and the new request screen
 
-> Layout is measured-verified in a browser (map fills the viewport; sheet sits at the right height
-> with its bottom flush to the screen edge; the handle toggles state). **The slide itself has never
-> been seen move** — the test browser suspends animation frames — so the motion is what needs eyes.
+> The drag itself already passed on device — flick, snap, tap-through and scrolling are all
+> confirmed and are **not** re-listed below. What was wrong was the resting layout (`[/]`), and the
+> composer has since moved off this screen entirely: home asks one question, and the request screen
+> only exists once there is an answer.
+>
+> Re-measured in a browser at 375×812 after the change: map fills all 812pt, sheet rests at 276
+> with its bottom **flush to the screen edge (gap 0)**, the peek window is 210pt against 187pt of
+> content so the search bar and all three circles stay on screen when collapsed, and search → pick
+> a destination lands on `/request` with both pins, the blue road route and a real GH₵12 quote.
 
-- [/] Ride home opens with the map behind everything and the sheet resting where the old content
-  started — the screen should look much as before at rest
-- [x] **Drag the handle down** → the sheet slides away and the map goes full-screen, with the
-      search bar left docked at the bottom ← the whole point of C5
-- [x] Drag back up (or tap the handle) → the sheet returns
-- [x] **Flick** it down quickly and let go early — it finishes the throw, it does not spring back
-- [x] Release it half-way → it snaps to whichever end is nearer, never stops mid-air
-- [x] Tapping the **search bar** still opens the search screen; the drag must not swallow taps
-- [x] With the sheet up, the content below still **scrolls**, and the last recent row is reachable
-- [x] Scrolling that content does **not** drag the sheet (drag is on the handle/search row only)
-- [x] Handle label reads "Pull down to see the map" / "Pull up for ride options" and matches reality ((remove this))
+**Home:**
+
+- [ ] The map shows **only your own location** — no destination pin left from a previous trip
+- [ ] **No GoRide box, no price, no Request button** anywhere on this screen ← they moved
+- [ ] The handle is a bare grab bar with **no caption** under it ← the "Pull down…" text is gone
+- [ ] **No strip of map below the sheet** — no Google logo peeking out at the bottom edge ← this
+      was the bug in your screenshot; the sheet was sized from a window height that excludes the
+      Android system bars, so it stopped short of the real bottom
+- [ ] Pull the sheet down → the search bar **and the three round buttons** stay docked at the
+      bottom over the full map ← the circles used to go with it; this is your first screenshot
+- [ ] Nothing overlaps: the search bar no longer sits on top of any card behind it
+
+**Search → request:**
+
+- [ ] Tap the search bar → search. Set a **destination** → you land straight on the request screen
+      ← you no longer come back to home to finish
+- [ ] Changing only the **pickup** keeps you on search (it isn't an answer to "where to?")
+- [ ] Picking a **recent** from home goes to the request screen too
+- [ ] Request screen: map at the top with **your location, the destination and the route between
+      them**; the GoRide card below with From/To, ride class, fare and Request ride
+- [ ] The From/To rows there open search and come **back to the request screen**, not to home
+- [ ] "Now" / schedule still works, from the request screen
+- [ ] Request ride → live tracking, exactly as before
+- [ ] Back from the request screen returns you to home
+- [ ] The **parcel** composer's From/To still behave as they always did — it shares the search
+      screen, so it is the thing most likely to have been broken by this change
 
 ---
 

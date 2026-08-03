@@ -8,6 +8,7 @@ export default function RiderLayout() {
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.bg } }}>
       <Stack.Screen name="home" />
+      <Stack.Screen name="request" />
       <Stack.Screen name="live" />
       <Stack.Screen name="rides" />
       <Stack.Screen name="schedule" options={{ animation: 'slide_from_bottom' }} />

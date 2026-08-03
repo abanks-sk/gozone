@@ -1,32 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Dimensions, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Animated, Dimensions, LayoutChangeEvent, PanResponder, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Defs, LinearGradient as SvgGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { rideApi } from '../../src/api/ride';
 import { useTheme } from '../../src/theme/ThemeProvider';
-import { useRideDraft, hasDest } from '../../src/store/rideDraft';
+import { useRideDraft } from '../../src/store/rideDraft';
 import { reverseGeocode } from '../../src/lib/geocode';
 import { useProfileStore, initial } from '../../src/store/profileStore';
 import { useRecents } from '../../src/store/recentsStore';
-import { haversineKm, rideFare } from '../../src/lib/pricing';
-import { Btn, Card, Row, SearchBar, ListRow } from '../../src/components/ui';
+import { Row, SearchBar, ListRow } from '../../src/components/ui';
 import { LeafletMap } from '../../src/components/LeafletMap';
 import { LatLng } from '../../src/components/mapTypes';
 import { getCurrentLocation } from '../../src/lib/location';
 
-const RIDE_TYPES = [
-  { key: 'standard', label: 'Standard', icon: 'car-sport' as const, mult: 1, bargain: true, eta: '3 min' },
-  { key: 'premium', label: 'Luxe', icon: 'car-sport-sharp' as const, mult: 1.7, bargain: false, eta: '5 min' },
-  { key: 'okada', label: 'Okada', icon: 'bicycle' as const, mult: 0.6, bargain: true, eta: '1 min' },
-];
-
+/**
+ * The passenger home: where you are, and where you'd like to go.
+ *
+ * The GoRide composer used to live here too, so a screen asking "where to?" simultaneously showed
+ * a from/to panel, a ride class, a price and a Request button for a trip nobody had chosen yet. It
+ * now lives on `request.tsx`, which the search screen opens the moment a destination is set. What
+ * is left here is one question and the map behind it.
+ */
 export default function RiderHomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors: c, scheme } = useTheme();
+  const { colors: c } = useTheme();
 
   // One colour in both themes, on purpose: the map tiles stay light whichever theme is on, so
   // the greeting is always sitting on white and always wants dark ink. Flipping it to white in
@@ -34,41 +34,45 @@ export default function RiderHomeScreen() {
   // as two unrelated halves rather than one screen.
   const onMapText = '#0B1220';
   const onMapMuted = 'rgba(11,18,32,0.66)';
-  // The scrim stays light for the same reason — it lifts dark text off the tiles instead of
-  // fighting it. In dark mode it doubles as a soft edge between the map and the UI below.
   const scrimColor = '#FFFFFF';
+
   const origin = useRideDraft((s) => s.origin);
-  const dest = useRideDraft((s) => s.dest);
-  const setDest = useRideDraft((s) => s.setDest);
   const setOrigin = useRideDraft((s) => s.setOrigin);
-  const swap = useRideDraft((s) => s.swap);
+  const setDest = useRideDraft((s) => s.setDest);
   const scheduledAt = useRideDraft((s) => s.scheduledAt);
-  const setScheduledAt = useRideDraft((s) => s.setScheduledAt);
   const name = useProfileStore((s) => s.name);
-  const myPhone = useProfileStore((s) => s.phone);
   const recents = useRecents((s) => s.recents);
   const firstName = (name || '').trim().split(' ')[0] || 'there';
   const screenW = Dimensions.get('window').width;
-  const screenH = Dimensions.get('window').height;
-  // The map is the hero now, so it gets real estate — roughly the top third, which is what the
-  // rest of the category does and what the evaluator expected to see on opening the app.
+
+  /**
+   * The real height of this screen, measured rather than assumed.
+   *
+   * `Dimensions.get('window')` under Android edge-to-edge reports the area excluding the system
+   * bars, but the app draws behind them — so a sheet sized from it stopped short of the bottom and
+   * left a strip of map showing beneath the content, Google logo and all. onLayout gives the
+   * container's true height, which is the number the sheet actually has to fill.
+   */
+  const [screenH, setScreenH] = useState(Dimensions.get('window').height);
+  const onRootLayout = (e: LayoutChangeEvent) => {
+    const h = Math.round(e.nativeEvent.layout.height);
+    if (h > 0 && Math.abs(h - screenH) > 1) setScreenH(h);
+  };
+
   const heroH = Math.max(240, Math.round(screenH * 0.34)) + insets.top;
 
   // ── Pull-down sheet ────────────────────────────────────────────────────────
-  // The map used to be a fixed band across the top: you could see a third of it and no more, on
-  // a screen whose whole job is telling you where you are. Everything below it is now a sheet you
-  // can drag out of the way, so the map goes full-screen with just the search bar left docked at
-  // the bottom — the Bolt arrangement the user asked for.
+  // Drag the content out of the way and the map goes full screen, with the search bar and the
+  // three destinations left docked at the bottom.
   //
   // Built on PanResponder + Animated rather than a bottom-sheet library: reanimated and
   // gesture-handler are not in this app, and adding native modules would cost the Expo Go
   // workflow everything here depends on.
   const EXPANDED_Y = heroH;                              // resting position — map on top, content below
-  const PEEK = 112 + insets.bottom;                      // handle + search bar left showing
+  const PEEK = 210 + insets.bottom;                      // handle + search bar + the three circles
   const COLLAPSED_Y = Math.max(EXPANDED_Y, screenH - PEEK);
-  // On a very short viewport (a small browser window, mostly) the two positions collapse into one.
-  // Without this the sheet would advertise "pull down to see the map" and then not move, and the
-  // label would flip to the collapsed wording while nothing had actually happened.
+  // On a very short viewport (a small browser window, mostly) the two positions collapse into one,
+  // and a handle that cannot move should not invite a drag.
   const canCollapse = COLLAPSED_Y - EXPANDED_Y > 80;
   const sheetY = useRef(new Animated.Value(EXPANDED_Y)).current;
   // Where the sheet sits right now. Tracked in a ref rather than read off the Animated.Value,
@@ -89,6 +93,14 @@ export default function RiderHomeScreen() {
       toValue: to, useNativeDriver: useNative, bounciness: 2, speed: 14,
     }).start();
   };
+
+  // Re-seat the sheet if the measured height changes (first layout, or a rotation).
+  useEffect(() => {
+    const to = collapsed && canCollapse ? COLLAPSED_Y : EXPANDED_Y;
+    sheetAt.current = to;
+    sheetY.setValue(to);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [EXPANDED_Y, COLLAPSED_Y]);
 
   const pan = useRef(
     PanResponder.create({
@@ -125,9 +137,9 @@ export default function RiderHomeScreen() {
       // than silently proposing the airport.
       const o = untouchedOrigin.current;
       if (origin.lat === o.lat && origin.lng === o.lng) {
-        // Set the coordinates straight away so the map and any quote can move, then upgrade the
-        // label once the name arrives. Defaulting someone's pickup is only helpful if it tells
-        // them WHERE it is — "Current location" is not a place they can check.
+        // Set the coordinates straight away so the map can move, then upgrade the label once the
+        // name arrives. Defaulting someone's pickup is only helpful if it tells them WHERE it is —
+        // "Current location" is not a place they can check.
         setOrigin({ label: 'Current location', sub: `${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}`, lat: l.lat, lng: l.lng });
         reverseGeocode(l.lat, l.lng).then((geo) => {
           if (!active || !geo) return;
@@ -143,107 +155,32 @@ export default function RiderHomeScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Frame the route once there's a destination; otherwise sit on the pickup.
-  const mapCenter: LatLng = hasDest(dest)
-    ? { lat: (origin.lat + dest.lat) / 2, lng: (origin.lng + dest.lng) / 2 }
-    : { lat: origin.lat, lng: origin.lng };
-  const mapMarkers = [
-    { lat: origin.lat, lng: origin.lng, kind: 'pickup' as const, label: origin.label },
-    ...(hasDest(dest) && (dest.lat !== origin.lat || dest.lng !== origin.lng)
-      ? [{ lat: dest.lat, lng: dest.lng, kind: 'dest' as const, label: dest.label }]
-      : []),
-  ];
-
-  // Zero with no destination: the sentinel sits at 0,0, so measuring to it quotes a fare for a
-  // trip into the Atlantic. The quote fetch was already guarded; the displayed fare was not.
-  const distance = hasDest(dest) ? haversineKm(origin, dest) : 0;
-  // Server-authoritative fares per ride type (falls back to local pricing on failure/offline).
-  const [quotes, setQuotes] = useState<Record<string, number>>({});
-  const [surge, setSurge] = useState(false);
-  const fareFor = (t: typeof RIDE_TYPES[number]) => quotes[t.key] ?? rideFare(distance, t.mult);
-  const [rideType, setRideType] = useState('standard');
-  const [typeOpen, setTypeOpen] = useState(false);
-  const typeMeta = RIDE_TYPES.find((t) => t.key === rideType) ?? RIDE_TYPES[0];
-  const [fare, setFare] = useState(() => (hasDest(dest) ? rideFare(distance, 1) : 0));
-  const [loading, setLoading] = useState(false);
-
-  // Fetch server quotes for every ride type whenever the route changes.
-  useEffect(() => {
-    // No destination yet — nothing to price. Quoting the sentinel would ask the server for a
-    // fare from Accra to 0,0 in the Atlantic.
-    if (!hasDest(dest)) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const results = await Promise.all(RIDE_TYPES.map((t) =>
-          rideApi.quote({
-            originLat: origin.lat, originLng: origin.lng,
-            destLat: dest.lat, destLng: dest.lng, rideType: t.key.toUpperCase(),
-          }).then((q) => ({ key: t.key, fare: q.fare, surge: q.surge }))
-        ));
-        if (cancelled) return;
-        const map: Record<string, number> = {};
-        let anySurge = false;
-        results.forEach((r) => { map[r.key] = r.fare; if (r.surge) anySurge = true; });
-        setQuotes(map);
-        setSurge(anySurge);
-        setFare(map[rideType] ?? rideFare(distance, typeMeta.mult));
-      } catch { /* keep local fallback */ }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [origin.lat, origin.lng, dest.lat, dest.lng]);
+  // Only the pickup. The destination belongs to the trip you are composing, and this screen is no
+  // longer where you compose one — showing a leftover pin here made the map look like it was
+  // describing a journey that had not been asked for.
+  const mapMarkers = [{ lat: origin.lat, lng: origin.lng, kind: 'pickup' as const, label: origin.label }];
 
   const scheduledFuture = !!scheduledAt && scheduledAt > Date.now();
   const schedLabel = scheduledFuture
     ? new Date(scheduledAt!).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
     : 'Now';
 
-  function pickType(t: typeof RIDE_TYPES[number]) {
-    setRideType(t.key);
-    setFare(fareFor(t)); // re-anchor the offer to the new type (server quote if available)
-    setTypeOpen(false);  // collapse the selector back to the pill
-  }
-
-  async function requestRide() {
-    setLoading(true);
-    try {
-      // Map the composer's ride-type key to the backend enum (premium = Luxe).
-      const rideTypeMap: Record<string, 'STANDARD' | 'LUXE' | 'OKADA'> = { standard: 'STANDARD', premium: 'LUXE', okada: 'OKADA' };
-      const req = await rideApi.createRequest({
-        originLat: origin.lat, originLng: origin.lng,
-        destLat: dest.lat, destLng: dest.lng,
-        proposedFare: fare || 30,
-        kind: 'RIDE',
-        rideType: rideTypeMap[rideType] ?? 'STANDARD',
-        riderPhone: myPhone || undefined,
-        scheduledAt: scheduledFuture ? new Date(scheduledAt!).toISOString() : undefined,
-      });
-      if (scheduledFuture) {
-        Alert.alert('Ride scheduled', 'We’ll line up a driver near your pickup time. See it under Your rides.');
-        setScheduledAt(null);
-        router.push('/(rider)/rides' as any);
-      } else {
-        // Hand off to the live tracking map, which owns the rest of the trip lifecycle.
-        router.push(`/(rider)/live?requestId=${req.id}` as any);
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.message ?? 'Could not place request');
-    } finally {
-      setLoading(false);
-    }
+  // Picking a recent is choosing a destination, so it goes where choosing one goes.
+  function chooseRecent(p: Parameters<typeof setDest>[0]) {
+    setDest(p);
+    router.push('/(rider)/request' as any);
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: c.bg }}>
+    <View style={{ flex: 1, backgroundColor: c.bg }} onLayout={onRootLayout}>
       <StatusBar style="light" />
 
-      {/* ── The map is the screen now, not a band across the top ── */}
+      {/* ── The map is the screen, not a band across the top ── */}
       <LeafletMap
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
         mode="view"
-        center={mapCenter}
-        zoom={origin && dest ? 12 : 15}
+        center={{ lat: origin.lat, lng: origin.lng }}
+        zoom={15}
         markers={mapMarkers}
         userLocation={myLoc}
       />
@@ -279,9 +216,10 @@ export default function RiderHomeScreen() {
       <Animated.View
         style={{
           position: 'absolute', left: 0, right: 0, top: 0,
-          // Exactly the height it occupies when expanded. Taller than this and the ScrollView
-          // believes part of its viewport is on screen when it is actually below the fold, so the
-          // last of the content becomes unreachable — it thinks there is nothing left to scroll.
+          // Exactly the distance from its resting position to the bottom of the measured screen.
+          // Taller and the inner ScrollView believes part of its viewport is on screen when it is
+          // below the fold, so the last of the content becomes unreachable; shorter and the map
+          // shows through underneath it.
           height: screenH - EXPANDED_Y,
           transform: [{ translateY: sheetY }],
           backgroundColor: c.bg,
@@ -290,136 +228,53 @@ export default function RiderHomeScreen() {
           elevation: 16,
         }}
       >
-        {/* Grab area. The drag lives on the handle and search row rather than the whole sheet, so
-            it never fights the scrolling content below it. */}
+        {/* Grab area. The drag lives on the handle, search row and circles rather than the whole
+            sheet, so it never fights the scrolling content below it. The handle carries no caption:
+            a grab bar reads as one without being told, and the label was just noise on the screen
+            people look at most. */}
         <View {...pan.panHandlers}>
           <TouchableOpacity activeOpacity={0.7} disabled={!canCollapse}
             onPress={() => snapTo(collapsed ? EXPANDED_Y : COLLAPSED_Y)}
-            style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+            style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 8 }}>
             <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: c.border }} />
-            {canCollapse && (
-              <Text style={{ fontSize: 11.5, color: c.textMuted, marginTop: 6 }}>
-                {collapsed ? 'Pull up for ride options' : 'Pull down to see the map'}
-              </Text>
-            )}
           </TouchableOpacity>
 
-          {/* Search stays reachable in both positions — when the sheet is down this is the only
-              thing left on screen, which is the point of collapsing it. */}
-          <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
-            <SearchBar placeholder="Where are you going?" trailingLabel={schedLabel} onTrailingPress={() => router.push('/(rider)/schedule' as any)} elevated onPress={() => router.push('/search' as any)} />
+          {/* Search and the three surfaces stay reachable in both positions — with the sheet down
+              this is all that is left on screen, and it is what you came to the app to use. */}
+          <View style={{ paddingHorizontal: 16 }}>
+            <SearchBar placeholder="Where are you going?" trailingLabel={schedLabel}
+              onTrailingPress={() => router.push('/(rider)/schedule' as any)} elevated
+              onPress={() => router.push('/search?next=request' as any)} />
           </View>
+
+          <Row style={{ paddingHorizontal: 24, marginTop: 18, gap: 8 }}>
+            <QuickCircle icon="car-sport" label="Ride" active onPress={() => {}} c={c} />
+            <QuickCircle icon="storefront" label="Shop" onPress={() => router.replace('/(shop)/restaurants' as any)} c={c} />
+            <QuickCircle icon="cube" label="Parcel" onPress={() => router.replace('/(parcel)' as any)} c={c} />
+          </Row>
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}>
-        {/* ── Circular quick actions ── */}
-        <Row style={{ paddingHorizontal: 24, marginTop: 20, gap: 8 }}>
-          <QuickCircle icon="car-sport" label="Ride" active onPress={() => {}} c={c} />
-          <QuickCircle icon="storefront" label="Shop" onPress={() => router.replace('/(shop)/restaurants' as any)} c={c} />
-          <QuickCircle icon="cube" label="Parcel" onPress={() => router.replace('/(parcel)' as any)} c={c} />
-        </Row>
-
-        <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-          {/* ── GoRide composer ── */}
-          <Card>
-            <Row style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-              <Text style={{ fontSize: 17, fontWeight: '800', color: c.text }}>GoRide</Text>
-              {/* Ride-type selector button — tap to reveal the options */}
-              <TouchableOpacity onPress={() => setTypeOpen((o) => !o)} activeOpacity={0.85}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 14, paddingRight: 10, paddingVertical: 8, borderRadius: 999, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary }}>
-                <Ionicons name={typeMeta.icon} size={15} color={c.primary} />
-                <Text style={{ fontSize: 13.5, fontWeight: '700', color: c.primary }}>{typeMeta.label}</Text>
-                <Ionicons name={typeOpen ? 'chevron-up' : 'chevron-down'} size={15} color={c.primary} />
-              </TouchableOpacity>
-            </Row>
-
-            {/* Ride type options — shown only when the selector is open */}
-            {typeOpen && (
-              <Row style={{ gap: 8, marginBottom: 14 }}>
-                {RIDE_TYPES.map((t) => {
-                  const sel = rideType === t.key;
-                  return (
-                    <TouchableOpacity key={t.key} onPress={() => pickType(t)} activeOpacity={0.85}
-                      style={{ flex: 1, alignItems: 'center', gap: 3, paddingVertical: 12, borderRadius: 16, backgroundColor: sel ? c.primarySoft : c.surfaceAlt, borderWidth: 1.5, borderColor: sel ? c.primary : 'transparent' }}>
-                      <Ionicons name={t.icon} size={22} color={sel ? c.primary : c.textMuted} />
-                      <Text style={{ fontSize: 12.5, fontWeight: '700', color: sel ? c.primary : c.text }}>{t.label}</Text>
-                      <Text style={{ fontSize: 11, color: c.textMuted }}>GH₵ {fareFor(t)}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </Row>
-            )}
-
-            {surge && (
-              <Row style={{ gap: 6, marginTop: -4, marginBottom: 12 }}>
-                <Ionicons name="trending-up" size={13} color={c.warning} />
-                <Text style={{ fontSize: 11.5, color: c.warning, fontWeight: '600' }}>Peak-time pricing in effect</Text>
-              </Row>
-            )}
-
-            <View style={{ position: 'relative' }}>
-              <View style={{ backgroundColor: c.surfaceAlt, borderRadius: 18, paddingHorizontal: 14 }}>
-                <RouteField icon="ellipse" iconColor={c.primary} label="From" value={origin.label} onPress={() => router.push('/search?field=origin' as any)} c={c} />
-                <View style={{ height: 1, backgroundColor: c.border, marginLeft: 28 }} />
-                <RouteField icon="location" iconColor={c.danger} label="To" value={dest.label} onPress={() => router.push('/search?field=dest' as any)} c={c} />
-              </View>
-              <TouchableOpacity onPress={swap} activeOpacity={0.8} style={{ position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center' }}>
-                <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="swap-vertical" size={18} color={c.primary} />
-                </View>
-              </TouchableOpacity>
-            </View>
-
-            {typeMeta.bargain ? (
-              <Row style={{ justifyContent: 'space-between', marginTop: 16, marginBottom: 16 }}>
-                <View>
-                  <Text style={{ fontSize: 12, color: c.textMuted, letterSpacing: 0.3, fontWeight: '600' }}>Your fare offer · drivers can counter</Text>
-                  <Row style={{ alignItems: 'flex-end', marginTop: 2 }}>
-                    <Text style={{ fontSize: 22, fontWeight: '800', color: c.text }}>GH₵ </Text>
-                    <TextInput
-                      value={fare ? String(fare) : ''}
-                      onChangeText={(t) => setFare(Number(t.replace(/[^0-9]/g, '')) || 0)}
-                      keyboardType="number-pad"
-                      placeholder="0"
-                      placeholderTextColor={c.textMuted}
-                      style={{ fontSize: 22, fontWeight: '800', color: c.text, minWidth: 44, padding: 0 }}
-                    />
-                  </Row>
-                </View>
-                <Row style={{ gap: 10 }}>
-                  <StepBtn icon="remove" onPress={() => setFare((f) => Math.max(5, f - 5))} c={c} />
-                  <StepBtn icon="add" onPress={() => setFare((f) => f + 5)} c={c} />
-                </Row>
-              </Row>
+          <View style={{ paddingHorizontal: 16, marginTop: 22 }}>
+            {recents.length > 0 ? (
+              <>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 2 }}>
+                  Recent
+                </Text>
+                {recents.slice(0, 4).map((p, i, arr) => (
+                  <ListRow key={i} icon="time" title={p.label} subtitle={p.sub}
+                    onPress={() => chooseRecent(p)} last={i === arr.length - 1} />
+                ))}
+              </>
             ) : (
-              <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 16, backgroundColor: c.surfaceAlt, borderRadius: 14, padding: 14 }}>
-                <View>
-                  <Text style={{ fontSize: 12, color: c.textMuted, fontWeight: '600' }}>Fixed fare · no bargaining</Text>
-                  <Text style={{ fontSize: 22, fontWeight: '800', color: c.text, marginTop: 2 }}>{hasDest(dest) ? `GH₵ ${fare}` : '—'}</Text>
-                </View>
-                <Ionicons name="shield-checkmark" size={22} color={c.primary} />
+              <Row style={{ gap: 10, paddingVertical: 8 }}>
+                <Ionicons name="search" size={16} color={c.textMuted} />
+                <Text style={{ flex: 1, fontSize: 13.5, color: c.textMuted, lineHeight: 19 }}>
+                  Search for where you're going and we'll show you the fare before you book.
+                </Text>
               </Row>
             )}
-
-            <Btn label={!hasDest(dest) ? 'Choose a destination'
-                        : scheduledFuture ? 'Schedule ride'
-                        : typeMeta.bargain ? 'Request ride' : `Book ${typeMeta.label}`}
-                 onPress={() => (hasDest(dest) ? requestRide() : router.push('/search?field=dest' as any))}
-                 loading={loading} />
-          </Card>
-
-          {/* ── Recents — empty for new accounts ── */}
-          {recents.length > 0 && (
-            <>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginTop: 12, marginBottom: 2 }}>
-                Recent
-              </Text>
-              {recents.slice(0, 3).map((p, i, arr) => (
-                <ListRow key={i} icon="time" title={p.label} subtitle={p.sub} onPress={() => setDest(p)} last={i === arr.length - 1} />
-              ))}
-            </>
-          )}
-        </View>
+          </View>
         </ScrollView>
       </Animated.View>
     </View>
@@ -436,28 +291,6 @@ function QuickCircle({ icon, label, onPress, active, c }: any) {
         <Ionicons name={icon} size={24} color={active ? '#fff' : c.text} />
       </View>
       <Text style={{ fontSize: 12.5, fontWeight: '600', color: c.text }}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function RouteField({ icon, iconColor, label, value, onPress, c }: any) {
-  const Wrap: any = onPress ? TouchableOpacity : View;
-  return (
-    <Wrap onPress={onPress} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 13 }}>
-      <Ionicons name={icon} size={12} color={iconColor} />
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 11, color: c.textMuted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</Text>
-        <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 1 }}>{value}</Text>
-      </View>
-    </Wrap>
-  );
-}
-
-function StepBtn({ icon, onPress, c }: any) {
-  return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.8}
-      style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' }}>
-      <Ionicons name={icon} size={20} color={c.primary} />
     </TouchableOpacity>
   );
 }

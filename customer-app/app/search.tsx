@@ -19,7 +19,12 @@ export default function SearchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
-  const params = useLocalSearchParams<{ field?: string }>();
+  const params = useLocalSearchParams<{ field?: string; next?: string }>();
+  // Opened from the ride home, where choosing a destination is the whole point: go straight on to
+  // the request screen instead of returning to a home screen that no longer has anywhere to put
+  // the answer. Everywhere else — the parcel composer, and the From/To rows on the request screen
+  // itself — still just comes back, so this only changes the journey that asked for it.
+  const toRequest = params.next === 'request';
 
   const origin = useRideDraft((s) => s.origin);
   const dest = useRideDraft((s) => s.dest);
@@ -56,11 +61,14 @@ export default function SearchScreen() {
   const results = [...local];
   online.forEach((o) => { if (!results.some((m) => m.label === o.label && m.sub === o.sub)) results.push(o); });
 
-  // The map picker already filled the field — close this list too so the user
-  // lands back on the composer instead of having to tap the new "Recent" row.
+  // The map picker already filled the field — close this list too so the user lands on the next
+  // step instead of having to tap the new "Recent" row. Same rule as pick(): a destination moves
+  // them on, a pickup leaves them here.
   useFocusEffect(useCallback(() => {
-    if (consumePicked()) router.back();
-  }, []));
+    if (!consumePicked()) return;
+    if (toRequest && field === 'dest') router.replace('/(rider)/request' as any);
+    else router.back();
+  }, [toRequest, field]));
 
   function activate(f: Field) {
     setField(f);
@@ -73,7 +81,10 @@ export default function SearchScreen() {
     if (field === 'origin') setOrigin(p);
     else setDest(p);
     addRecent(p);
-    router.back();
+    // Changing the pickup is not an answer to "where to?", so that keeps you here to finish the
+    // job. Setting the destination is, and it moves you on.
+    if (toRequest && field === 'dest') router.replace('/(rider)/request' as any);
+    else router.back();
   }
 
   async function useCurrentLocation() {
