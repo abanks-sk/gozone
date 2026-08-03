@@ -39,8 +39,23 @@ import { Animated, Easing, Keyboard, KeyboardEvent, Platform, TextInput, ViewSty
  * No-op on web, where the browser scrolls the focused field into view by itself.
  */
 
-/** Breathing room between the bottom of the field and the top of the keyboard. */
-const GAP = 18;
+/**
+ * Breathing room between the bottom of the field and the top of the keyboard.
+ *
+ * Was 18, which put the field flush against the keyboard — technically visible, and reported as
+ * "still quite low". This clears the field properly without shoving the rest of the form off the
+ * top of the screen.
+ */
+const GAP = 28;
+
+/**
+ * How often to notice that focus moved to another field.
+ *
+ * Neither platform fires a keyboard event for it, so it has to be observed. 250ms was slow enough
+ * to feel like a delayed jump when tabbing down a form; this is a JS-side registry read, not a
+ * native call, and it only runs while the keyboard is up.
+ */
+const FOCUS_POLL_MS = 120;
 
 export function KeyboardAvoider({
   children,
@@ -74,26 +89,51 @@ export function KeyboardAvoider({
       if (keyboardTop == null) return;
       const input = TextInput.State.currentlyFocusedInput?.();
       if (!input) { animateTo(0, duration); return; }
-      // measureInWindow can fire after the view has gone; guard against nonsense values.
-      input.measureInWindow((_x: number, y: number, _w: number, h: number) => {
-        if (typeof y !== 'number' || typeof h !== 'number') return;
-        const overlap = y + h + GAP - keyboardTop!;
-        animateTo(overlap > 0 ? -overlap : 0, duration);
+
+      /**
+       * Measure against where the field would be with no lift applied.
+       *
+       * `measureInWindow` reports the field's position *including* this component's transform, so
+       * measuring while already lifted returns a field that is comfortably above the keyboard —
+       * overlap zero, animate back to zero, field hidden again. That is the "goes up then comes
+       * back down" that was reported: the first lift was correct and the poll's next measurement
+       * undid it 250ms later.
+       *
+       * Subtracting the current shift converts the measurement back to the resting position, which
+       * makes repositioning idempotent — measure as often as you like and it settles on the same
+       * answer instead of oscillating.
+       *
+       * `stopAnimation` is how the live value is read: a native-driven Animated.Value cannot be
+       * read synchronously from JS, and it hands back the true current position mid-flight. We are
+       * about to start a new animation anyway, so stopping the old one costs nothing. (Same trick
+       * as the ride home's pull-down sheet.)
+       */
+      shift.stopAnimation((current: number) => {
+        const applied = typeof current === 'number' ? current : 0;
+        // measureInWindow can fire after the view has gone; guard against nonsense values.
+        input.measureInWindow((_x: number, y: number, _w: number, h: number) => {
+          if (typeof y !== 'number' || typeof h !== 'number') return;
+          const restingBottom = (y - applied) + h;
+          const overlap = restingBottom + GAP - keyboardTop!;
+          animateTo(overlap > 0 ? -overlap : 0, duration);
+        });
       });
     };
 
     const onShow = (e: KeyboardEvent) => {
       keyboardTop = e.endCoordinates.screenY;
       reposition(e.duration);
+      // Record what we just measured against, so the watcher below only reacts to a real change of
+      // field rather than repeating the work we have already done.
+      lastInput = TextInput.State.currentlyFocusedInput?.() ?? null;
       // Neither platform fires a keyboard event when focus moves between two fields while the
       // keyboard is already open, and in a form those fields are at different heights — so
-      // without this the screen would stay lifted for the previous one. Cheap native read, only
-      // while the keyboard is actually up, and it only re-measures when the field really changed.
+      // without this the screen would stay lifted for the previous one.
       if (!poll) {
         poll = setInterval(() => {
           const current: unknown = TextInput.State.currentlyFocusedInput?.() ?? null;
           if (current !== lastInput) { lastInput = current; reposition(140); }
-        }, 250);
+        }, FOCUS_POLL_MS);
       }
     };
 
