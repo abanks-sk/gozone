@@ -267,8 +267,14 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 **Keyboard (C6) — check this on a low field in several forms, not just one:**
 
-- [x] Tap a text box near the **bottom** of a screen — the screen lifts so the box sits just above
-      the keyboard ← Android previously did nothing at all here ((works but isn't really good, when you click on the textbox directly it goes up then comes back down. But when you click on a high text first then click on the halfway hidden textbox, it comes up a bit but even that, it is still quite low))
+- [ ] **Retest.** Tap a text box near the **bottom** of a screen — the screen lifts so the box sits
+      above the keyboard **and stays there**. It used to lift correctly and drop back about 250ms
+      later: the re-measure read the field's already-lifted position, saw no overlap left, and
+      animated back to zero. The lift is now computed against the resting position, so measuring
+      repeatedly settles on one answer instead of oscillating (simulated: `-216 → 0 → -216 → 0`
+      before, `-226` and steady after)
+- [ ] The field has a comfortable gap above the keyboard, not flush against it (28pt, was 18)
+- [ ] Moving between fields feels immediate rather than a beat behind (focus watcher 250ms → 120ms)
 - [x] Move between two fields at different heights **without closing the keyboard**; the lift
       follows the field you're in
 - [x] A screen whose fields are already high up (search over a map) **does not jump**

@@ -2144,3 +2144,25 @@ cannot connect.
 "real-time" is reported dead, check the socket actually opens before reading any application code.
 
 **Rebuild:** `docker compose build food-service ride-service && docker compose up -d food-service ride-service`.
+
+### Keyboard lift undid itself (frontend only, no rebuild)
+Reported as "you click on the textbox, it goes up then comes back down".
+
+`measureInWindow` reports a view's position **including** this component's own transform. The first
+measurement was right and lifted correctly; the focus watcher then measured again 250ms later, saw
+a field now sitting above the keyboard, computed an overlap of zero, and animated back — hiding the
+field again, by the code meant to reveal it. Simulated at keyboard-top 450, field y=600:
+
+```
+old   -216 -> 0 -> -216 -> 0        field hidden
+new   -226 -> -226 -> -226 -> -226  field visible
+```
+
+Measurements are converted back to the resting position by subtracting the shift already applied,
+which makes repositioning **idempotent**. The live shift is read with `stopAnimation` — a
+native-driven `Animated.Value` cannot be read synchronously from JS (same trick as the ride home's
+sheet). Also behind "still quite low": `GAP` 18 → **28**, and the focus watcher 250ms → **120ms**.
+
+⚠️ **If you touch this, keep the measurement resting-relative.** Reading a transformed view's
+position and feeding it back into that same transform is the trap, and it looks correct on the
+first measurement.
