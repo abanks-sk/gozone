@@ -9,6 +9,8 @@ import { useShopCart } from '../../src/store/shopCart';
 import { useShopFilter, activeFilterCount } from '../../src/store/shopFilter';
 import { useFavourites } from '../../src/store/favouritesStore';
 import { restaurantMeta, distanceKm } from '../../src/data/shopCatalog';
+import { getCurrentLocation } from '../../src/lib/location';
+import { reverseGeocode } from '../../src/lib/geocode';
 import { Row } from '../../src/components/ui';
 
 function ratingFor(name: string) { return 4.3 + (name.length % 5) * 0.1; }
@@ -35,7 +37,35 @@ export default function RestaurantsScreen() {
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const deliveryPlace = useShopCart((s) => s.deliveryPlace);
+  const placeChosen = useShopCart((s) => s.placeChosen);
+  const setDeliveryPlaceAuto = useShopCart((s) => s.setDeliveryPlaceAuto);
   const filter = useShopFilter();
+
+  /**
+   * Open on where the customer actually is.
+   *
+   * The delivery address started on a hardcoded Osu for everybody, so someone in Tema was shown
+   * Osu delivery fees and distances until they noticed and changed it. Only fills in while the
+   * address is still a stand-in — once they pick one it is theirs, and the cart is cleared on every
+   * sign-in, so the next person to use the phone starts from their own location rather than the
+   * last person's.
+   */
+  useEffect(() => {
+    if (placeChosen) return;
+    let active = true;
+    getCurrentLocation().then(async (loc) => {
+      if (!active || !loc) return;
+      // Coordinates first so fees and distances are right immediately, then the name once it
+      // arrives — an address the customer cannot recognise is not much better than the wrong one.
+      setDeliveryPlaceAuto({ label: 'Current location', sub: `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`, lat: loc.lat, lng: loc.lng });
+      const geo = await reverseGeocode(loc.lat, loc.lng).catch(() => null);
+      if (!active || !geo) return;
+      if (useShopCart.getState().placeChosen) return;   // they picked one while we were asking
+      setDeliveryPlaceAuto({ label: geo.label, sub: geo.sub, lat: loc.lat, lng: loc.lng });
+    }).catch(() => {});
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeChosen]);
   const [list, setList] = useState<Restaurant[]>([]);
   const [promos, setPromos] = useState<Promo[]>([]);
   const [q, setQ] = useState('');

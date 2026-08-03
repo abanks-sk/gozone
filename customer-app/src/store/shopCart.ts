@@ -16,9 +16,19 @@ interface FoodCartState {
   restaurantId: string | null;
   restaurantName: string | null;
   deliveryPlace: Place;
+  /**
+   * Whether the customer picked this address themselves.
+   *
+   * False means it is still a stand-in, and the shop screen replaces it with wherever they
+   * actually are. Without this the delivery address opened on a hardcoded Osu for everybody, so a
+   * customer in Tema was quoted an Osu delivery fee and had to notice and correct it.
+   */
+  placeChosen: boolean;
   lines: CartLine[];
 
   setDeliveryPlace: (p: Place) => void;
+  /** Fill in from the device's location — does not count as the customer choosing. */
+  setDeliveryPlaceAuto: (p: Place) => void;
   add: (restaurantId: string, restaurantName: string, line: Omit<CartLine, 'key'>) => void;
   setQty: (key: string, qty: number) => void;
   remove: (key: string) => void;
@@ -33,9 +43,11 @@ export const useShopCart = create<FoodCartState>((set, get) => ({
   restaurantId: null,
   restaurantName: null,
   deliveryPlace: OSU,
+  placeChosen: false,
   lines: [],
 
-  setDeliveryPlace: (p) => set({ deliveryPlace: p }),
+  setDeliveryPlace: (p) => set({ deliveryPlace: p, placeChosen: true }),
+  setDeliveryPlaceAuto: (p) => set({ deliveryPlace: p }),
 
   add: (restaurantId, restaurantName, line) => {
     const state = get();
@@ -56,7 +68,7 @@ export const useShopCart = create<FoodCartState>((set, get) => ({
 
   remove: (key) => set((s) => ({ lines: s.lines.filter((l) => l.key !== key) })),
 
-  clear: () => set({ lines: [], restaurantId: null, restaurantName: null }),
+  clear: () => set({ lines: [], restaurantId: null, restaurantName: null, deliveryPlace: OSU, placeChosen: false }),
 }));
 
 export function lineTotal(l: CartLine): number {
