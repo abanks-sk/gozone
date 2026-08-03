@@ -2062,3 +2062,33 @@ support — the request flow is NOT built); richer admin approvals (vendor accou
 detail + KYC merged); vendor logo/banner + per-item photos + second business; GoShop default
 location; vendor cash-confirm on deliveries; `[-]` courier live tracking; keyboard still too low;
 GZ splash mark on some devices.
+
+### Admin approvals rework — a person and a shop are different decisions (REBUILD auth + food, e2e 180/180)
+- **Businesses are reviewed in their own right** (food **V13**: `approval_status`, `approval_note`,
+  `approved_by/at`). They never were — approving the owner's *account* was the only decision, the
+  shop's name never reached the admin screen, and **a second shop opened by an approved vendor went
+  live unreviewed**. `restaurants.status` was already taken (the vendor's own OPEN/CLOSED switch),
+  hence a separate column. `GET /food/restaurants` now returns **APPROVED only**; new endpoints
+  `GET /food/admin/vendors?approval=` and `PATCH /food/admin/vendors/{id}/approval`.
+  ⚠️ **Existing rows are grandfathered to APPROVED** — defaulting them to PENDING would empty the
+  customer shop list and put the demo behind a queue.
+- **Approving a driver approves their documents with them.** The two were separate screens, so an
+  admin who approved the account left KYC at PENDING for ever and the driver's app read "Documents:
+  in review" while they worked. `reviewUser` now cascades to the latest KYC (VERIFIED on approve,
+  REJECTED + the same note on reject). The KYC page still works alone, for a resubmission.
+- **New `GET /auth/users/{id}`** — the applicant in full, with a driver's documents. The approvals
+  page opens it inline (photos via the existing `AuthImage`), so the decision is made while looking
+  at what is being decided. Businesses list with their owner's name, phone and account state.
+- **VendorGate** now separates "your account is under review" from "this shop is under review" and
+  shows the reason when a shop is refused.
+- e2e gained §2d; the PNG fixture is now a shared `make_png` helper — **uploads are sniffed by
+  magic bytes**, so a file that merely ends in `.png` is refused (415).
+
+**Rebuild:** `docker compose build auth-service food-service && docker compose up -d auth-service food-service`.
+
+**Still open:** vehicle at sign-up (#8); locked-after-approval details + the driver-requests-an-edit
+flow (#9 — documents screen is read-only and says changes go through support; the request flow is
+NOT built); vendor logo/banner (#13); per-item photos + closed-store editing (#14); **add a second
+business from the vendor app (#15 — the backend now supports it end to end, only the app UI is
+missing)**; GoShop default location (#17); vendor cash-confirm on deliveries (#18); `[-]` courier
+live tracking (#21); keyboard still too low (#22); GZ splash mark (#23).
