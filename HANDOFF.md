@@ -2092,3 +2092,27 @@ NOT built); vendor logo/banner (#13); per-item photos + closed-store editing (#1
 business from the vendor app (#15 — the backend now supports it end to end, only the app UI is
 missing)**; GoShop default location (#17); vendor cash-confirm on deliveries (#18); `[-]` courier
 live tracking (#21); keyboard still too low (#22); GZ splash mark (#23).
+
+### Vendor multi-business, delivery cash, GoShop location (REBUILD food-service, e2e 182/182)
+- **A vendor can add a second business** from the switcher (`/onboarding?add=1` — the same form a
+  new vendor fills in, same endpoint, same approval). The flag's only job is to stop "you already
+  have a business" bouncing them into the app, which is right on launch and wrong when they came
+  here on purpose. The draft is cleared both ways (it is persisted for resuming a *first* sign-up,
+  so otherwise the second shop opens pre-filled with the first one's name). The switcher marks
+  which shops are awaiting approval / were refused, and reloads when opened.
+- **Delivery cash is off the vendor's board.** They never touch it — the customer pays the courier
+  at the door — so being asked to confirm receipt had no right answer: confirming was a lie,
+  not confirming left the order unpaid. `awaitingCashOrders` filters out DELIVERY, and
+  `confirmOrderCash` now **refuses an owner on a delivery order** (courier only). Hiding it from
+  the board without closing the API would have moved the problem out of sight.
+- **GoShop opens on the customer's own location** instead of a hardcoded Osu (which quoted Osu
+  delivery fees to somebody in Tema). New `placeChosen` separates "we guessed" from "they picked";
+  the cart clears on sign-in so it re-guesses per login. Verified in a browser with the location
+  stubbed to Tema — the pill became "Community 8, Tema".
+
+**Rebuild:** `docker compose build food-service && docker compose up -d food-service`.
+
+⚠️ **`gozone-postgres` stopped on its own mid-session** (clean exit 0, not OOM — Docker Desktop or
+the host). Every service then 500s with `UnknownHostException: postgres`. `docker compose up -d`
+brings it back and the volume is intact; check `docker ps` for **six** containers before assuming a
+code fault.
