@@ -43,9 +43,14 @@ broken behaviour was so a real fix can be told from a coincidence. §11 (pull-do
 - **Rebuild `auth-service` and `food-service`** — migrations auth **V6** and food **V10/V11/V12**.
 - **KYC documents live on a Docker volume** (`kyc_uploads`). They are *meant* to survive rebuilds;
   if you ever move that path, every driver's documents are destroyed by the next build.
-- **The e2e suite disturbs demo data.** It consumes the staged walk-in customer every run —
-  re-stage by flipping the existing entry, never by placing a new order:
-  `UPDATE queue_entries SET status='WAITING' WHERE order_id='7b223015-6710-4ac4-ac27-5db53843a9ff';`
+- **The vendor board is deliberately empty** (cleared 2026-08-03 on the user's instruction —
+  every order, including the two long-standing curated demo ones). **Do not resurrect the old
+  orders**: the previously-documented one-liners point at orders that are now CANCELLED, and
+  flipping their queue entry back to WAITING recreates the exact phantom-customer bug that was
+  found and fixed earlier. To stage demo data again, **place fresh orders through the app**.
+- **The e2e suite disturbs demo data.** It used to consume the staged walk-in customer every run.
+  With nothing staged there is nothing to consume — but if you stage a walk-in again, expect
+  "call next" to serve it.
 - **A failed Maven build is usually the network.** `DependencyResolutionException` after several
   minutes means a download timed out; a straight retry normally succeeds.
 - **Verifying front-ends in a browser**: mint a token with the e2e `login()` helper and write
@@ -1630,14 +1635,16 @@ statements at the foot of `seed/99_clear_stale_demo_data.sql` still cover every 
   spares (it only touches `created_at < CURRENT_DATE`, so a live demo is never broken) — cleared by
   hand, backed up the same way.
 - ⚠️ **The script also cancels the curated demo delivery** (Ama Mensah, GH¢52.88, created 07-22):
-  it is older than today, so it is indistinguishable from cruft. **Restore it after every run** or
-  the vendor has no delivery order to advance —
+  it is older than today, so it is indistinguishable from cruft. ~~**Restore it after every run**~~
+  — **obsolete as of 2026-08-03**: that order has since been cancelled outright along with the rest
+  of the board, so the statement below would revive a cancelled order. Kept only as history —
   `UPDATE orders SET status='PLACED' WHERE id='983e6ed4-a7ad-4d22-9fb1-d34219704983';`
 - ⚠️ **Root cause of the pile-up: re-staging created a new order each time.** There were **nine
   identical copies** of the Kojo Rider walk-in (Waakye + Kelewele, GH¢25.20), one per session that
   re-staged it after an e2e run consumed the queue entry. Kept the newest, cancelled the rest.
-  **Re-stage by flipping the existing entry back, not by placing a fresh order:**
-  `UPDATE queue_entries SET status='WAITING' WHERE order_id='7b223015-6710-4ac4-ac27-5db53843a9ff';`
+  ~~**Re-stage by flipping the existing entry back**~~ — **obsolete as of 2026-08-03**: that order
+  is CANCELLED now, and setting its queue entry back to WAITING would show the vendor a customer
+  whose order no longer exists. Stage a fresh walk-in through the app instead.
 - **Demo state now** (verified): Kofi Kitchen has exactly two PLACED orders — walk-in GH¢25.20
   (1 waiting in the Queue tab) and delivery GH¢52.88. `ride_db` has no unfinished trips or pending
   requests.

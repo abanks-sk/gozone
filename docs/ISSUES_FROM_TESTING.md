@@ -273,6 +273,9 @@ ESTIMATE" section that winds `preparing_at` back ten minutes and asserts the fig
 plus the awaiting-class list) after each backend change, and re-run the relevant `TAP_THROUGH.md`
 section after each front-end one.
 
-⚠️ The suite still consumes the staged walk-in customer via "call next". Re-stage by flipping the
+⚠️ **Obsolete as of 2026-08-03** — the board was cleared entirely, so there is no staged walk-in
+left to consume. Do **not** run the statement below: its order is CANCELLED, and giving it a
+WAITING queue entry shows the vendor a phantom customer. Stage a fresh walk-in through the app.
+Kept as history — the suite does still consume a staged walk-in if you make one. Re-stage by flipping the
 existing entry, never by placing a fresh order:
 `UPDATE queue_entries SET status='WAITING' WHERE order_id='7b223015-6710-4ac4-ac27-5db53843a9ff';`
