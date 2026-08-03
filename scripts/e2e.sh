@@ -417,6 +417,14 @@ for s in ENROUTE DELIVERED; do
 done
 eq "order completed by the courier's delivery" "$(GET "/food/orders/$OID" $RIDER | jq_ "d['status']")" "COMPLETED"
 eq "customer pays cash → AWAITING"  "$(POST "/food/orders/$OID/pay" "$RIDER" '{"method":"cash"}' | jq_ "d['paymentStatus']")" "AWAITING"
+# The vendor never touches cash on a delivery — the customer pays the courier at their door. It
+# used to appear on the vendor's "Awaiting cash" board anyway, where both answers were wrong:
+# confirming was a lie about money they had not been handed, and not confirming left it unpaid.
+eq "delivery cash is not the vendor's to confirm" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $VENDOR" \
+     -H 'Content-Type: application/json' -d '{}' "$GW/food/orders/$OID/confirm-cash")" "403"
+eq "…and it stays off their board" \
+  "$(GET "/food/restaurants/$VID/awaiting-cash" "$VENDOR" | jq_ "len([o for o in d if o['id']=='$OID'])")" "0"
 eq "courier confirms cash → PAID"   "$(POST "/food/deliveries/$DID/confirm-cash" "$COURIER" '{}' | jq_ "d['paymentStatus']")" "PAID"
 sleep 1
 VBAL1=$(GET "/wallet/balance?ownerType=RESTAURANT" $VENDOR | jq_ "d['balance']")

@@ -658,16 +658,25 @@ public class FoodService {
         return OrderResponse.from(o);
     }
 
-    /** Vendor (owner) or the assigned courier confirms cash received for an order. */
+    /**
+     * Whoever actually took the cash confirms it: the courier on a delivery, the vendor otherwise.
+     *
+     * <p>The owner used to be allowed either way, which let them mark a delivery paid without the
+     * money existing — the customer pays at their door, to the courier. Hiding those orders from
+     * the vendor's board without closing this would only have moved the problem out of sight.
+     */
     public OrderResponse confirmOrderCash(UUID orderId, String userId) {
         Order o = orderRepo.findById(orderId)
             .orElseThrow(() -> new IllegalStateException("Order not found"));
         UUID u = UUID.fromString(userId);
-        boolean isOwner = o.getRestaurant().getOwnerId() != null && o.getRestaurant().getOwnerId().equals(u);
+        boolean delivery = o.getMode() == Order.Mode.DELIVERY;
+        boolean isOwner = !delivery
+            && o.getRestaurant().getOwnerId() != null && o.getRestaurant().getOwnerId().equals(u);
         boolean isCourier = deliveryRepo.findByOrderId(orderId).map(d -> u.equals(d.getCourierId())).orElse(false);
         if (!isOwner && !isCourier) {
             throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.FORBIDDEN, "Not your order");
+                org.springframework.http.HttpStatus.FORBIDDEN,
+                delivery ? "The courier collects the cash on a delivery." : "Not your order");
         }
         o.setPaymentStatus(Order.PaymentStatus.PAID);
         orderRepo.save(o);
@@ -676,12 +685,26 @@ public class FoodService {
         return OrderResponse.from(o);
     }
 
-    /** Orders awaiting a cash confirmation for a vendor (owner only). */
+    /**
+     * Orders awaiting a cash confirmation from this vendor (owner only).
+     *
+     * <p><b>Delivery orders are excluded.</b> The vendor never touches that money — the courier
+     * collects it at the door and confirms it themselves through
+     * {@code POST /food/deliveries/{id}/confirm-cash}. Listing those here asked the vendor to
+     * confirm receipt of cash that had not been handed to them and never would be, and either
+     * answer was wrong: confirming was a lie, and not confirming left the order unpaid.
+     *
+     * <p>Pickup and walk-in stay, because there the vendor really is the one taking the money.
+     * The vendor's own earnings do not depend on any of this — they are credited when the order
+     * settles, whichever way the customer paid.
+     */
     @Transactional(readOnly = true)
     public List<OrderResponse> awaitingCashOrders(String ownerId, UUID restaurantId) {
         requireOwner(ownerId, restaurantId);
         return orderRepo.findByRestaurantIdAndPaymentStatusOrderByCreatedAtDesc(restaurantId, Order.PaymentStatus.AWAITING)
-            .stream().map(OrderResponse::from).toList();
+            .stream()
+            .filter(o -> o.getMode() != Order.Mode.DELIVERY)
+            .map(OrderResponse::from).toList();
     }
 
     // ── Delivery courier (driver app) ──────────────────────────────────────────
