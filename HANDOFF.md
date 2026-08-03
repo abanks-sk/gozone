@@ -2166,3 +2166,31 @@ sheet). Also behind "still quite low": `GAP` 18 → **28**, and the focus watche
 ⚠️ **If you touch this, keep the measurement resting-relative.** Reading a transformed view's
 position and feeding it back into that same transform is the trap, and it looks correct on the
 first measurement.
+
+### Vehicle at sign-up, splash halo, keyboard lift (REBUILD auth-service, e2e 192/192)
+- **The vehicle now belongs to the account** (auth **V9**, + **V10** fixing the demo plates).
+  Sign-up asked which *kind* of vehicle it was and nothing else; make/model/colour/plate were typed
+  in later and kept in a **zustand store on the phone, sent to nobody**. So the vehicle a passenger
+  saw on a bid had never been checked, it vanished on reinstall, and the admin grading a car
+  Standard or Luxe did not know what the car was. Collected at sign-up now (plate + make required),
+  plate stored upper-cased with whitespace collapsed, shown on the admin's applicant detail beside
+  the class picker. `submitKyc` falls back to the account plate so it is not asked for twice.
+  ⚠️ **Editable only while unapproved** — `PATCH /auth/me/vehicle` answers **409** once ACTIVE.
+  That is the vehicle half of the locked-after-approval requirement; **the request-an-edit flow is
+  still not built** and both the vehicle and documents screens say "contact support" instead.
+  ⚠️ V10 exists because V9 built demo plates from the *first* four id characters and the seeded
+  UUIDs all start `aaaa` — two drivers ended up with the same registration. **Never edit an applied
+  migration**; correct it with the next one.
+- **The splash halo was wider than the phone** — 442dp against 320–428dp screens, so the circle was
+  clipped on every handset and *how* it degraded varied. Clamped to the viewport, mark scales with
+  it. Also: explicit z-order (an SVG can paint over a plain view on some Android drivers) and
+  `fadeDuration={0}` (Android fades images in over 300ms — "loads weirdly" on a slow device).
+- **The keyboard lift undid itself.** `measureInWindow` includes the component's own transform, so
+  the focus watcher re-measured the already-lifted field, saw no overlap, and animated back to
+  zero. Measurements are converted back to the resting position now, which makes repositioning
+  idempotent. `GAP` 18 → 28, focus watcher 250ms → 120ms.
+
+**Rebuild:** `docker compose build auth-service && docker compose up -d auth-service`.
+
+**Still open:** the request-an-edit flow + locking the account name (#9); vendor logo/banner (#13);
+per-item photos + closed-store editing (#14).
