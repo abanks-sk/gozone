@@ -23,6 +23,13 @@ export default function AuthEntryScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [vehicle, setVehicle] = useState<'okada' | 'car' | 'truck'>('car');
+  // The vehicle itself. It used to be typed in later on the Vehicle screen and kept only on the
+  // phone, so the description a passenger saw on a bid had never been checked by anybody and the
+  // admin grading the car Standard or Luxe did not know what the car was.
+  const [vMake, setVMake] = useState('');
+  const [vModel, setVModel] = useState('');
+  const [vColour, setVColour] = useState('');
+  const [vPlate, setVPlate] = useState('');
   const [loading, setLoading] = useState(false);
 
   const isEmail = !isSignup && channel === 'email';
@@ -56,6 +63,10 @@ export default function AuthEntryScreen() {
     if (isSignup && !name.trim()) return Alert.alert('Enter your name');
     if (isSignup && username.trim().length < 3) return Alert.alert('Choose a username', 'Your username must be at least 3 characters.');
     // Same rule the server enforces, so a bad character is caught before the round-trip.
+    // The plate is what ties a driver to a vehicle on the road, so it is the one detail that has
+    // to be there. Make and model help an admin grade the class; colour helps a passenger find it.
+    if (isSignup && !vPlate.trim()) return Alert.alert('Add your number plate', 'We need the registration of the vehicle you’ll be driving.');
+    if (isSignup && !vMake.trim()) return Alert.alert('Add your vehicle', 'Tell us the make — an admin needs it to grade your vehicle.');
     if (isSignup && !/^[a-z0-9._]{3,30}$/.test(username.trim().toLowerCase()))
       return Alert.alert('Choose a username', 'Use only letters, numbers, dots and underscores.');
     if (!id) return Alert.alert('Enter a phone number');
@@ -65,7 +76,10 @@ export default function AuthEntryScreen() {
     id = gh;
     setLoading(true);
     try {
-      if (isSignup) await register(id, 'DRIVER', name.trim(), vehicleClass, username.trim().toLowerCase());
+      if (isSignup) await register(id, 'DRIVER', name.trim(), vehicleClass, username.trim().toLowerCase(), {
+        vehicleMake: vMake.trim(), vehicleModel: vModel.trim(),
+        vehicleColour: vColour.trim(), vehiclePlate: vPlate.trim(),
+      });
       else await login(id);
       router.push({
         pathname: '/auth/verify-otp',
@@ -135,6 +149,20 @@ export default function AuthEntryScreen() {
                   : vehicle === 'truck' ? 'Truck/Pickup: large parcel deliveries.'
                   : 'Car: rides + medium parcels. An admin sets Standard/Luxe after reviewing your vehicle.'}
               </Text>
+              <BrandInput label="Number plate" placeholder="GR 1234-24" value={vPlate}
+                onChangeText={setVPlate} autoCapitalize="characters" />
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <BrandInput label="Make" placeholder={vehicle === 'okada' ? 'Haojue' : 'Toyota'}
+                    value={vMake} onChangeText={setVMake} autoCapitalize="words" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <BrandInput label="Model" placeholder={vehicle === 'okada' ? 'DK150' : 'Vitz'}
+                    value={vModel} onChangeText={setVModel} autoCapitalize="words" />
+                </View>
+              </View>
+              <BrandInput label="Colour" placeholder="Silver" value={vColour}
+                onChangeText={setVColour} autoCapitalize="words" />
             </>
           )}
 

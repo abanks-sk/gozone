@@ -15,6 +15,34 @@ tags:
 
 paths:
 
+  /auth/me/vehicle:
+    patch:
+      tags: [Account]
+      summary: A driver corrects their own vehicle — only while unapproved
+      description: >
+        Answers 409 once the account is ACTIVE. From then on the vehicle is part of what the admin
+        verified, and a driver who could rewrite their own plate could put a different vehicle on
+        the road under a verified identity. Changing it after approval goes through support.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                vehicleMake: { type: string }
+                vehicleModel: { type: string }
+                vehicleColour: { type: string }
+                vehiclePlate: { type: string }
+      responses:
+        '200':
+          description: Updated account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '403': { description: Not a driver }
+        '409': { description: Account already approved — the vehicle is locked }
+
   /auth/users/{id}:
     get:
       tags: [Admin]
@@ -651,6 +679,14 @@ components:
           type: string
           enum: [OKADA, CARGO]
           description: Driver self-selected class at sign-up (Okada/Truck). Omit for a car → admin sets Standard/Luxe.
+        vehicleMake: { type: string }
+        vehicleModel: { type: string }
+        vehicleColour: { type: string }
+        vehiclePlate:
+          type: string
+          description: >
+            Registration plate, stored upper-cased with runs of whitespace collapsed. Required by
+            the driver app at sign-up: it is what ties a driver to the vehicle on the road.
         app:
           type: string
           enum: [PASSENGER, DRIVER, VENDOR, ADMIN]
@@ -808,6 +844,14 @@ components:
     UserResponse:
       type: object
       properties:
+        vehicleMake: { type: string }
+        vehicleModel: { type: string }
+        vehicleColour: { type: string }
+        vehiclePlate:
+          type: string
+          description: >
+            Registration plate, stored upper-cased with runs of whitespace collapsed. Required by
+            the driver app at sign-up: it is what ties a driver to the vehicle on the road.
         statusNote:
           type: string
           nullable: true

@@ -14,11 +14,17 @@ export interface MeProfile {
   phone: string | null;
   vehicleClass: string | null;
   serviceMode: string | null;
+  /** The vehicle on the account — the server's copy, set at sign-up. */
+  vehicleMake: string | null;
+  vehicleModel: string | null;
+  vehicleColour: string | null;
+  vehiclePlate: string | null;
 }
 
 const EMPTY_ME: MeProfile = {
   status: null, statusNote: null, name: null, username: null, email: null, phone: null,
   vehicleClass: null, serviceMode: null,
+  vehicleMake: null, vehicleModel: null, vehicleColour: null, vehiclePlate: null,
 };
 
 interface AuthState {
@@ -34,7 +40,8 @@ interface AuthState {
   vehicleClass: string | null;
   serviceMode: string | null;
 
-  register: (phone: string, role: string, name?: string, vehicleClass?: string, username?: string) => Promise<void>;
+  register: (phone: string, role: string, name?: string, vehicleClass?: string, username?: string,
+             vehicle?: { vehicleMake?: string; vehicleModel?: string; vehicleColour?: string; vehiclePlate?: string }) => Promise<void>;
   login: (phone: string) => Promise<void>;
   registerEmail: (email: string, role: string, name?: string, vehicleClass?: string) => Promise<void>;
   loginEmail: (email: string) => Promise<void>;
@@ -78,8 +85,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   hydrated: false,
 
-  register: async (phone, role, name, vehicleClass, username) => {
-    await api.post('/auth/register', { phone, role, name, vehicleClass, username, app: APP });
+  register: async (phone, role, name, vehicleClass, username, vehicle) => {
+    await api.post('/auth/register', { phone, role, name, vehicleClass, username, app: APP, ...vehicle });
     // OTP printed to server logs in dev
   },
 
@@ -238,6 +245,10 @@ function toProfile(data: any): MeProfile {
     phone: data?.phone ?? null,
     vehicleClass: data?.vehicleClass ?? null,
     serviceMode: data?.serviceMode ?? 'BOTH',
+    vehicleMake: data?.vehicleMake ?? null,
+    vehicleModel: data?.vehicleModel ?? null,
+    vehicleColour: data?.vehicleColour ?? null,
+    vehiclePlate: data?.vehiclePlate ?? null,
   };
 }
 

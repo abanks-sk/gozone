@@ -27,6 +27,12 @@ public class RegisterRequest {
     /** Driver's self-selected vehicle class: OKADA or CARGO (a car is omitted → admin sets the tier). */
     private String vehicleClass;
 
+    /** The vehicle itself, collected at sign-up. Ignored for non-driver roles. */
+    private String vehicleMake;
+    private String vehicleModel;
+    private String vehicleColour;
+    private String vehiclePlate;
+
     public String getApp() { return app; }
     public void setApp(String app) { this.app = app; }
     public String getPhone() { return phone; }
@@ -39,4 +45,12 @@ public class RegisterRequest {
     public void setName(String name) { this.name = name; }
     public String getVehicleClass() { return vehicleClass; }
     public void setVehicleClass(String vehicleClass) { this.vehicleClass = vehicleClass; }
+    public String getVehicleMake() { return vehicleMake; }
+    public void setVehicleMake(String vehicleMake) { this.vehicleMake = vehicleMake; }
+    public String getVehicleModel() { return vehicleModel; }
+    public void setVehicleModel(String vehicleModel) { this.vehicleModel = vehicleModel; }
+    public String getVehicleColour() { return vehicleColour; }
+    public void setVehicleColour(String vehicleColour) { this.vehicleColour = vehicleColour; }
+    public String getVehiclePlate() { return vehiclePlate; }
+    public void setVehiclePlate(String vehiclePlate) { this.vehiclePlate = vehiclePlate; }
 }

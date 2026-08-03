@@ -231,6 +231,42 @@ eq "…and the test applicant is cleaned up" \
 
 echo
 echo "=============================================="
+echo " 2e. THE VEHICLE IS PART OF THE ACCOUNT"
+echo "=============================================="
+# Make, model, colour and plate used to live in a store on the driver's phone and were sent to
+# nobody — so the vehicle a passenger saw on a bid had never been checked, it vanished on
+# reinstall, and the admin grading a car Standard or Luxe did not know what the car was.
+VEHP="+233559999821"
+curl -s -o /dev/null -X POST $GW/auth/register -H 'Content-Type: application/json' -d "{
+  \"phone\":\"$VEHP\",\"role\":\"DRIVER\",\"name\":\"E2E Vehicle\",\"app\":\"DRIVER\",
+  \"vehicleMake\":\"Toyota\",\"vehicleModel\":\"Corolla\",\"vehicleColour\":\"Navy\",\"vehiclePlate\":\"gr  4821-24\"}"
+sleep 0.4
+VEHID=$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT id FROM users WHERE phone='$VEHP' AND app='DRIVER'" | tr -d ' \r')
+VEHTOK=$(login "$VEHP")
+eq "the vehicle is stored with the account" "$(GET /auth/me "$VEHTOK" | jq_ "d['vehicleModel']")" "Corolla"
+# One stored form, so two drivers cannot hold what looks like the same plate.
+eq "…and the plate is normalised"           "$(GET /auth/me "$VEHTOK" | jq_ "d['vehiclePlate']")" "GR 4821-24"
+eq "the admin sees it when grading the class" \
+  "$(GET "/auth/users/$VEHID" "$ADMIN" | jq_ "d['user']['vehicleMake']")" "Toyota"
+eq "an unapproved driver can correct it" \
+  "$(PATCH_ /auth/me/vehicle "$VEHTOK" '{"vehiclePlate":"GR-4821-24","vehicleMake":"Toyota"}' | jq_ "d['vehiclePlate']")" "GR-4821-24"
+
+# Once approved the vehicle is part of what was verified. A driver who could rewrite their own
+# plate could put a different vehicle on the road under a checked identity.
+PATCH_ "/auth/users/$VEHID/status" "$ADMIN" '{"status":"ACTIVE"}' >/dev/null
+eq "an approved driver cannot change their plate" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/auth/me/vehicle" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $VEHTOK" -d '{"vehiclePlate":"GR-9999-99"}')" "409"
+eq "…and the plate on file is untouched" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT vehicle_plate FROM users WHERE id='$VEHID'" | tr -d ' \r')" "GR-4821-24"
+
+docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+  "DELETE FROM refresh_tokens WHERE user_id='$VEHID'; DELETE FROM otp_codes WHERE phone='$VEHP'; DELETE FROM users WHERE id='$VEHID';" >/dev/null 2>&1
+eq "…and the test driver is cleaned up" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc "SELECT COUNT(*) FROM users WHERE phone='$VEHP'" | tr -d ' \r')" "0"
+
+echo
+echo "=============================================="
 echo " 2d. APPROVING A PERSON vs APPROVING A SHOP"
 echo "=============================================="
 # A business is reviewed separately from its owner. It used to be neither: approving the account

@@ -106,6 +106,20 @@ public class AuthController {
         return ResponseEntity.ok(authService.updateProfile(userId, req));
     }
 
+    /**
+     * A driver corrects their own vehicle — only while their account is still unapproved.
+     *
+     * Once an admin has cleared the account the vehicle is part of what they cleared, so this
+     * answers 409 and the app tells them to contact support rather than silently letting a
+     * different vehicle onto the road under a verified identity.
+     */
+    @PatchMapping("/me/vehicle")
+    public ResponseEntity<UserResponse> updateVehicle(
+            @AuthenticationPrincipal String userId,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(authService.updateVehicle(userId, body));
+    }
+
     // ── Add an email + password to a phone-verified account (Settings) ───────────
 
     /** Step 1: supply email + new password → a verification code is emailed. */

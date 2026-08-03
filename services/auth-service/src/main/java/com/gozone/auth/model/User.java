@@ -60,6 +60,25 @@ public class User {
     private ServiceMode serviceMode = ServiceMode.BOTH;
 
     /**
+     * The vehicle this driver drives. Null for passengers, vendors and admins.
+     *
+     * Collected at sign-up. It used to live only in a store on the driver's phone, which meant the
+     * description a passenger saw on a bid had never been seen by anybody, and the admin grading a
+     * car Standard or Luxe was deciding without knowing what the car was.
+     */
+    @Column(name = "vehicle_make", length = 40)
+    private String vehicleMake;
+
+    @Column(name = "vehicle_model", length = 40)
+    private String vehicleModel;
+
+    @Column(name = "vehicle_colour", length = 30)
+    private String vehicleColour;
+
+    @Column(name = "vehicle_plate", length = 20)
+    private String vehiclePlate;
+
+    /**
      * Why the account is in its current status, written by the reviewing admin.
      *
      * A rejection used to be a bare status: the driver's app said they had been turned down and
@@ -135,6 +154,14 @@ public class User {
     public void setVehicleClass(VehicleClass vehicleClass) { this.vehicleClass = vehicleClass; }
     public ServiceMode getServiceMode() { return serviceMode; }
     public void setServiceMode(ServiceMode serviceMode) { this.serviceMode = serviceMode; }
+    public String getVehicleMake() { return vehicleMake; }
+    public void setVehicleMake(String vehicleMake) { this.vehicleMake = vehicleMake; }
+    public String getVehicleModel() { return vehicleModel; }
+    public void setVehicleModel(String vehicleModel) { this.vehicleModel = vehicleModel; }
+    public String getVehicleColour() { return vehicleColour; }
+    public void setVehicleColour(String vehicleColour) { this.vehicleColour = vehicleColour; }
+    public String getVehiclePlate() { return vehiclePlate; }
+    public void setVehiclePlate(String vehiclePlate) { this.vehiclePlate = vehiclePlate; }
     public String getStatusNote() { return statusNote; }
     public void setStatusNote(String statusNote) { this.statusNote = statusNote; }
     public UUID getStatusReviewedBy() { return statusReviewedBy; }

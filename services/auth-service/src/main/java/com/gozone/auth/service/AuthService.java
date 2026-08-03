@@ -109,6 +109,8 @@ public class AuthService {
         user.setStatus(needsApproval ? User.Status.PENDING : User.Status.ACTIVE);
         if (role == User.Role.DRIVER || role == User.Role.COURIER) {
             user.setVehicleClass(parseVehicleClass(req.getVehicleClass())); // OKADA/CARGO now; car → admin sets tier
+            applyVehicle(user, req.getVehicleMake(), req.getVehicleModel(),
+                         req.getVehicleColour(), req.getVehiclePlate());
         }
         userRepo.save(user);
 
@@ -543,7 +545,10 @@ public class AuthService {
         DriverKyc kyc = new DriverKyc();
         kyc.setUser(user);
         kyc.setLicenceNo(req.getLicenceNo());
-        kyc.setVehicleReg(req.getVehicleReg());
+        // Falls back to the plate given at sign-up, so the same registration is not asked for twice
+        // and the two cannot silently disagree.
+        kyc.setVehicleReg(blankToNull(req.getVehicleReg()) != null
+            ? req.getVehicleReg().trim() : user.getVehiclePlate());
         kyc.setRoadworthyUrl(req.getRoadworthyUrl());
         kyc.setIdSelfieUrl(req.getIdSelfieUrl());
         kyc.setLicenceUrl(req.getLicenceUrl());
@@ -758,6 +763,48 @@ public class AuthService {
         return out;
     }
 
+    /** Trim and store the vehicle, leaving anything blank as null rather than an empty string. */
+    private void applyVehicle(User user, String make, String model, String colour, String plate) {
+        user.setVehicleMake(blankToNull(make));
+        user.setVehicleModel(blankToNull(model));
+        user.setVehicleColour(blankToNull(colour));
+        // Plates are written every which way; store one form so two drivers cannot hold what looks
+        // like the same plate, and so an admin reading it sees what is on the vehicle.
+        String p = blankToNull(plate);
+        user.setVehiclePlate(p == null ? null : p.toUpperCase().replaceAll("\s+", " "));
+    }
+
+    private static String blankToNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
+    }
+
+    /**
+     * A driver corrects their own vehicle details — but only while nobody has approved them.
+     *
+     * <p>Once an admin has cleared the account, the vehicle is part of what they cleared: an
+     * approved driver who could rewrite their own plate could put a different vehicle on the road
+     * under a verified identity. Changing it after that has to go back through review, which is not
+     * built yet, so this refuses and the app says to contact support rather than pretending.
+     */
+    public UserResponse updateVehicle(String userId, Map<String, String> body) {
+        User u = userRepo.findById(UUID.fromString(userId))
+            .orElseThrow(() -> new IllegalStateException("User not found"));
+        if (u.getRole() != User.Role.DRIVER && u.getRole() != User.Role.COURIER) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only drivers have a vehicle.");
+        }
+        if (u.getStatus() == User.Status.ACTIVE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Your vehicle was verified with your account. Contact support to change it.");
+        }
+        applyVehicle(u, body.get("vehicleMake"), body.get("vehicleModel"),
+                     body.get("vehicleColour"), body.get("vehiclePlate"));
+        userRepo.save(u);
+        log.info("[AUTH] vehicle updated for {}", userId);
+        return toUserResponse(u);
+    }
+
     /** Notes are shown in a phone-sized space and stored in a 500-char column. */
     private String trimNote(String note) {
         if (note == null) return null;
@@ -772,7 +819,8 @@ public class AuthService {
             u.getRole().name(), u.getStatus().name(),
             u.getVehicleClass() != null ? u.getVehicleClass().name() : null,
             u.getServiceMode() != null ? u.getServiceMode().name() : "BOTH",
-            u.getStatusNote());
+            u.getStatusNote(),
+            u.getVehicleMake(), u.getVehicleModel(), u.getVehicleColour(), u.getVehiclePlate());
     }
 
     /** Map the driver's self-selected vehicle class (OKADA/CARGO). A car → null (admin sets the tier). */

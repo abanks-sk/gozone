@@ -12,6 +12,10 @@ interface User {
   status: string;
   vehicleClass?: string | null;
   serviceMode?: string | null;
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
+  vehicleColour?: string | null;
+  vehiclePlate?: string | null;
 }
 
 interface Kyc {
@@ -117,6 +121,11 @@ function ApplicantDetail({ userId, onZoom }: { userId: string; onZoom: (u: strin
         <Field label="Signed up" value={detail.createdAt ? new Date(detail.createdAt).toLocaleDateString() : null} />
         {(u.role === 'DRIVER' || u.role === 'COURIER') && (
           <>
+            {/* Grading a car Standard or Luxe is a judgement about the car, and until this was
+                collected at sign-up the reviewer was making it without knowing what the car was. */}
+            <Field label="Vehicle" value={[u.vehicleMake, u.vehicleModel].filter(Boolean).join(' ')} />
+            <Field label="Colour" value={u.vehicleColour} />
+            <Field label="Number plate" value={u.vehiclePlate} />
             <Field label="Vehicle class" value={u.vehicleClass ?? 'Not graded'} />
             <Field label="Accepts" value={u.serviceMode} />
           </>

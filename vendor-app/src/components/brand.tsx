@@ -10,33 +10,30 @@ import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { brand } from '../theme/tokens';
 
 // ── GzMark ────────────────────────────────────────────────────────────────────
-// The official GoZone "GZ" logo (assets/gz-logo.png — background removed, so the
-// road's dashed centreline shows the surface through). Passing `color` picks the
-// pre-whitened variant for dark surfaces; omit it to keep the original navy.
-// `dash` is accepted for API compatibility but unused with the bitmap asset.
+// The official GoZone "GZ" logo (assets/gz-logo-white.png — background removed,
+// so the road's dashed centreline shows the surface through), pre-whitened for
+// the dark surfaces this mark is always drawn on.
 //
-// Why two files instead of one tinted image: `Image` `tintColor` silently does
-// nothing on some Android builds, and when it did the mark stayed navy on a
-// near-black brand background — invisible, which is what "the GZ doesn't appear
-// on some devices" turned out to be. A second asset can't fail that way.
+// Why a second file instead of tinting the navy original: `Image` `tintColor`
+// silently does nothing on some Android builds, and when it did the mark stayed
+// navy on a near-black brand background — invisible, which is what "the GZ
+// doesn't appear on some devices" turned out to be. A whitened asset can't fail
+// that way. The navy original is gone with it: every caller wanted the white
+// mark, so it only ever cost ~700KB of bundle per app.
 
-const GZ_LOGO = require('../../assets/gz-logo.png');
 const GZ_LOGO_WHITE = require('../../assets/gz-logo-white.png');
 const GZ_ASPECT = 681 / 985; // cleaned asset height / width
 
 export function GzMark({
   size = 120,
-  color,
   style,
 }: {
   size?: number;
-  color?: string;
-  dash?: string;
   style?: ImageStyle;
 }) {
   return (
     <Image
-      source={color ? GZ_LOGO_WHITE : GZ_LOGO}
+      source={GZ_LOGO_WHITE}
       resizeMode="contain"
       // Android fades a decoded image in over 300ms by default. On a slow device that lands well
       // after the surrounding layout and reads as the mark "loading weirdly" — or as missing, if
@@ -82,7 +79,7 @@ export function GzHero({ size = 170, glowScale = 2.6, style }: { size?: number; 
       style={[{ width: canvas, height: canvas * 0.85, alignItems: 'center', justifyContent: 'center' }, style]}
     >
       <GlowOrb size={canvas} style={{ position: 'absolute', top: -(canvas * 0.075) }} />
-      <GzMark size={markSize} color="#F2F7FF" dash={brand.bg} />
+      <GzMark size={markSize} />
     </View>
   );
 }
@@ -175,7 +172,7 @@ export function Logo({ size = 76 }: { size?: number }) {
         justifyContent: 'center',
       }}
     >
-      <GzMark size={size * 0.74} color="#fff" dash={brand.primary} />
+      <GzMark size={size * 0.74} />
     </View>
   );
 }
