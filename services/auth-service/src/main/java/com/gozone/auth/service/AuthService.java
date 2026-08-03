@@ -33,6 +33,7 @@ public class AuthService {
     private final OtpCodeRepository otpRepo;
     private final RefreshTokenRepository refreshRepo;
     private final DriverKycRepository kycRepo;
+    private final ProfileEditRequestRepository editRepo;
     private final JwtService jwtService;
     private final JwtProperties jwtProps;
     private final EmailService emailService;
@@ -48,6 +49,7 @@ public class AuthService {
                        OtpCodeRepository otpRepo,
                        RefreshTokenRepository refreshRepo,
                        DriverKycRepository kycRepo,
+                       ProfileEditRequestRepository editRepo,
                        JwtService jwtService,
                        JwtProperties jwtProps,
                        EmailService emailService,
@@ -57,6 +59,7 @@ public class AuthService {
         this.otpRepo     = otpRepo;
         this.refreshRepo = refreshRepo;
         this.kycRepo     = kycRepo;
+        this.editRepo    = editRepo;
         this.jwtService  = jwtService;
         this.jwtProps    = jwtProps;
         this.emailService = emailService;
@@ -481,6 +484,14 @@ public class AuthService {
             if (name.isBlank()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Your name can't be empty.");
             }
+            // An approved driver's name is what an admin checked against their licence, so it stops
+            // being free text at that point. Changing it goes through POST /auth/me/edit-requests
+            // and back past a person, like the vehicle and the documents.
+            boolean isDriver = user.getRole() == User.Role.DRIVER || user.getRole() == User.Role.COURIER;
+            if (isDriver && user.getStatus() == User.Status.ACTIVE && !name.equals(user.getName())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Your name was verified against your licence. Request a change and an admin will review it.");
+            }
             user.setName(name);
         }
 
@@ -768,10 +779,19 @@ public class AuthService {
         user.setVehicleMake(blankToNull(make));
         user.setVehicleModel(blankToNull(model));
         user.setVehicleColour(blankToNull(colour));
-        // Plates are written every which way; store one form so two drivers cannot hold what looks
-        // like the same plate, and so an admin reading it sees what is on the vehicle.
         String p = blankToNull(plate);
-        user.setVehiclePlate(p == null ? null : p.toUpperCase().replaceAll("\s+", " "));
+        user.setVehiclePlate(p == null ? null : normalisePlate(p));
+    }
+
+    /**
+     * One stored form for a registration plate.
+     *
+     * Plates get written every which way — spaced, unspaced, lower case. Storing one form is
+     * what stops two drivers holding what looks like the same registration, and means an admin
+     * reading it sees what is actually on the vehicle.
+     */
+    private static String normalisePlate(String plate) {
+        return plate.trim().toUpperCase().replaceAll("\s+", " ");
     }
 
     private static String blankToNull(String s) {
@@ -803,6 +823,180 @@ public class AuthService {
         userRepo.save(u);
         log.info("[AUTH] vehicle updated for {}", userId);
         return toUserResponse(u);
+    }
+
+    // ── Asking to change something that was verified ───────────────────────────
+
+    /**
+     * A driver proposes a change to their locked details.
+     *
+     * <p>Only for approved accounts: an unapproved driver edits directly, and routing them through
+     * a review queue would ask an admin to approve details they are about to approve anyway.
+     */
+    public EditRequestResponse requestEdit(String userId, Map<String, String> body) {
+        User u = userRepo.findById(UUID.fromString(userId))
+            .orElseThrow(() -> new IllegalStateException("User not found"));
+        if (u.getRole() != User.Role.DRIVER && u.getRole() != User.Role.COURIER) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only drivers have verified details.");
+        }
+        if (u.getStatus() != User.Status.ACTIVE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Your account isn't approved yet — edit your details directly instead.");
+        }
+        editRepo.findByUserIdAndStatus(u.getId(), ProfileEditRequest.Status.PENDING).ifPresent(open -> {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "You already have a change waiting to be reviewed.");
+        });
+
+        DriverKyc kyc = kycRepo.findTopByUserIdOrderByCreatedAtDesc(u.getId()).orElse(null);
+        String plate = blankToNull(body.get("vehiclePlate"));
+
+        ProfileEditRequest r = new ProfileEditRequest();
+        r.setUser(u);
+        r.setName(changed(body.get("name"), u.getName()));
+        r.setVehicleMake(changed(body.get("vehicleMake"), u.getVehicleMake()));
+        r.setVehicleModel(changed(body.get("vehicleModel"), u.getVehicleModel()));
+        r.setVehicleColour(changed(body.get("vehicleColour"), u.getVehicleColour()));
+        r.setVehiclePlate(changed(plate == null ? null : normalisePlate(plate), u.getVehiclePlate()));
+        r.setLicenceNo(changed(body.get("licenceNo"), kyc == null ? null : kyc.getLicenceNo()));
+        r.setIdSelfieUrl(requestedDoc(body.get("idSelfieUrl"), kyc == null ? null : kyc.getIdSelfieUrl()));
+        r.setLicenceUrl(requestedDoc(body.get("licenceUrl"), kyc == null ? null : kyc.getLicenceUrl()));
+        r.setVehiclePhotoUrl(requestedDoc(body.get("vehiclePhotoUrl"), kyc == null ? null : kyc.getVehiclePhotoUrl()));
+        r.setRoadworthyUrl(requestedDoc(body.get("roadworthyUrl"), kyc == null ? null : kyc.getRoadworthyUrl()));
+        r.setReason(trimNote(body.get("reason")));
+
+        if (r.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Nothing here is different from what we already have.");
+        }
+        editRepo.save(r);
+        log.info("[EDIT] {} requested a change to their verified details", userId);
+        return toEditResponse(r);
+    }
+
+    /** A value only joins the request when it is both given and actually different from today's. */
+    private String changed(String proposed, String current) {
+        String p = blankToNull(proposed);
+        if (p == null) return null;
+        return p.equals(current) ? null : p;
+    }
+
+    /**
+     * Same, but a document must be one of ours.
+     *
+     * Without this a request could point at an image hosted anywhere, whose contents can change
+     * after the admin has looked at it — the same hole the KYC submission guard closes.
+     */
+    private String requestedDoc(String proposed, String current) {
+        String p = changed(proposed, current);
+        if (p == null) return null;
+        if (!p.startsWith("/auth/uploads/")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Documents must be uploaded through the app.");
+        }
+        return p;
+    }
+
+    /** The driver's own requests, newest first. */
+    @Transactional(readOnly = true)
+    public List<EditRequestResponse> myEditRequests(String userId) {
+        return editRepo.findByUserIdOrderByCreatedAtDesc(UUID.fromString(userId))
+            .stream().map(this::toEditResponse).toList();
+    }
+
+    /** The admin queue. */
+    @Transactional(readOnly = true)
+    public List<EditRequestResponse> listEditRequests(String status) {
+        List<ProfileEditRequest> rows = (status == null || status.isBlank())
+            ? editRepo.findAllByOrderByCreatedAtDesc()
+            : editRepo.findByStatusOrderByCreatedAtAsc(ProfileEditRequest.Status.valueOf(status.toUpperCase()));
+        return rows.stream().map(this::toEditResponse).toList();
+    }
+
+    /**
+     * An admin decides. Approving is what finally moves the values onto the account.
+     *
+     * <p>A change to a document or the licence number is recorded as a <b>new</b> KYC submission
+     * rather than an edit of the old one, so the record an admin approved months ago still says
+     * what they approved. Its status is VERIFIED because approving this request <i>is</i> that
+     * review, and anything the request did not touch carries over from the record it supersedes.
+     */
+    public EditRequestResponse reviewEditRequest(UUID id, String adminUserId, String status, String note) {
+        ProfileEditRequest r = editRepo.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Request not found"));
+        if (r.getStatus() != ProfileEditRequest.Status.PENDING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "That request has already been decided.");
+        }
+        ProfileEditRequest.Status next = ProfileEditRequest.Status.valueOf(status.toUpperCase());
+        if (next == ProfileEditRequest.Status.REJECTED && (note == null || note.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Give a reason for the rejection — the driver is shown it.");
+        }
+
+        if (next == ProfileEditRequest.Status.APPROVED) {
+            User u = r.getUser();
+            if (r.getName() != null) u.setName(r.getName());
+            if (r.getVehicleMake() != null) u.setVehicleMake(r.getVehicleMake());
+            if (r.getVehicleModel() != null) u.setVehicleModel(r.getVehicleModel());
+            if (r.getVehicleColour() != null) u.setVehicleColour(r.getVehicleColour());
+            if (r.getVehiclePlate() != null) u.setVehiclePlate(r.getVehiclePlate());
+            userRepo.save(u);
+
+            if (r.touchesDocuments()) {
+                DriverKyc prev = kycRepo.findTopByUserIdOrderByCreatedAtDesc(u.getId()).orElse(null);
+                DriverKyc k = new DriverKyc();
+                k.setUser(u);
+                k.setLicenceNo(pick(r.getLicenceNo(), prev == null ? null : prev.getLicenceNo()));
+                k.setVehicleReg(u.getVehiclePlate());
+                k.setIdSelfieUrl(pick(r.getIdSelfieUrl(), prev == null ? null : prev.getIdSelfieUrl()));
+                k.setLicenceUrl(pick(r.getLicenceUrl(), prev == null ? null : prev.getLicenceUrl()));
+                k.setVehiclePhotoUrl(pick(r.getVehiclePhotoUrl(), prev == null ? null : prev.getVehiclePhotoUrl()));
+                k.setRoadworthyUrl(pick(r.getRoadworthyUrl(), prev == null ? null : prev.getRoadworthyUrl()));
+                k.setStatus(DriverKyc.KycStatus.VERIFIED);
+                k.setReviewedBy(UUID.fromString(adminUserId));
+                kycRepo.save(k);
+            }
+        }
+
+        r.setStatus(next);
+        r.setReviewNote(next == ProfileEditRequest.Status.APPROVED ? null : trimNote(note));
+        r.setReviewedBy(adminUserId == null ? null : UUID.fromString(adminUserId));
+        r.setReviewedAt(OffsetDateTime.now());
+        editRepo.save(r);
+        log.info("[EDIT] request {} {} by {}", id, next, adminUserId);
+        return toEditResponse(r);
+    }
+
+    private static String pick(String proposed, String existing) {
+        return proposed != null ? proposed : existing;
+    }
+
+    private EditRequestResponse toEditResponse(ProfileEditRequest r) {
+        User u = r.getUser();
+        DriverKyc kyc = kycRepo.findTopByUserIdOrderByCreatedAtDesc(u.getId()).orElse(null);
+        Map<String, String> current = new java.util.LinkedHashMap<>();
+        Map<String, String> proposed = new java.util.LinkedHashMap<>();
+        // Only the fields this request touches, so an admin reads a change rather than a profile.
+        pair(current, proposed, "name", u.getName(), r.getName());
+        pair(current, proposed, "vehicleMake", u.getVehicleMake(), r.getVehicleMake());
+        pair(current, proposed, "vehicleModel", u.getVehicleModel(), r.getVehicleModel());
+        pair(current, proposed, "vehicleColour", u.getVehicleColour(), r.getVehicleColour());
+        pair(current, proposed, "vehiclePlate", u.getVehiclePlate(), r.getVehiclePlate());
+        pair(current, proposed, "licenceNo", kyc == null ? null : kyc.getLicenceNo(), r.getLicenceNo());
+        pair(current, proposed, "idSelfieUrl", kyc == null ? null : kyc.getIdSelfieUrl(), r.getIdSelfieUrl());
+        pair(current, proposed, "licenceUrl", kyc == null ? null : kyc.getLicenceUrl(), r.getLicenceUrl());
+        pair(current, proposed, "vehiclePhotoUrl", kyc == null ? null : kyc.getVehiclePhotoUrl(), r.getVehiclePhotoUrl());
+        pair(current, proposed, "roadworthyUrl", kyc == null ? null : kyc.getRoadworthyUrl(), r.getRoadworthyUrl());
+        return new EditRequestResponse(
+            r.getId(), u.getId(), u.getName(), u.getPhone(), r.getStatus().name(),
+            current, proposed, r.getReason(), r.getReviewNote(), r.getCreatedAt(), r.getReviewedAt());
+    }
+
+    private static void pair(Map<String, String> current, Map<String, String> proposed,
+                             String key, String now, String want) {
+        if (want == null) return;
+        current.put(key, now);
+        proposed.put(key, want);
     }
 
     /** Notes are shown in a phone-sized space and stored in a 500-char column. */

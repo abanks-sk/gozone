@@ -267,6 +267,54 @@ eq "…and the test driver is cleaned up" \
 
 echo
 echo "=============================================="
+echo " 2f. CHANGING SOMETHING THAT WAS VERIFIED"
+echo "=============================================="
+# Name, vehicle and documents are locked once an admin approves the account — they are what was
+# checked. "Locked" used to mean a dead end that told the driver to contact support, which is a
+# request nobody could act on inside the system.
+eq "an approved driver cannot rename themselves" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/auth/me" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $DRIVER" -d '{"name":"Someone Else"}')" "409"
+
+EDIT=$(POST /auth/me/edit-requests "$DRIVER" '{"vehicleColour":"Black","reason":"Resprayed after an accident."}')
+EDITID=$(echo "$EDIT" | jq_ "d['id']")
+eq "…they request the change instead"  "$(echo "$EDIT" | jq_ "d['status']")" "PENDING"
+eq "…the admin is shown what it is now" "$(echo "$EDIT" | jq_ "d['current']['vehicleColour']")" "Silver"
+eq "…and what it would become"          "$(echo "$EDIT" | jq_ "d['proposed']['vehicleColour']")" "Black"
+# The whole point: asking is not the same as changing.
+eq "nothing has moved on the account yet" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc \
+     "SELECT vehicle_colour FROM users WHERE phone='+233201000002'" | tr -d ' \r')" "Silver"
+eq "only one request open at a time" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GW/auth/me/edit-requests" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $DRIVER" -d '{"vehicleColour":"Green"}')" "409"
+eq "a request that changes nothing is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GW/auth/me/edit-requests" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $RIDER" -d '{"name":"Ama Mensah"}')" "403"
+eq "it reaches the admin queue"        "$(GET '/auth/edit-requests?status=PENDING' "$ADMIN" | jq_ "len([r for r in d if r['id']=='$EDITID'])")" "1"
+eq "a driver cannot review their own"  "$(CODE '/auth/edit-requests?status=PENDING' "$DRIVER")" "403"
+eq "rejecting without a reason is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/auth/edit-requests/$EDITID" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $ADMIN" -d '{"status":"REJECTED"}')" "400"
+
+PATCH_ "/auth/edit-requests/$EDITID" "$ADMIN" '{"status":"APPROVED"}' >/dev/null
+eq "approving is what finally applies it" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc \
+     "SELECT vehicle_colour FROM users WHERE phone='+233201000002'" | tr -d ' \r')" "Black"
+eq "…and it cannot be decided twice" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$GW/auth/edit-requests/$EDITID" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $ADMIN" -d '{"status":"REJECTED","note":"changed my mind"}')" "409"
+
+# Put the demo driver back the way the seed leaves them.
+docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+  "UPDATE users SET vehicle_colour='Silver' WHERE phone='+233201000002';
+   DELETE FROM profile_edit_requests WHERE id='$EDITID';" >/dev/null 2>&1
+eq "…and the demo driver is restored" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc \
+     "SELECT vehicle_colour FROM users WHERE phone='+233201000002'" | tr -d ' \r')" "Silver"
+
+echo
+echo "=============================================="
 echo " 2d. APPROVING A PERSON vs APPROVING A SHOP"
 echo "=============================================="
 # A business is reviewed separately from its owner. It used to be neither: approving the account

@@ -120,6 +120,41 @@ public class AuthController {
         return ResponseEntity.ok(authService.updateVehicle(userId, body));
     }
 
+    // ── Asking to change verified details ───────────────────────────────────────
+    //
+    // Name, vehicle and documents are locked once an admin approves the account. "Locked" used to
+    // mean a dead end that told the driver to contact support; this is the route back in.
+
+    @PostMapping("/me/edit-requests")
+    public ResponseEntity<EditRequestResponse> requestEdit(
+            @AuthenticationPrincipal String userId,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(authService.requestEdit(userId, body));
+    }
+
+    /** The driver's own requests, newest first — the app shows the latest one's state. */
+    @GetMapping("/me/edit-requests")
+    public ResponseEntity<List<EditRequestResponse>> myEditRequests(@AuthenticationPrincipal String userId) {
+        return ResponseEntity.ok(authService.myEditRequests(userId));
+    }
+
+    @GetMapping("/edit-requests")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<List<EditRequestResponse>> listEditRequests(
+            @RequestParam(required = false) String status) {
+        return ResponseEntity.ok(authService.listEditRequests(status));
+    }
+
+    @PatchMapping("/edit-requests/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<EditRequestResponse> reviewEditRequest(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String adminUserId,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(authService.reviewEditRequest(
+            id, adminUserId, body.getOrDefault("status", ""), body.get("note")));
+    }
+
     // ── Add an email + password to a phone-verified account (Settings) ───────────
 
     /** Step 1: supply email + new password → a verification code is emailed. */

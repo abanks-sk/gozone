@@ -95,12 +95,18 @@ export default function DocumentsScreen() {
               <Ionicons name={approved ? 'lock-closed-outline' : 'information-circle-outline'} size={18} color={c.textMuted} />
               <Text style={{ flex: 1, fontSize: 13, color: c.textMuted, lineHeight: 19 }}>
                 {approved
-                  ? 'These were verified against your identity, so they can’t be edited here. To change one, contact support — the new document has to be reviewed before it takes effect.'
+                  ? 'These were verified against your identity, so they can’t be edited here. Ask for a change and an admin will review it — what’s on file stays in place until they approve it.'
                   : status === 'REJECTED'
                     ? 'You can resubmit from your setup screen.'
                     : 'You can’t edit these while they’re being reviewed.'}
               </Text>
             </View>
+            {approved && (
+              <TouchableOpacity onPress={() => router.push('/request-change' as any)} activeOpacity={0.9}
+                style={{ marginTop: 14, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary, borderRadius: 999, paddingVertical: 13, alignItems: 'center' }}>
+                <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14.5 }}>Request a change</Text>
+              </TouchableOpacity>
+            )}
           </Card>
         </>
       )}

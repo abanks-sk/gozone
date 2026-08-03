@@ -18,8 +18,8 @@ import { useVehicle } from '../src/store/vehicleStore';
  *
  * Editable only while the account is still unapproved. Once an admin has cleared it, the vehicle is
  * part of what they cleared — a driver who could rewrite their own plate afterwards could put a
- * different vehicle on the road under a verified identity. The re-review flow for changing it after
- * approval is not built, so this says so plainly rather than offering a button that fails.
+ * different vehicle on the road under a verified identity. After that, changes go through
+ * `request-change.tsx` and back past a person before they take effect.
  */
 export default function VehicleScreen() {
   const router = useRouter();
@@ -96,14 +96,20 @@ export default function VehicleScreen() {
           </Card>
 
           {locked ? (
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16, paddingHorizontal: 4 }}>
-              <Ionicons name="lock-closed-outline" size={18} color={c.textMuted} />
-              <Text style={{ flex: 1, fontSize: 13, color: c.textMuted, lineHeight: 19 }}>
-                Your vehicle was verified along with your account, so it can’t be edited here. To
-                change it, contact support — the new details have to be reviewed before they take
-                effect.
-              </Text>
-            </View>
+            <>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16, paddingHorizontal: 4 }}>
+                <Ionicons name="lock-closed-outline" size={18} color={c.textMuted} />
+                <Text style={{ flex: 1, fontSize: 13, color: c.textMuted, lineHeight: 19 }}>
+                  Your vehicle was verified along with your account, so it can’t be edited here. Ask
+                  for a change and an admin will review it — your current details stay in place
+                  until they approve it.
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => router.push('/request-change' as any)} activeOpacity={0.9}
+                style={{ marginTop: 16, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary, borderRadius: 999, paddingVertical: 14, alignItems: 'center' }}>
+                <Text style={{ color: c.primary, fontWeight: '800', fontSize: 15 }}>Request a change</Text>
+              </TouchableOpacity>
+            </>
           ) : (
             <>
               <TouchableOpacity onPress={save} activeOpacity={0.9} disabled={saving}

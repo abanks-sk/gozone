@@ -14,6 +14,19 @@ export interface Me {
   vehiclePlate?: string | null;
 }
 
+/** A proposed change to details an admin already verified. */
+export interface EditRequest {
+  id: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  /** Only the fields being changed, so the two can be read side by side. */
+  current: Record<string, string | null>;
+  proposed: Record<string, string | null>;
+  reason?: string | null;
+  reviewNote?: string | null;
+  createdAt: string;
+  reviewedAt?: string | null;
+}
+
 export interface Kyc {
   id: string;
   userId: string;
@@ -29,6 +42,14 @@ export interface Kyc {
 
 export const authApi = {
   me: () => api.get<Me>('/auth/me').then((r) => r.data),
+
+  /** Propose a change to details that were verified. Only for an approved account. */
+  requestEdit: (body: Record<string, string>) =>
+    api.post<EditRequest>('/auth/me/edit-requests', body).then((r) => r.data),
+
+  /** This driver's change requests, newest first. */
+  myEditRequests: () =>
+    api.get<EditRequest[]>('/auth/me/edit-requests').then((r) => r.data).catch(() => [] as EditRequest[]),
 
   /**
    * Correct the vehicle on the account. Answers 409 once the account is approved — from then on

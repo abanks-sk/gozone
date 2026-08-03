@@ -7,6 +7,7 @@ import type { Page } from '../App';
 const NAV: { key: Page; label: string; icon: string; superOnly?: boolean }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: '◈' },
   { key: 'approvals', label: 'Approvals', icon: '✓' },
+  { key: 'edits', label: 'Change requests', icon: '✎' },
   { key: 'kyc', label: 'Driver KYC', icon: '🪪' },
   { key: 'promos', label: 'Promos', icon: '🎟️' },
   { key: 'fees', label: 'Fees', icon: '💵' },

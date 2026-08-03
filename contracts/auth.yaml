@@ -15,6 +15,103 @@ tags:
 
 paths:
 
+  /auth/me/edit-requests:
+    post:
+      tags: [Account]
+      summary: Propose a change to details that were verified
+      description: >
+        Name, vehicle and documents are locked once an admin approves a driver's account — they are
+        what was checked. This is the way back in: only fields that actually differ from today's
+        values become part of the request, documents must be `/auth/uploads/...` paths, and nothing
+        takes effect until an admin approves it. One open request per driver.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                vehicleMake: { type: string }
+                vehicleModel: { type: string }
+                vehicleColour: { type: string }
+                vehiclePlate: { type: string }
+                licenceNo: { type: string }
+                idSelfieUrl: { type: string }
+                licenceUrl: { type: string }
+                vehiclePhotoUrl: { type: string }
+                roadworthyUrl: { type: string }
+                reason:
+                  type: string
+                  description: Why it changed — the admin approving a new plate is entitled to know.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EditRequestResponse' }
+        '400': { description: Nothing differs, or a document is not one of ours }
+        '403': { description: Not a driver }
+        '409': { description: Account not approved (edit directly), or a request is already open }
+    get:
+      tags: [Account]
+      summary: This driver's own change requests, newest first
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Requests
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/EditRequestResponse' } }
+
+  /auth/edit-requests:
+    get:
+      tags: [Admin]
+      summary: The change-request queue
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [PENDING, APPROVED, REJECTED] } }
+      responses:
+        '200':
+          description: Requests
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/EditRequestResponse' } }
+        '403': { description: Not an admin }
+
+  /auth/edit-requests/{id}:
+    patch:
+      tags: [Admin]
+      summary: Decide a change request — approving is what applies it
+      description: >
+        Approving writes the proposed values onto the account. A change to a document or the licence
+        number is recorded as a NEW KYC submission rather than an edit of the old one, so the record
+        approved months ago still says what was approved then.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [APPROVED, REJECTED] }
+                note:
+                  type: string
+                  description: Required when rejecting — the driver is shown it.
+      responses:
+        '200':
+          description: Decided
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EditRequestResponse' }
+        '400': { description: Rejected without a reason }
+        '403': { description: Not an admin }
+        '409': { description: Already decided }
+
   /auth/me/vehicle:
     patch:
       tags: [Account]
@@ -659,6 +756,27 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    EditRequestResponse:
+      type: object
+      description: >
+        A proposed change. `current` and `proposed` carry only the fields the request touches, so a
+        reviewer sees the comparison that IS the decision without diffing an account themselves.
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        driverName: { type: string, nullable: true }
+        driverPhone: { type: string, nullable: true }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        current:
+          type: object
+          additionalProperties: { type: string, nullable: true }
+        proposed:
+          type: object
+          additionalProperties: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+        reviewNote: { type: string, nullable: true, description: Why it was refused — shown to the driver. }
+        createdAt: { type: string, format: date-time }
+        reviewedAt: { type: string, format: date-time, nullable: true }
     RegisterRequest:
       type: object
       required: [phone, role]
