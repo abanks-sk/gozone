@@ -25,6 +25,12 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+  servlet:
+    multipart:
+      # Sized a little above app.uploads.max-bytes so an oversized image is refused by our own
+      # check with a readable message, rather than by the container with an opaque 500.
+      max-file-size: 8MB
+      max-request-size: 10MB
   # Gmail SMTP for email verification codes. Blank username = not configured, and the
   # code is logged instead of emailed (so the demo still works offline).
   mail:
@@ -101,6 +107,13 @@ app:
     # Dev only: also log the code after a successful SMS/email send so a demo can
     # continue if the handset/simulator isn't reachable. Set false in production.
     log-codes: ${OTP_LOG_CODES:true}
+  uploads:
+    # KYC documents. Must point at a mounted volume — see docker-compose.yml. Written into the
+    # container's own filesystem, every driver's documents die with the next rebuild.
+    dir: ${UPLOAD_DIR:/var/gozone/uploads}
+    # 6 MB. Comfortably above a phone photo after the picker's compression, well below anything
+    # that would make holding the bytes in memory a problem.
+    max-bytes: ${UPLOAD_MAX_BYTES:6291456}
 
 logging:
   level:

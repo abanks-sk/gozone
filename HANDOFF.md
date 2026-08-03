@@ -1837,10 +1837,48 @@ composer / recents in a **sheet you can drag down**, leaving the search bar dock
   `refreshToken` into `localStorage`, then load the web export. Measuring the DOM works even
   though screenshots and animation do not.*
 
+### C1 — driver KYC unmocked (REBUILD auth-service, `npm install` in driver-app)
+The last tap-through item. Documents were a hardcoded `https://placeholder.example/kyc/…` the app
+set on tap — nothing captured, nothing sent, and the **seed wrote the same placeholders**. An admin
+pressing Approve was approving a string. Now real photographs: **driver, licence, vehicle**.
+- **Storage: a served folder** (the user chose this over object storage — no third-party account or
+  credentials). Files sit on a **named volume** `kyc_uploads` → `/var/gozone/uploads`. This is the
+  load-bearing decision: auth-service is rebuilt constantly, and anywhere inside the container every
+  driver's documents die with the next build. **Verified by destroying and recreating the container**
+  — files survived.
+- **Three leak paths, all closed.** (1) The **filename** is server-generated, never the client's —
+  `../../application.yml` is the first thing anyone tries. (2) The **content** is sniffed by magic
+  bytes; a PHP payload named `.png` and declared `image/png` is refused **415** (verified). (3) The
+  **reader** is checked against the recorded owner: owner 200 · admin 200 · other user **404** ·
+  no token 401 (all verified). 404 not 403 on purpose — a 403 confirms the document exists, which
+  is itself something a stranger should not learn about someone's ID.
+- **auth-service V6:** `uploads` table (the row is the ACL; the folder is only bytes) +
+  `driver_kyc.licence_url` / `vehicle_photo_url`. `POST /auth/uploads` (multipart, 6 MB) and
+  `GET /auth/uploads/{id}`. Submission now **requires** the three photos and **rejects any URL that
+  is not ours** — otherwise a submission could point at an image whose contents change after review.
+  `KycResponse` gained driver name + phone (the admin list showed a truncated UUID; you cannot verify
+  an identity against an id fragment).
+- **Driver app:** `expo-image-picker`, **lazily imported** — a top-level Expo native import has
+  crashed Expo Go startup before. Camera or library, compressed to 60% on device. Each row shows the
+  photo just taken; on a resumed session a tick stands in, because the served copy needs an auth
+  header `<Image>` cannot send on web.
+- **Admin web:** the review page renders the images via an authenticated blob fetch (a plain
+  `<img src>` sends no token), click to enlarge — it showed no documents at all before.
+- **Seed made honest and idempotent:** `01_auth_seed.sql` no longer fabricates
+  `placeholder.example` document URLs, which would now render as broken images against a VERIFIED
+  driver. It also used `gen_random_uuid()` with `ON CONFLICT (id)`, so re-running duplicated every
+  row — the same bug that once triplicated the food menu. Now matched on (user, licence).
+- **e2e 140 → 148**, and the suite **cleans up the document it uploads** (one orphan per run
+  otherwise — the same slow accumulation that filled the vendor board).
+- ⚠️ **Not device-verified**: camera, picker and upload over a mobile connection need a phone.
+  `TAP_THROUGH.md` §13, including the volume-survives-rebuild check.
+- *Demo state: Kwame Driver's existing VERIFIED record now carries three real images so the admin
+  page has something to show; the other two seeded drivers show "Not provided", which is the truth.*
+
 ### Next
-1. **`docs/ISSUES_FROM_TESTING.md` C1** — the last one, to be done alone: unmock driver KYC (real
-   driver photo, vehicle photo and licence). Needs the file-storage decision made up front
-   (S3/Cloudinary vs a served volume), an upload endpoint, and admin review UI showing the images.
+1. **Device tap-through.** Everything from the first run is now implemented, and most of it has
+   never been seen on a phone. `docs/TAP_THROUGH.md` is the list — §11 (pull-down map), §12
+   (keyboard, vendor storefront, one-tap cards) and §13 (KYC) are the newest and least proven.
 2. **Convert `dest` to a proper nullable type** (retire the `NO_DEST` sentinel). Still outstanding —
    it is the root cause behind A1, and ~8 files read `dest.lat`/`dest.label` directly.
 3. **Google Sign-In frontend** — create OAuth client IDs (Web + Android `com.gozone.app` + SHA‑1), set

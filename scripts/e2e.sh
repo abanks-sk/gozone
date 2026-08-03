@@ -447,6 +447,37 @@ echo "=============================================="
 echo "10. ADMIN CONSOLE DATA"
 echo "=============================================="
 eq "KYC list (admin)"      "$(CODE '/auth/driver/kyc' $ADMIN)" "200"
+
+# ── KYC documents are real files now, and private ones ───────────────────────
+# They used to be a hardcoded placeholder URL the app never sent, so "approved" meant an admin had
+# looked at a string. These assertions pin the three things that make that not the case any more:
+# the bytes are stored, junk dressed as an image is refused, and holding the URL is not permission.
+KYCPNG=$(mktemp -u).png
+python -c "
+import struct, zlib, io, sys
+w=h=8; raw=b''.join(b'\x00'+bytes((10,120,200))*w for _ in range(h))
+def ch(t,d):
+    c=t+d; return struct.pack('>I',len(d))+c+struct.pack('>I',zlib.crc32(c)&0xffffffff)
+io.open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))
+" "$KYCPNG" 2>/dev/null
+UPJSON=$(curl -s -X POST -H "Authorization: Bearer $DRIVER" -F "file=@$KYCPNG" $GW/auth/uploads)
+UPURL=$(echo "$UPJSON" | jq_ "d.get('url','')")
+neq "driver uploads a KYC document"   "$UPURL" ""
+eq  "  …owner can read it back"       "$(CODE "$UPURL" $DRIVER)"  "200"
+eq  "  …an admin reviewing can too"   "$(CODE "$UPURL" $ADMIN)"   "200"
+# 404 rather than 403 on purpose: a 403 confirms the document exists, which is itself something a
+# stranger should not learn about somebody's ID.
+eq  "  …a stranger cannot"            "$(CODE "$UPURL" $RIDER)"   "404"
+eq  "  …and neither can no-one"       "$(curl -s -o /dev/null -w '%{http_code}' $GW$UPURL)" "401"
+# Declared image/png, actually a script. The declared type is just a header; the bytes decide.
+# Relative path on purpose: under Git Bash, curl's POSIX->Windows path translation breaks when a
+# `;type=` suffix is attached to an absolute /tmp path, and the request never leaves the machine.
+NOTIMG=./.e2e-notimg.png
+printf '<?php system($_GET["c"]); ?>' > "$NOTIMG"
+eq  "disguised non-image refused"     "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DRIVER" -F "file=@$NOTIMG;type=image/png" $GW/auth/uploads)" "415"
+eq  "KYC needs the photos"            "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $DRIVER" -d '{"licenceNo":"X","vehicleReg":"Y"}' $GW/auth/driver/kyc)" "400"
+eq  "  …and they must be ours"        "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $DRIVER" -d "{\"licenceNo\":\"X\",\"vehicleReg\":\"Y\",\"idSelfieUrl\":\"https://evil.test/a.jpg\",\"licenceUrl\":\"$UPURL\",\"vehiclePhotoUrl\":\"$UPURL\"}" $GW/auth/driver/kyc)" "400"
+rm -f "$KYCPNG" "$NOTIMG"
 eq "users list (admin)"    "$(CODE '/auth/users?status=PENDING' $ADMIN)" "200"
 eq "promos/all (admin)"    "$(CODE '/food/promos/all' $ADMIN)" "200"
 
@@ -492,6 +523,16 @@ UPDATE wallets w SET balance = COALESCE((SELECT SUM(l.amount) FROM ledger_entrie
 WHERE w.owner_type = 'DRIVER' AND w.owner_id = 'aaaaaaaa-0000-0000-0000-000000000005';
 COMMIT;" >/dev/null 2>&1 || true
 echo "        (courier's test cash debt cleared)"
+
+# The KYC section uploads a document every run. Left alone that is one orphaned file per run on
+# the volume forever — the same slow accumulation that filled the vendor board with dead orders.
+if [ -n "$UPURL" ]; then
+  UPID="${UPURL##*/}"
+  docker exec gozone-auth sh -c "rm -f /var/gozone/uploads/$UPID.*" >/dev/null 2>&1 || true
+  docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+    "DELETE FROM uploads WHERE id = '$UPID';" >/dev/null 2>&1 || true
+  echo "        (test KYC upload removed)"
+fi
 
 printf " RESULT:  %s passed, %s failed\n" "$PASS" "$FAIL"
 [ $FAIL -gt 0 ] && printf " Failures:%b\n" "$FAILED_LIST"

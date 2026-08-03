@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Redirect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { authApi, Kyc } from '../src/api/auth';
 import { useAuthStore } from '../src/store/authStore';
-import { useDriverSetup } from '../src/store/driverSetupStore';
+import { useDriverSetup, SetupDraft } from '../src/store/driverSetupStore';
+import { capturePhoto, uploadPhoto } from '../src/lib/photo';
 import { BrandScreen, GlowOrb, BrandInput, PillButton, GzHero } from '../src/components/brand';
 import { brand } from '../src/theme/tokens';
 
@@ -18,6 +19,31 @@ export default function DriverOnboarding() {
   const [goFeed, setGoFeed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  type DocKey = 'selfie' | 'licence' | 'vehicle' | 'roadworthy';
+  const FIELD: Record<DocKey, keyof SetupDraft> = {
+    selfie: 'idSelfieUrl', licence: 'licenceUrl', vehicle: 'vehiclePhotoUrl', roadworthy: 'roadworthyUrl',
+  };
+  const [busyDoc, setBusyDoc] = useState<DocKey | null>(null);
+  // Local thumbnails only — deliberately not persisted. A cached file URI from a previous session
+  // may no longer exist, and a broken image is worse than none.
+  const [previews, setPreviews] = useState<Partial<Record<DocKey, string>>>({});
+
+  async function pickDoc(key: DocKey, useCamera: boolean) {
+    setBusyDoc(key);
+    try {
+      const photo = await capturePhoto(useCamera);
+      if (!photo) return;                       // backed out, or permission refused
+      setPreviews((p) => ({ ...p, [key]: photo.uri }));
+      const url = await uploadPhoto(photo);
+      draft.set({ [FIELD[key]]: url } as Partial<SetupDraft>);
+    } catch (e: any) {
+      // Drop the preview again: showing a thumbnail for something the server rejected would tell
+      // the driver they are done when they are not.
+      setPreviews((p) => ({ ...p, [key]: undefined }));
+      Alert.alert('Upload failed', e?.response?.data?.message ?? 'Could not upload that photo. Please try again.');
+    } finally { setBusyDoc(null); }
+  }
 
   async function refresh() {
     const me = await authApi.me().catch(() => null);
@@ -46,13 +72,25 @@ export default function DriverOnboarding() {
     if (!draft.licenceNo.trim() || !draft.vehicleReg.trim()) {
       return Alert.alert('Almost there', 'Add your licence number and vehicle registration.');
     }
+    // Checked here as well as on the server, so the driver is told what is missing before a
+    // round-trip rather than after one.
+    const missing = [
+      !draft.idSelfieUrl && 'a photo of yourself',
+      !draft.licenceUrl && 'a photo of your driving licence',
+      !draft.vehiclePhotoUrl && 'a photo of your vehicle',
+    ].filter(Boolean) as string[];
+    if (missing.length) {
+      return Alert.alert('Photos needed', `Please add ${missing.join(', ')}.`);
+    }
     setSubmitting(true);
     try {
       await authApi.submitKyc({
         licenceNo: draft.licenceNo.trim(),
         vehicleReg: draft.vehicleReg.trim(),
-        roadworthyUrl: draft.roadworthyUrl,
+        roadworthyUrl: draft.roadworthyUrl || undefined,
         idSelfieUrl: draft.idSelfieUrl,
+        licenceUrl: draft.licenceUrl,
+        vehiclePhotoUrl: draft.vehiclePhotoUrl,
       });
       setView('awaiting');
     } catch (e: any) {
@@ -132,11 +170,27 @@ export default function DriverOnboarding() {
         <BrandInput label="Driver licence number" placeholder="GH-LIC-2025" value={draft.licenceNo} onChangeText={(v: string) => draft.set({ licenceNo: v })} autoCapitalize="characters" />
         <BrandInput label="Vehicle registration" placeholder="GR-1234-25" value={draft.vehicleReg} onChangeText={(v: string) => draft.set({ vehicleReg: v })} autoCapitalize="characters" />
 
-        <Text style={{ fontSize: 13, fontWeight: '700', color: brand.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 10 }}>Documents</Text>
-        <DocRow label="Roadworthy certificate" done={!!draft.roadworthyUrl}
-          onPress={() => draft.set({ roadworthyUrl: draft.roadworthyUrl ? '' : 'https://placeholder.example/kyc/roadworthy.pdf' })} />
-        <DocRow label="ID / selfie" done={!!draft.idSelfieUrl}
-          onPress={() => draft.set({ idSelfieUrl: draft.idSelfieUrl ? '' : 'https://placeholder.example/kyc/id-selfie.jpg' })} />
+        <Text style={{ fontSize: 13, fontWeight: '700', color: brand.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 }}>Photos</Text>
+        <Text style={{ fontSize: 12.5, color: brand.textMuted, marginBottom: 12, lineHeight: 18 }}>
+          An admin checks these before you can take trips. Make sure the licence is readable and
+          the number plate is visible.
+        </Text>
+        <PhotoRow label="Your photo" hint="A clear picture of your face"
+          url={draft.idSelfieUrl} preview={previews.selfie} busy={busyDoc === 'selfie'}
+          onPick={(cam) => pickDoc('selfie', cam)}
+          onClear={() => draft.set({ idSelfieUrl: '' })} />
+        <PhotoRow label="Driving licence" hint="All four corners in frame"
+          url={draft.licenceUrl} preview={previews.licence} busy={busyDoc === 'licence'}
+          onPick={(cam) => pickDoc('licence', cam)}
+          onClear={() => draft.set({ licenceUrl: '' })} />
+        <PhotoRow label="Your vehicle" hint="Show the number plate"
+          url={draft.vehiclePhotoUrl} preview={previews.vehicle} busy={busyDoc === 'vehicle'}
+          onPick={(cam) => pickDoc('vehicle', cam)}
+          onClear={() => draft.set({ vehiclePhotoUrl: '' })} />
+        <PhotoRow label="Roadworthy certificate" hint="Optional" optional
+          url={draft.roadworthyUrl} preview={previews.roadworthy} busy={busyDoc === 'roadworthy'}
+          onPick={(cam) => pickDoc('roadworthy', cam)}
+          onClear={() => draft.set({ roadworthyUrl: '' })} />
 
         <PillButton label={submitting ? 'Submitting…' : 'Submit for approval'} onPress={submit} loading={submitting} style={{ marginTop: 22 }} />
         <Text style={{ fontSize: 12, color: brand.textMuted, textAlign: 'center', marginTop: 12, lineHeight: 18 }}>
@@ -151,13 +205,56 @@ export default function DriverOnboarding() {
   );
 }
 
-function DocRow({ label, done, onPress }: { label: string; done: boolean; onPress: () => void }) {
+/**
+ * One document. Shows a thumbnail once uploaded, because "Uploaded ✓" next to a document you
+ * cannot see is how the placeholder version managed to look finished while holding nothing —
+ * seeing the actual photo is the only way a driver knows they photographed the right thing.
+ */
+function PhotoRow({ label, hint, url, preview, busy, optional, onPick, onClear }: {
+  label: string; hint: string; url: string; preview?: string; busy: boolean; optional?: boolean;
+  onPick: (useCamera: boolean) => void; onClear: () => void;
+}) {
+  const done = !!url;
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.85}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: done ? '#22c55e' : brand.borderSoft, backgroundColor: 'rgba(255,255,255,0.04)' }}>
-      <Ionicons name={done ? 'checkmark-circle' : 'cloud-upload-outline'} size={22} color={done ? '#22c55e' : brand.textMuted} />
-      <Text style={{ flex: 1, fontSize: 15, fontWeight: '600', color: brand.text }}>{label}</Text>
-      <Text style={{ fontSize: 13, fontWeight: '700', color: done ? '#22c55e' : brand.primary }}>{done ? 'Uploaded' : 'Upload'}</Text>
+    <View style={{ padding: 14, borderRadius: 16, marginBottom: 10, borderWidth: 1,
+                   borderColor: done ? '#22c55e' : brand.borderSoft, backgroundColor: 'rgba(255,255,255,0.04)' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        {preview ? (
+          // The freshly-picked local file, not a re-fetch: the served copy needs an auth header,
+          // which <Image> cannot send on web. On a resumed session there is no local file left,
+          // so a tick stands in rather than a broken thumbnail.
+          <Image source={{ uri: preview }}
+                 style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+        ) : (
+          <Ionicons name={done ? 'checkmark-circle' : 'camera-outline'} size={24}
+                    color={done ? '#22c55e' : brand.textMuted} />
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: brand.text }}>
+            {label}{optional ? '' : ' *'}
+          </Text>
+          <Text style={{ fontSize: 12, color: brand.textMuted, marginTop: 2 }}>
+            {busy ? 'Uploading…' : done ? 'Uploaded' : hint}
+          </Text>
+        </View>
+        {busy && <ActivityIndicator color={brand.textMuted} />}
+      </View>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+        <SmallBtn icon="camera" label={done ? 'Retake' : 'Take photo'} disabled={busy} onPress={() => onPick(true)} />
+        <SmallBtn icon="images-outline" label="Choose" disabled={busy} onPress={() => onPick(false)} />
+        {done && <SmallBtn icon="trash-outline" label="Remove" disabled={busy} danger onPress={onClear} />}
+      </View>
+    </View>
+  );
+}
+
+function SmallBtn({ icon, label, onPress, disabled, danger }: any) {
+  return (
+    <TouchableOpacity onPress={onPress} disabled={disabled} activeOpacity={0.8}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8,
+               borderRadius: 999, borderWidth: 1, borderColor: brand.borderSoft, opacity: disabled ? 0.5 : 1 }}>
+      <Ionicons name={icon} size={14} color={danger ? '#ef4444' : brand.textMuted} />
+      <Text style={{ fontSize: 12.5, fontWeight: '700', color: danger ? '#ef4444' : brand.text }}>{label}</Text>
     </TouchableOpacity>
   );
 }

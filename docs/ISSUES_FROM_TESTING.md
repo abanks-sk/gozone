@@ -3,7 +3,7 @@
 Raised by the user during the first real tap-through (see `TAP_THROUGH.md` for the run itself,
 where `[/]` means partly passing and `((notes))` are the user's own).
 
-**Status: A (A1–A7), B (B1–B3) and C2–C7 are fixed. Only C1 (unmock driver KYC) remains.** `dest` is still the `NO_DEST`
+**Status: every issue from the device tap-through — A (A1–A7), B (B1–B3), C (C1–C7) — is fixed.** `dest` is still the `NO_DEST`
 sentinel — converting it to a proper nullable type remains the right fix, and would have made A1 a
 compile error rather than a bug report. Ordered by cost-to-fix so a session can clear the cheap
 correctness bugs first and not stall on the feature work. Each entry says where to look, because
@@ -208,12 +208,52 @@ evidence either way. **The pull-down still needs a real device.**
 
 ---
 
-## C. Remaining — scope each before starting
+**C1. Unmock driver KYC.** — ✅ FIXED
+Documents were a hardcoded `https://placeholder.example/kyc/roadworthy.pdf` the app set on tap.
+Nothing was captured, nothing was sent, and the seed wrote the same placeholders — so an admin
+pressing **Approve** was approving a string. Now real photographs: **driver, licence, vehicle**.
 
-**C1. Unmock driver KYC.** Needs real uploads: driver photo, vehicle photo, licence. This is file
-storage (S3/Cloudinary or a served volume), an upload endpoint, and admin review UI showing the
-images. **The single biggest item on this list** — do not start it in the same session as anything
-else.
+**Storage — a served folder** (the user's choice over object storage: no third-party account or
+credentials needed). Files live on a **Docker named volume** (`kyc_uploads` → `/var/gozone/uploads`).
+That is not incidental: auth-service is rebuilt constantly, and written into the container's own
+filesystem every driver's documents would be destroyed by the next build. Verified by destroying
+and recreating the container — the files survived.
+
+**Three ways this could leak, all closed:**
+1. **The filename** is generated server-side and never taken from the client — an uploaded name is
+   attacker-controlled and `../../application.yml` is the first thing anyone tries.
+2. **The content** is sniffed by magic bytes; the declared `Content-Type` is just a header. A PHP
+   payload named `.png` and declared `image/png` is refused **415** (verified).
+3. **The reader** is checked against the recorded owner. Owner **200**, admin **200**, another
+   user **404**, no token **401** (all verified). 404 rather than 403 on purpose — a 403 confirms
+   the document exists, which is itself something a stranger should not learn about someone's ID.
+
+Backend: **V6** adds an `uploads` table (the row is the access-control list; the folder is only
+bytes) plus `driver_kyc.licence_url` / `vehicle_photo_url`. `POST /auth/uploads` (multipart, 6 MB)
+and `GET /auth/uploads/{id}`. Submission now **requires** the three photos and rejects any URL
+that is not one of ours — otherwise a driver could point at an image whose contents change after
+review. `KycResponse` gained the driver's name and phone, because the admin list showed a
+truncated UUID and you cannot verify an identity against an id fragment.
+
+Driver app: `expo-image-picker` (lazily imported — a top-level Expo native import has crashed
+Expo Go startup before), camera or library, compressed to 60% on device. Each row shows the
+photo you just took; on a resumed session a tick stands in, because the served copy needs an auth
+header that `<Image>` cannot send on web. Admin web: the images render in the review page via an
+authenticated blob fetch, click to enlarge.
+
+⚠️ **Adds `expo-image-picker` to driver-app — run `npm install` there.**
+⚠️ **Not device-verified**: the camera, the picker and the upload from a real phone all need a
+tap-through. The API is verified end to end with curl.
+
+---
+
+## C. Remaining
+
+Nothing. Every item raised in the tap-through is implemented.
+
+What is *not* done is **device verification** — most of these are phone-side and only the handset
+can clear them. `TAP_THROUGH.md` is the list, and the sections added for A4/A5, B1–B3 and C1–C7
+each say what the old broken behaviour was, so a real fix can be told apart from a coincidence.
 
 ---
 
@@ -225,9 +265,10 @@ else.
    `TAP_THROUGH.md` (prep time, leave time) is now testable and should be run.
 3. ~~**C6, C2, C3, C4, C7** — grouped; C6 first since it touches every form.~~ **DONE**, and
    **C5** with them (the pull-down map).
-4. **C1** — on its own, with storage decided up front.
+4. ~~**C1** — on its own, with storage decided up front.~~ **DONE** (served folder on a
+   Docker volume).
 
-Re-run `scripts/e2e.sh` (**135/135** after the A and B batches — the suite gained a "6c. COLLECTION
+Re-run `scripts/e2e.sh` (**148/148** after the A and B batches — the suite gained a "6c. COLLECTION
 ESTIMATE" section that winds `preparing_at` back ten minutes and asserts the figure actually drops,
 plus the awaiting-class list) after each backend change, and re-run the relevant `TAP_THROUGH.md`
 section after each front-end one.

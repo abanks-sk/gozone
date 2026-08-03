@@ -26,8 +26,17 @@ public class DriverKyc {
     @Column(name = "roadworthy_url")
     private String roadworthyUrl;
 
+    /** The driver's own photograph. Column predates the rename; this is their face. */
     @Column(name = "id_selfie_url")
     private String idSelfieUrl;
+
+    /** Photograph of the driving licence. */
+    @Column(name = "licence_url")
+    private String licenceUrl;
+
+    /** Photograph of the vehicle. */
+    @Column(name = "vehicle_photo_url")
+    private String vehiclePhotoUrl;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -55,6 +64,10 @@ public class DriverKyc {
     public void setRoadworthyUrl(String roadworthyUrl) { this.roadworthyUrl = roadworthyUrl; }
     public String getIdSelfieUrl() { return idSelfieUrl; }
     public void setIdSelfieUrl(String idSelfieUrl) { this.idSelfieUrl = idSelfieUrl; }
+    public String getLicenceUrl() { return licenceUrl; }
+    public void setLicenceUrl(String licenceUrl) { this.licenceUrl = licenceUrl; }
+    public String getVehiclePhotoUrl() { return vehiclePhotoUrl; }
+    public void setVehiclePhotoUrl(String vehiclePhotoUrl) { this.vehiclePhotoUrl = vehiclePhotoUrl; }
     public KycStatus getStatus() { return status; }
     public void setStatus(KycStatus status) { this.status = status; }
     public UUID getReviewedBy() { return reviewedBy; }

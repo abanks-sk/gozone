@@ -1,7 +1,7 @@
 # Device tap-through checklist
 
 Everything here is **unverified by any automated test** and can only be cleared on a real device.
-The e2e suite (140/140) covers the backend; these are the phone-side behaviours it cannot reach —
+The e2e suite (148/148) covers the backend; these are the phone-side behaviours it cannot reach —
 React Native Web ignores synthetic clicks, so none of this has ever been seen running.
 
 Work top to bottom. **§1 first** — if the app red-screens on launch nothing else is testable.
@@ -281,6 +281,42 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 
 ---
 
+## 13. Driver KYC — real documents (C1)
+
+> The API is curl-verified end to end (upload, sniffing, access control, submission guards). What
+> needs a phone is the camera, the picker and the upload over a mobile connection.
+> **Run `npm install` in `driver-app` first** — it needs `expo-image-picker`.
+
+**As a new driver:**
+
+- [ ] Sign up a driver and reach "Finish your setup". Four rows: your photo, licence, vehicle,
+      roadworthy (optional) ← these were fake "Upload" taps that set a placeholder string
+- [ ] **Take photo** opens the camera; **Choose** opens the library. Denying permission returns
+      quietly rather than hanging or crashing
+- [ ] After picking, the row shows **your actual photo** as a thumbnail and says "Uploaded"
+- [ ] **Remove** clears it; retaking replaces it
+- [ ] Submitting with a photo missing is refused, naming the one that's missing
+- [ ] Submit with all three → "Application submitted"
+- [ ] Force-close and reopen the app mid-setup: text fields and uploaded documents survive; the
+      thumbnails become ticks (the local file is gone, the upload is not) — this is expected
+
+**As an admin:**
+
+- [ ] Admin web → Driver KYC → Pending shows the driver by **name and phone**, not a UUID
+- [ ] All three photographs render. Click one — it opens full size, readable enough to check a
+      licence ← the page previously showed no images at all
+- [ ] The seeded drivers show "Not provided" (they were verified before documents were real —
+      that is honest, not a bug)
+- [ ] Approve → the driver's app moves on by itself
+
+**Worth confirming once, because it is the design's load-bearing claim:**
+
+- [ ] `docker compose build auth-service && docker compose up -d auth-service`, then re-open a
+      KYC record — **the images are still there.** They live on a named volume; anywhere else and
+      a rebuild would destroy every driver's documents
+
+---
+
 ## Known-bad, do not raise as bugs
 
 - **Push banners do not appear in Expo Go** (SDK 53+). Notifications land in the in-app list; the
@@ -313,9 +349,8 @@ Run by the user; findings triaged in **`ISSUES_FROM_TESTING.md`** — 17 issues.
 (driver) are largely **untested** because earlier failures blocked them — they are still open, not
 passing.
 
-**Since that run:** sections **A and B are fixed**, and **C2–C7** with them — only **C1**
-(unmock driver KYC) remains.
-`scripts/e2e.sh` is **140/140** against the rebuilt stack and now guards the new behaviour
+**Since that run:** **every issue raised is now implemented** — A (A1–A7), B (B1–B3) and C (C1–C7).
+`scripts/e2e.sh` is **148/148** against the rebuilt stack and now guards the new behaviour
 directly: the collection estimate counts down, the awaiting-class list works, and a delivery keeps
 both of its endpoints as coordinates.
 
@@ -323,5 +358,5 @@ Verified against the running stack: A6, A7, B1 (the API was never broken — the
 B3's backend. Only checkable on a phone, so **still open**: A4, A5 (splash appearance), B1's
 front-end path, B2 (feed states), B3's map. New checks for all of them are in the sections above.
 
-**C1 is the remaining work** — unmocking driver KYC, which needs the file-storage decision
-made up front.
+**Nothing is left to build from that run.** What remains is *this document*: most of these fixes
+are phone-side and only a real device can clear them. Work through it top to bottom.

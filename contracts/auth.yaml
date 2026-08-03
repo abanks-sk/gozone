@@ -303,6 +303,76 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /uploads:
+    post:
+      tags: [kyc]
+      summary: Upload a KYC document
+      description: >
+        Multipart image upload. The declared Content-Type is ignored — the bytes are sniffed and
+        only real JPEG, PNG or WebP is accepted, because "profile.jpg" containing a script is the
+        obvious attack on a folder that later serves files back. The stored filename is generated
+        server-side and never derived from the client's, which is what makes path traversal
+        impossible. Max 6 MB (`app.uploads.max-bytes`).
+        Returns a **relative** URL: the app already knows the gateway address and it changes with
+        the network, so an absolute URL would pin a driver's documents to whatever host the server
+        had the day they signed up.
+      operationId: uploadDocument
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:  { type: string, format: uuid }
+                  url: { type: string, example: /auth/uploads/6f1c… }
+        '413':
+          description: Image too large
+        '415':
+          description: Not a JPEG, PNG or WebP once the bytes are inspected
+
+  /uploads/{id}:
+    get:
+      tags: [kyc]
+      summary: Fetch an uploaded document
+      description: >
+        Served only to the uploader or to an ADMIN/SUPER_ADMIN. These are identity documents, so
+        holding the URL is deliberately **not** the same as being allowed to read it — a link can
+        end up in a log, a screenshot or a forwarded message.
+        A caller who is not entitled gets **404, not 403**: a 403 would confirm the document
+        exists, which is itself something a stranger should not learn about someone's ID.
+      operationId: getUpload
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The image
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png:  { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '404':
+          description: No such document, or not yours
+
   /users/awaiting-class:
     get:
       tags: [admin]
@@ -698,6 +768,13 @@ components:
 
     KycSubmitRequest:
       type: object
+      required: [idSelfieUrl, licenceUrl, vehiclePhotoUrl]
+      description: >
+        The three photographs are required, and each must be a path returned by POST /uploads.
+        They were optional and in practice hardcoded placeholder strings the app never sent, so
+        an admin pressing Approve was approving a URL that pointed at nothing. An off-platform
+        link is refused too — otherwise a submission could point at a URL whose contents change
+        after review.
       properties:
         licenceNo:
           type: string
@@ -705,8 +782,17 @@ components:
           type: string
         roadworthyUrl:
           type: string
+          nullable: true
+          description: Optional certificate.
         idSelfieUrl:
           type: string
+          description: The driver's own photograph. Must start with /auth/uploads/.
+        licenceUrl:
+          type: string
+          description: Photograph of the driving licence. Must start with /auth/uploads/.
+        vehiclePhotoUrl:
+          type: string
+          description: Photograph of the vehicle. Must start with /auth/uploads/.
 
     KycReviewRequest:
       type: object
@@ -735,6 +821,30 @@ components:
           type: string
         vehicleReg:
           type: string
+        driverName:
+          type: string
+          nullable: true
+          description: >
+            Included because the admin list previously showed a truncated UUID — you cannot verify
+            somebody's identity documents while looking at an id fragment.
+        driverPhone:
+          type: string
+          nullable: true
+        idSelfieUrl:
+          type: string
+          nullable: true
+          description: >
+            Relative path to the document. Fetching it still requires being that driver or an
+            admin, so returning it here does not widen access.
+        licenceUrl:
+          type: string
+          nullable: true
+        vehiclePhotoUrl:
+          type: string
+          nullable: true
+        roadworthyUrl:
+          type: string
+          nullable: true
 
     ErrorResponse:
       type: object

@@ -495,7 +495,14 @@ public class AuthService {
         return username;
     }
 
-    /** Driver submits KYC document references. */
+    /**
+     * Driver submits their KYC documents.
+     *
+     * The three photographs are **required**. They used to be optional, and in practice they were
+     * hardcoded placeholder strings the app never actually sent — so an admin pressing Approve was
+     * approving a URL that pointed at nothing. There is no point reviewing an identity you cannot
+     * see, so a submission without them is refused rather than quietly queued.
+     */
     public KycResponse submitKyc(String userId, KycSubmitRequest req) {
         User user = userRepo.findById(UUID.fromString(userId))
             .orElseThrow(() -> new IllegalStateException("User not found"));
@@ -504,15 +511,42 @@ public class AuthService {
             throw new AccessDeniedException("Only DRIVER accounts can submit KYC");
         }
 
+        requireDoc(req.getIdSelfieUrl(), "a photo of yourself");
+        requireDoc(req.getLicenceUrl(), "a photo of your driving licence");
+        requireDoc(req.getVehiclePhotoUrl(), "a photo of your vehicle");
+
         DriverKyc kyc = new DriverKyc();
         kyc.setUser(user);
         kyc.setLicenceNo(req.getLicenceNo());
         kyc.setVehicleReg(req.getVehicleReg());
         kyc.setRoadworthyUrl(req.getRoadworthyUrl());
         kyc.setIdSelfieUrl(req.getIdSelfieUrl());
+        kyc.setLicenceUrl(req.getLicenceUrl());
+        kyc.setVehiclePhotoUrl(req.getVehiclePhotoUrl());
         kycRepo.save(kyc);
+        log.info("[KYC] {} submitted by driver {}", kyc.getId(), userId);
 
         return toKycResponse(kyc);
+    }
+
+    /**
+     * A document reference must be one of ours.
+     *
+     * Rejecting anything that is not an `/auth/uploads/...` path is the point: without it a driver
+     * could submit a link to any image anywhere, which is exactly the placeholder-URL problem this
+     * replaced — and it would let a submission point at a URL whose contents can change after
+     * review.
+     */
+    private void requireDoc(String url, String what) {
+        if (url == null || url.isBlank()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "Please add " + what + ".");
+        }
+        if (!url.startsWith("/auth/uploads/")) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                "Documents must be uploaded through the app.");
+        }
     }
 
     /** A driver's own latest KYC submission (null if they haven't submitted yet). */
@@ -777,12 +811,19 @@ public class AuthService {
     }
 
     private KycResponse toKycResponse(DriverKyc kyc) {
+        User u = kyc.getUser();
         return new KycResponse(
             kyc.getId(),
-            kyc.getUser().getId(),
+            u.getId(),
             kyc.getStatus().name(),
             kyc.getLicenceNo(),
-            kyc.getVehicleReg()
+            kyc.getVehicleReg(),
+            u.getName(),
+            u.getPhone(),
+            kyc.getIdSelfieUrl(),
+            kyc.getLicenceUrl(),
+            kyc.getVehiclePhotoUrl(),
+            kyc.getRoadworthyUrl()
         );
     }
 }

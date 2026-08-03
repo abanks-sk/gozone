@@ -22,6 +22,9 @@ export const authApi = {
   // Returns null when the driver hasn't submitted KYC yet (endpoint returns empty 200).
   myKyc: () => api.get<Kyc>('/auth/driver/kyc/mine').then((r) => r.data || null).catch(() => null),
 
-  submitKyc: (body: { licenceNo: string; vehicleReg: string; roadworthyUrl: string; idSelfieUrl: string }) =>
+  submitKyc: (body: {
+    licenceNo: string; vehicleReg: string; roadworthyUrl?: string;
+    idSelfieUrl: string; licenceUrl: string; vehiclePhotoUrl: string;
+  }) =>
     api.post<Kyc>('/auth/driver/kyc', body).then((r) => r.data),
 };

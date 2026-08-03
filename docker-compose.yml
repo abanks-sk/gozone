@@ -81,6 +81,12 @@ services:
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
       TWILIO_FROM: ${TWILIO_FROM:-}
+      UPLOAD_DIR: /var/gozone/uploads
+    volumes:
+      # KYC documents live on a named volume, NOT in the container's own filesystem.
+      # This service is rebuilt constantly; written anywhere else, every driver's licence and
+      # photograph would be destroyed by the next `docker compose build auth-service`.
+      - kyc_uploads:/var/gozone/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -187,3 +193,6 @@ services:
 
 volumes:
   postgres_data:
+  # Driver KYC documents. Survives rebuilds of auth-service by design — see the note on the
+  # service's volume mount. Backing this up is backing up people's identity documents.
+  kyc_uploads:
