@@ -26,7 +26,9 @@ export default function Login() {
   async function verify() {
     setError(''); setLoading(true);
     try {
-      const { data } = await api.post('/auth/verify-otp', { phone, code: code.trim() });
+      // Accounts are scoped to an app, so say which one. An admin whose number is also a passenger
+      // account would otherwise be ambiguous at the point of verifying.
+      const { data } = await api.post('/auth/verify-otp', { phone, code: code.trim(), app: 'ADMIN' });
       if (data.role !== 'ADMIN' && data.role !== 'SUPER_ADMIN') {
         clearAuth();
         setError('This account is not an administrator.');

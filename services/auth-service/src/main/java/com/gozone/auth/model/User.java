@@ -12,19 +12,30 @@ public class User {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    /** Phone identity — null for email-only accounts. */
-    @Column(unique = true, length = 20)
+    /**
+     * Which app this account belongs to.
+     *
+     * Identity is scoped to it: phone, email and username are unique within an app, not across the
+     * platform. One person can therefore hold a passenger account and a driver account on the same
+     * number, and they are genuinely separate accounts — separate names, separate approval.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private App app;
+
+    /** Phone identity — null for email-only accounts. Unique per {@link #app}. */
+    @Column(length = 20)
     private String phone;
 
-    /** Email identity — null for phone-only accounts. */
-    @Column(unique = true, length = 255)
+    /** Email identity — null for phone-only accounts. Unique per {@link #app}. */
+    @Column(length = 255)
     private String email;
 
     @Column(length = 100)
     private String name;
 
-    /** Admin login handle — null for OTP (phone) users. */
-    @Column(unique = true, length = 50)
+    /** Admin login handle — null for OTP (phone) users. Unique per {@link #app}. */
+    @Column(length = 50)
     private String username;
 
     /** BCrypt hash — admins only; null for OTP users. */
@@ -56,7 +67,40 @@ public class User {
     public enum VehicleClass { OKADA, STANDARD, LUXE, CARGO }
     public enum ServiceMode { RIDES, DELIVERIES, BOTH }
 
+    /** The four front-ends. COURIER lives in DRIVER — same app, same person, parcel instead of passenger. */
+    public enum App {
+        PASSENGER(Role.RIDER),
+        DRIVER(Role.DRIVER, Role.COURIER),
+        VENDOR(Role.RESTAURANT_OWNER),
+        // Deliberately empty: an admin is never self-registered. Only a SUPER_ADMIN can create one,
+        // through POST /auth/admins.
+        ADMIN;
+
+        private final java.util.Set<Role> selfSignupRoles;
+
+        App(Role... roles) {
+            this.selfSignupRoles = java.util.Set.of(roles);
+        }
+
+        /** Roles this app is allowed to create through the public sign-up endpoints. */
+        public boolean allowsSelfSignup(Role role) {
+            return selfSignupRoles.contains(role);
+        }
+
+        /** The app a role belongs to — used to place accounts created before apps were separated. */
+        public static App of(Role role) {
+            return switch (role) {
+                case RIDER -> PASSENGER;
+                case DRIVER, COURIER -> DRIVER;
+                case RESTAURANT_OWNER -> VENDOR;
+                case ADMIN, SUPER_ADMIN -> ADMIN;
+            };
+        }
+    }
+
     public UUID getId() { return id; }
+    public App getApp() { return app; }
+    public void setApp(App app) { this.app = app; }
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
     public String getEmail() { return email; }

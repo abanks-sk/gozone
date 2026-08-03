@@ -35,12 +35,13 @@ public class SeedRunner implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        if (userRepo.findByUsername("superadmin").isEmpty()
-                && !userRepo.existsByPhone("+233201000000")) {
+        if (userRepo.findByUsernameAndApp("superadmin", User.App.ADMIN).isEmpty()
+                && !userRepo.existsByPhoneAndApp("+233201000000", User.App.ADMIN)) {
             boolean generated = superAdminPassword == null || superAdminPassword.isBlank();
             String password = generated ? randomPassword() : superAdminPassword;
 
             User u = new User();
+            u.setApp(User.App.ADMIN);
             u.setName("Super Admin");
             u.setUsername("superadmin");
             u.setPasswordHash(new BCryptPasswordEncoder().encode(password));

@@ -9,12 +9,26 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface UserRepository extends JpaRepository<User, UUID> {
-    Optional<User> findByPhone(String phone);
-    boolean existsByPhone(String phone);
-    Optional<User> findByEmail(String email);
-    boolean existsByEmail(String email);
-    Optional<User> findByUsername(String username);
-    boolean existsByUsername(String username);
+
+    // Identity is scoped to an app: the same number can be a passenger here and a driver there, so
+    // every lookup that used to key on a phone, email or username alone now needs the app with it.
+
+    Optional<User> findByPhoneAndApp(String phone, User.App app);
+    boolean existsByPhoneAndApp(String phone, User.App app);
+    Optional<User> findByEmailAndApp(String email, User.App app);
+    boolean existsByEmailAndApp(String email, User.App app);
+    Optional<User> findByUsernameAndApp(String username, User.App app);
+    boolean existsByUsernameAndApp(String username, User.App app);
+
+    /**
+     * Every account on a number, across apps.
+     *
+     * Used when a client signs in without naming its app: one match is unambiguous, several mean
+     * the caller has to say which. Ordered so the choice is at least stable.
+     */
+    List<User> findByPhoneOrderByCreatedAtAsc(String phone);
+    List<User> findByEmailOrderByCreatedAtAsc(String email);
+
     List<User> findByStatusOrderByCreatedAtDesc(User.Status status);
 
     /**

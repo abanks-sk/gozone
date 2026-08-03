@@ -12,6 +12,16 @@ public class OtpCode {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /**
+     * Which app's account this code signs in to.
+     *
+     * A number can belong to a passenger account and a driver account at once, so "the newest
+     * unconsumed code for this phone" stopped identifying anybody on its own.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private User.App app;
+
     /** Either phone or email is set, matching how the OTP was requested. */
     @Column(length = 20)
     private String phone;
@@ -32,6 +42,8 @@ public class OtpCode {
     private int attempts = 0;
 
     public UUID getId() { return id; }
+    public User.App getApp() { return app; }
+    public void setApp(User.App app) { this.app = app; }
     public int getAttempts() { return attempts; }
     public void setAttempts(int attempts) { this.attempts = attempts; }
     public String getPhone() { return phone; }

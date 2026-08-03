@@ -152,7 +152,7 @@ public class AuthController {
     @PostMapping("/login-email-password")
     public ResponseEntity<TokenResponse> loginEmailPassword(@RequestBody Map<String, String> body) {
         return ResponseEntity.ok(authService.loginEmailPassword(
-            body.get("email"), body.get("password")));
+            body.get("email"), body.get("password"), body.get("app")));
     }
 
     // ── Admin auth + management ─────────────────────────────────────────────────

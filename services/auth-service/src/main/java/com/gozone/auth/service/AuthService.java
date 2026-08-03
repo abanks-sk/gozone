@@ -74,20 +74,26 @@ public class AuthService {
         }
 
         String phone = requireValidGhanaPhone(normalizePhone(req.getPhone()));
+        User.App app = appForSignup(req.getApp(), role);
+        requireSelfSignupAllowed(app, role);
 
-        // Sign-up only: a phone that already has an account must log in, not re-register
-        // (otherwise "Create account" with an existing number silently logs into that account).
-        if (userRepo.existsByPhone(phone)) {
+        // Sign-up only: a phone that already has an account **in this app** must log in, not
+        // re-register (otherwise "Create account" with an existing number silently logs into that
+        // account). The same number in a different app is somebody's separate account and no
+        // obstacle at all — refusing it was what left a would-be driver waiting for a code that
+        // was never sent.
+        if (userRepo.existsByPhoneAndApp(phone, app)) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT, "An account with this number already exists. Please log in.");
         }
 
-        // Username is chosen at sign-up and must be unique across all accounts.
+        // Username is chosen at sign-up and must be unique within the app.
         String username = req.getUsername() == null || req.getUsername().isBlank()
             ? null
-            : requireAvailableUsername(req.getUsername(), null);
+            : requireAvailableUsername(req.getUsername(), null, app);
 
         User user = new User();
+        user.setApp(app);
         user.setPhone(phone);
         user.setRole(role);
         if (username != null) {
@@ -106,21 +112,21 @@ public class AuthService {
         }
         userRepo.save(user);
 
-        issueOtp(phone);
+        issueOtp(phone, app);
         return new RegisterResponse(phone, "OTP sent (see server logs in dev)");
     }
 
     /**
-     * Login (phone-only): issue an OTP only if this phone already has an account.
-     * Unlike {@link #register}, this never creates a user — an unknown number is a 404.
+     * Login (phone-only): issue an OTP only if this phone already has an account in the app that
+     * is asking. Unlike {@link #register}, this never creates a user — an unknown number is a 404.
+     *
+     * Scoping to the app is what stops a passenger's number signing straight into the driver app,
+     * which it previously did because the only check was whether the number existed anywhere.
      */
     public RegisterResponse login(LoginRequest req) {
         String phone = requireValidGhanaPhone(normalizePhone(req.getPhone()));
-        if (!userRepo.existsByPhone(phone)) {
-            throw new ResponseStatusException(
-                HttpStatus.NOT_FOUND, "No account found for this number. Please sign up.");
-        }
-        issueOtp(phone);
+        User user = resolveByPhone(phone, req.getApp(), "No account found for this number. Please sign up.");
+        issueOtp(phone, user.getApp());
         return new RegisterResponse(phone, "OTP sent (see server logs in dev)");
     }
 
@@ -134,12 +140,16 @@ public class AuthService {
         }
 
         String email = normalizeEmail(req.getEmail());
-        if (userRepo.existsByEmail(email)) {
+        User.App app = appForSignup(req.getApp(), role);
+        requireSelfSignupAllowed(app, role);
+
+        if (userRepo.existsByEmailAndApp(email, app)) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT, "An account with this email already exists. Please log in.");
         }
 
         User user = new User();
+        user.setApp(app);
         user.setEmail(email);
         user.setRole(role);
         if (req.getName() != null && !req.getName().isBlank()) {
@@ -154,18 +164,15 @@ public class AuthService {
         }
         userRepo.save(user);
 
-        issueEmailOtp(email);
+        issueEmailOtp(email, app);
         return new RegisterResponse(email, "OTP sent (see server logs in dev)");
     }
 
-    /** Email login: issue an OTP only if this email already has an account. */
+    /** Email login: issue an OTP only if this email already has an account in the asking app. */
     public RegisterResponse loginEmail(EmailLoginRequest req) {
         String email = normalizeEmail(req.getEmail());
-        if (!userRepo.existsByEmail(email)) {
-            throw new ResponseStatusException(
-                HttpStatus.NOT_FOUND, "No account found for this email. Please sign up.");
-        }
-        issueEmailOtp(email);
+        User user = resolveByEmail(email, req.getApp(), "No account found for this email. Please sign up.");
+        issueEmailOtp(email, user.getApp());
         return new RegisterResponse(email, "OTP sent (see server logs in dev)");
     }
 
@@ -173,19 +180,29 @@ public class AuthService {
     public TokenResponse verifyOtp(VerifyOtpRequest req) {
         boolean byEmail = req.getEmail() != null && !req.getEmail().isBlank();
 
+        // The code carries the app it was issued for, so it identifies the account on its own —
+        // which matters now that one number can have several. A client that names its app gets the
+        // code for that app; one that does not is resolved from the newest pending code, since it
+        // can only be holding a code that was actually sent to it.
+        User.App asked = parseApp(req.getApp());
+
         OtpCode otp;
         User user;
         if (byEmail) {
             String email = normalizeEmail(req.getEmail());
-            otp = otpRepo.findTopByEmailAndConsumedAtIsNullOrderByExpiresAtDesc(email)
+            otp = (asked != null
+                    ? otpRepo.findTopByEmailAndAppAndConsumedAtIsNullOrderByExpiresAtDesc(email, asked)
+                    : otpRepo.findTopByEmailAndConsumedAtIsNullOrderByExpiresAtDesc(email))
                 .orElseThrow(() -> new IllegalStateException("No pending OTP for this email"));
-            user = userRepo.findByEmail(email)
+            user = userRepo.findByEmailAndApp(email, otp.getApp())
                 .orElseThrow(() -> new IllegalStateException("User not found for email " + email));
         } else {
             String phone = normalizePhone(req.getPhone());
-            otp = otpRepo.findTopByPhoneAndConsumedAtIsNullOrderByExpiresAtDesc(phone)
+            otp = (asked != null
+                    ? otpRepo.findTopByPhoneAndAppAndConsumedAtIsNullOrderByExpiresAtDesc(phone, asked)
+                    : otpRepo.findTopByPhoneAndConsumedAtIsNullOrderByExpiresAtDesc(phone))
                 .orElseThrow(() -> new IllegalStateException("No pending OTP for this phone"));
-            user = userRepo.findByPhone(phone)
+            user = userRepo.findByPhoneAndApp(phone, otp.getApp())
                 .orElseThrow(() -> new IllegalStateException("User not found for phone " + phone));
         }
 
@@ -250,18 +267,23 @@ public class AuthService {
     public Map<String, Object> googleSignIn(String idToken, String roleRaw) {
         GoogleTokenVerifier.GoogleUser g = googleVerifier.verify(idToken);
 
-        User user = userRepo.findByEmail(g.email()).orElse(null);
-        if (user == null) {
-            User.Role role;
-            try {
-                role = User.Role.valueOf((roleRaw == null || roleRaw.isBlank() ? "RIDER" : roleRaw).toUpperCase());
-            } catch (IllegalArgumentException e) {
-                role = User.Role.RIDER;
-            }
-            // Never let Google sign-up mint privileged accounts.
-            if (role == User.Role.ADMIN || role == User.Role.SUPER_ADMIN) role = User.Role.RIDER;
+        User.Role role;
+        try {
+            role = User.Role.valueOf((roleRaw == null || roleRaw.isBlank() ? "RIDER" : roleRaw).toUpperCase());
+        } catch (IllegalArgumentException e) {
+            role = User.Role.RIDER;
+        }
+        // Never let Google sign-up mint privileged accounts.
+        if (role == User.Role.ADMIN || role == User.Role.SUPER_ADMIN) role = User.Role.RIDER;
 
+        // The role names the app, and identity is scoped to it: signing in with Google on the
+        // driver app must not find (or create) the passenger account on the same address.
+        User.App app = User.App.of(role);
+
+        User user = userRepo.findByEmailAndApp(g.email(), app).orElse(null);
+        if (user == null) {
             user = new User();
+            user.setApp(app);
             user.setEmail(g.email());
             if (g.name() != null && !g.name().isBlank()) user.setName(g.name().trim());
             user.setRole(role);
@@ -290,12 +312,12 @@ public class AuthService {
         User user = userRepo.findById(UUID.fromString(userId))
             .orElseThrow(() -> new IllegalStateException("User not found"));
         String phone = requireValidGhanaPhone(normalizePhone(phoneRaw));
-        userRepo.findByPhone(phone).ifPresent(other -> {
+        userRepo.findByPhoneAndApp(phone, user.getApp()).ifPresent(other -> {
             if (!other.getId().equals(user.getId())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "That number is already in use.");
             }
         });
-        issueOtp(phone);
+        issueOtp(phone, user.getApp());
         return new RegisterResponse(phone, "Verification code sent by SMS");
     }
 
@@ -304,12 +326,12 @@ public class AuthService {
         User user = userRepo.findById(UUID.fromString(userId))
             .orElseThrow(() -> new IllegalStateException("User not found"));
         String phone = requireValidGhanaPhone(normalizePhone(phoneRaw));
-        userRepo.findByPhone(phone).ifPresent(other -> {
+        userRepo.findByPhoneAndApp(phone, user.getApp()).ifPresent(other -> {
             if (!other.getId().equals(user.getId())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "That number is already in use.");
             }
         });
-        OtpCode otp = otpRepo.findTopByPhoneAndConsumedAtIsNullOrderByExpiresAtDesc(phone)
+        OtpCode otp = otpRepo.findTopByPhoneAndAppAndConsumedAtIsNullOrderByExpiresAtDesc(phone, user.getApp())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "No pending code for this number."));
         consumeOrFail(otp, code);
 
@@ -337,7 +359,7 @@ public class AuthService {
         if (password == null || password.length() < 6) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters.");
         }
-        userRepo.findByEmail(normalized).ifPresent(other -> {
+        userRepo.findByEmailAndApp(normalized, user.getApp()).ifPresent(other -> {
             if (!other.getId().equals(user.getId())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "That email is already in use.");
             }
@@ -347,7 +369,7 @@ public class AuthService {
         user.setPasswordHash(encoder.encode(password));
         userRepo.save(user);
 
-        issueEmailOtp(normalized);
+        issueEmailOtp(normalized, user.getApp());
         return new RegisterResponse(normalized, "Verification code sent to your email");
     }
 
@@ -357,13 +379,13 @@ public class AuthService {
             .orElseThrow(() -> new IllegalStateException("User not found"));
 
         String normalized = normalizeEmail(email);
-        userRepo.findByEmail(normalized).ifPresent(other -> {
+        userRepo.findByEmailAndApp(normalized, user.getApp()).ifPresent(other -> {
             if (!other.getId().equals(user.getId())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "That email is already in use.");
             }
         });
 
-        OtpCode otp = otpRepo.findTopByEmailAndConsumedAtIsNullOrderByExpiresAtDesc(normalized)
+        OtpCode otp = otpRepo.findTopByEmailAndAppAndConsumedAtIsNullOrderByExpiresAtDesc(normalized, user.getApp())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "No pending code for this email."));
         consumeOrFail(otp, code);
 
@@ -374,9 +396,11 @@ public class AuthService {
     }
 
     /** Email + password login — only works once the email has been verified. */
-    public TokenResponse loginEmailPassword(String email, String password) {
+    public TokenResponse loginEmailPassword(String email, String password, String appRaw) {
         String normalized = normalizeEmail(email);
-        User user = userRepo.findByEmail(normalized)
+        // Same "wrong credentials" answer whether the account is missing, in another app, or the
+        // password is wrong — the failure must not reveal which accounts exist where.
+        User user = findForPasswordLogin(normalized, appRaw)
             .orElseThrow(() -> new AccessDeniedException("Invalid email or password"));
         if (user.getPasswordHash() == null || password == null
                 || !encoder.matches(password, user.getPasswordHash())) {
@@ -464,7 +488,7 @@ public class AuthService {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "An admin username can only be changed by a super admin.");
             }
-            user.setUsername(requireAvailableUsername(req.getUsername(), user.getId()));
+            user.setUsername(requireAvailableUsername(req.getUsername(), user.getId(), user.getApp()));
         }
 
         userRepo.save(user);
@@ -477,7 +501,7 @@ public class AuthService {
      * {@code selfId} is the account being edited — its own current username doesn't count
      * as taken — or null at sign-up.
      */
-    private String requireAvailableUsername(String raw, UUID selfId) {
+    private String requireAvailableUsername(String raw, UUID selfId, User.App app) {
         String username = raw == null ? "" : raw.trim().toLowerCase();
         if (username.length() < 3) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Username must be at least 3 characters.");
@@ -486,7 +510,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Use only letters, numbers, dots and underscores.");
         }
-        boolean taken = userRepo.findByUsername(username)
+        boolean taken = userRepo.findByUsernameAndApp(username, app)
             .map(other -> selfId == null || !other.getId().equals(selfId))
             .orElse(false);
         if (taken) {
@@ -586,7 +610,7 @@ public class AuthService {
 
     /** Admin step 1: verify username+password, then OTP the phone on file (2FA). */
     public AdminLoginResponse adminLogin(AdminLoginRequest req) {
-        User user = userRepo.findByUsername(req.getUsername())
+        User user = userRepo.findByUsernameAndApp(req.getUsername(), User.App.ADMIN)
             .orElseThrow(() -> new AccessDeniedException("Invalid credentials"));
         if (user.getRole() != User.Role.ADMIN && user.getRole() != User.Role.SUPER_ADMIN) {
             throw new AccessDeniedException("Not an admin account");
@@ -594,19 +618,20 @@ public class AuthService {
         if (user.getPasswordHash() == null || !encoder.matches(req.getPassword(), user.getPasswordHash())) {
             throw new AccessDeniedException("Invalid credentials");
         }
-        issueOtp(user.getPhone());
+        issueOtp(user.getPhone(), user.getApp());
         return new AdminLoginResponse(user.getPhone(), "OTP sent to the phone on file");
     }
 
     /** Super admin creates an ADMIN account (username + password + phone). */
     public UserResponse createAdmin(CreateAdminRequest req) {
-        if (userRepo.existsByUsername(req.getUsername())) {
+        if (userRepo.existsByUsernameAndApp(req.getUsername(), User.App.ADMIN)) {
             throw new IllegalStateException("Username already taken");
         }
-        if (userRepo.existsByPhone(req.getPhone())) {
+        if (userRepo.existsByPhoneAndApp(req.getPhone(), User.App.ADMIN)) {
             throw new IllegalStateException("Phone already registered");
         }
         User u = new User();
+        u.setApp(User.App.ADMIN);
         u.setName(req.getName().trim());
         u.setUsername(req.getUsername().trim());
         u.setPasswordHash(encoder.encode(req.getPassword()));
@@ -742,9 +767,10 @@ public class AuthService {
             "Please enter a valid Ghanaian mobile number (e.g. 024 123 4567).");
     }
 
-    private void issueOtp(String phone) {
+    private void issueOtp(String phone, User.App app) {
         String code = generateOtp();
         OtpCode otp = new OtpCode();
+        otp.setApp(app);
         otp.setPhone(phone);
         otp.setCode(code);
         otp.setExpiresAt(OffsetDateTime.now().plusMinutes(otpExpiryMinutes));
@@ -753,15 +779,106 @@ public class AuthService {
         smsService.sendOtp(phone, code, otpExpiryMinutes);
     }
 
-    private void issueEmailOtp(String email) {
+    private void issueEmailOtp(String email, User.App app) {
         String code = generateOtp();
         OtpCode otp = new OtpCode();
+        otp.setApp(app);
         otp.setEmail(email);
         otp.setCode(code);
         otp.setExpiresAt(OffsetDateTime.now().plusMinutes(otpExpiryMinutes));
         otpRepo.save(otp);
         // Sent via Gmail SMTP when configured; otherwise EmailService logs the code.
         emailService.sendVerificationCode(email, code, otpExpiryMinutes);
+    }
+
+    // ── Which app is asking ─────────────────────────────────────────────────────
+
+    /**
+     * The app named in a sign-up request, or the one the role implies.
+     *
+     * Inferring from the role keeps older clients and the seed scripts working: a request for
+     * role=RIDER can only sensibly mean the passenger app. What it never does is let a caller into
+     * the admin app — {@link #requireSelfSignupAllowed} refuses that whichever way the app arrived.
+     */
+    private User.App appForSignup(String appRaw, User.Role role) {
+        User.App app = parseApp(appRaw);
+        return app != null ? app : User.App.of(role);
+    }
+
+    private User.App parseApp(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return User.App.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown app: " + raw);
+        }
+    }
+
+    /**
+     * An app may only create the roles that belong to it, and no app may create an admin.
+     *
+     * {@code register} used to hand {@code User.Role.valueOf} whatever string arrived and trust it.
+     * ADMIN is not in the needs-approval set, so posting role=ADMIN to the public endpoint created
+     * a live admin and the OTP flow then handed over a working admin token — no authentication
+     * anywhere in that path. Admins are created by a SUPER_ADMIN through POST /auth/admins only.
+     */
+    private void requireSelfSignupAllowed(User.App app, User.Role role) {
+        if (role == User.Role.ADMIN || role == User.Role.SUPER_ADMIN) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Admin accounts cannot be self-registered.");
+        }
+        if (!app.allowsSelfSignup(role)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "The " + app.name().toLowerCase() + " app cannot create a " + role.name() + " account.");
+        }
+    }
+
+    /**
+     * Find the account a sign-in is for.
+     *
+     * With an app named it is a direct lookup. Without one — an older client, or the e2e suite —
+     * fall back to the accounts on that number: exactly one is unambiguous, and several means the
+     * caller genuinely has to say which, because picking for them would sign someone into the wrong
+     * account.
+     */
+    private User resolveByPhone(String phone, String appRaw, String notFoundMessage) {
+        User.App app = parseApp(appRaw);
+        if (app != null) {
+            return userRepo.findByPhoneAndApp(phone, app)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, notFoundMessage));
+        }
+        List<User> all = userRepo.findByPhoneOrderByCreatedAtAsc(phone);
+        if (all.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, notFoundMessage);
+        if (all.size() > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "This number has accounts in more than one app. Please say which app you are signing in to.");
+        }
+        return all.get(0);
+    }
+
+    /**
+     * Email lookup for password login — returns empty rather than throwing, so every failure mode
+     * collapses into one "invalid email or password" and nothing leaks about which accounts exist.
+     */
+    private java.util.Optional<User> findForPasswordLogin(String email, String appRaw) {
+        User.App app = parseApp(appRaw);
+        if (app != null) return userRepo.findByEmailAndApp(email, app);
+        List<User> all = userRepo.findByEmailOrderByCreatedAtAsc(email);
+        return all.size() == 1 ? java.util.Optional.of(all.get(0)) : java.util.Optional.empty();
+    }
+
+    private User resolveByEmail(String email, String appRaw, String notFoundMessage) {
+        User.App app = parseApp(appRaw);
+        if (app != null) {
+            return userRepo.findByEmailAndApp(email, app)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, notFoundMessage));
+        }
+        List<User> all = userRepo.findByEmailOrderByCreatedAtAsc(email);
+        if (all.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, notFoundMessage);
+        if (all.size() > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "This email has accounts in more than one app. Please say which app you are signing in to.");
+        }
+        return all.get(0);
     }
 
     private String normalizeEmail(String raw) {

@@ -56,6 +56,15 @@ interface AuthState {
   hydrate: () => Promise<void>;
 }
 
+/**
+ * Which app this is, sent with every auth call.
+ *
+ * Accounts are scoped to an app: the same number can hold a separate passenger, driver and vendor
+ * account. Without this the server has to guess, and guessing is what let a passenger's number sign
+ * straight into the driver app.
+ */
+const APP = 'DRIVER';
+
 export const useAuthStore = create<AuthState>((set) => ({
   userId: null,
   role: null,
@@ -68,27 +77,27 @@ export const useAuthStore = create<AuthState>((set) => ({
   hydrated: false,
 
   register: async (phone, role, name, vehicleClass, username) => {
-    await api.post('/auth/register', { phone, role, name, vehicleClass, username });
+    await api.post('/auth/register', { phone, role, name, vehicleClass, username, app: APP });
     // OTP printed to server logs in dev
   },
 
   login: async (phone) => {
     // Login-only: the backend 404s (no account created) if this phone isn't registered.
-    await api.post('/auth/login', { phone });
+    await api.post('/auth/login', { phone, app: APP });
     // OTP printed to server logs in dev
   },
 
   registerEmail: async (email, role, name, vehicleClass) => {
-    await api.post('/auth/register-email', { email, role, name, vehicleClass });
+    await api.post('/auth/register-email', { email, role, name, vehicleClass, app: APP });
   },
 
   loginEmail: async (email) => {
     // Login-only: 404s if this email isn't registered (never creates an account).
-    await api.post('/auth/login-email', { email });
+    await api.post('/auth/login-email', { email, app: APP });
   },
 
   loginEmailPassword: async (email, password) => {
-    const { data } = await api.post('/auth/login-email-password', { email, password });
+    const { data } = await api.post('/auth/login-email-password', { email, password, app: APP });
     await applySession(set, data);
   },
 
@@ -142,12 +151,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   verifyOtp: async (phone, code) => {
-    const { data } = await api.post('/auth/verify-otp', { phone, code });
+    const { data } = await api.post('/auth/verify-otp', { phone, code, app: APP });
     await applySession(set, data);
   },
 
   verifyEmailOtp: async (email, code) => {
-    const { data } = await api.post('/auth/verify-otp', { email, code });
+    const { data } = await api.post('/auth/verify-otp', { email, code, app: APP });
     await applySession(set, data);
   },
 

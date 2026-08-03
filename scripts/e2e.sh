@@ -125,6 +125,57 @@ eq "unknown phone rejected" \
 
 echo
 echo "=============================================="
+echo " 2b. EACH APP HAS ITS OWN USERS"
+echo "=============================================="
+# One number, several apps. Identity used to be platform-wide, which let a passenger's number sign
+# into the driver app and blocked that same person from ever signing up as a driver.
+SHARED="+233201000001"   # the seeded passenger
+
+eq "passenger's number can't log in to the driver app" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/auth/login -H 'Content-Type: application/json' \
+     -d "{\"phone\":\"$SHARED\",\"app\":\"DRIVER\"}")" "404"
+eq "…but still logs in to its own app" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/auth/login -H 'Content-Type: application/json' \
+     -d "{\"phone\":\"$SHARED\",\"app\":\"PASSENGER\"}")" "200"
+eq "…and can sign up as a driver on the same number" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/auth/register -H 'Content-Type: application/json' \
+     -d "{\"phone\":\"$SHARED\",\"role\":\"DRIVER\",\"name\":\"E2E Second App\",\"app\":\"DRIVER\"}")" "200"
+
+# The two accounts must be genuinely separate — same number, different everything else.
+sleep 1.2
+SHARED_CODE=$(docker logs gozone-auth --tail 40 2>&1 | grep "phone=$SHARED " | grep -oP 'code=\K\d+' | tail -1)
+SECOND=$(curl -s -X POST $GW/auth/verify-otp -H 'Content-Type: application/json' \
+  -d "{\"phone\":\"$SHARED\",\"code\":\"$SHARED_CODE\",\"app\":\"DRIVER\"}" | jq_ "d.get('accessToken','')")
+eq "the code signs in to the driver account, not the passenger one" \
+  "$(GET /auth/me $SECOND | jq_ "d['role']")" "DRIVER"
+eq "…with its own name"   "$(GET /auth/me $SECOND | jq_ "d['name']")"   "E2E Second App"
+eq "…and its own status"  "$(GET /auth/me $SECOND | jq_ "d['status']")" "PENDING"
+neq "…and a different user id" "$(GET /auth/me $SECOND | jq_ "d['id']")" "aaaaaaaa-0000-0000-0000-000000000001"
+
+# register() took whatever role it was handed. ADMIN is not in the needs-approval set, so posting
+# role=ADMIN to the public endpoint created a live admin and the OTP flow handed over a real admin
+# token — no authentication anywhere in that path.
+eq "nobody can self-register as an admin" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/auth/register -H 'Content-Type: application/json' \
+     -d '{"phone":"+233559999801","role":"ADMIN","name":"Escalation"}')" "403"
+eq "nor as a super admin" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/auth/register -H 'Content-Type: application/json' \
+     -d '{"phone":"+233559999802","role":"SUPER_ADMIN"}')" "403"
+eq "an app can't create another app's role" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/auth/register -H 'Content-Type: application/json' \
+     -d '{"phone":"+233559999803","role":"DRIVER","app":"VENDOR"}')" "400"
+
+# Put the demo data back: the second account exists only for this check.
+docker exec gozone-postgres psql -U gozone -d auth_db -q -c \
+  "DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE phone = '$SHARED' AND app = 'DRIVER');
+   DELETE FROM otp_codes WHERE phone = '$SHARED';
+   DELETE FROM users WHERE phone = '$SHARED' AND app = 'DRIVER';" >/dev/null 2>&1 || true
+eq "…and the second account is cleaned up" \
+  "$(docker exec gozone-postgres psql -U gozone -d auth_db -tAc \
+     "SELECT COUNT(*) FROM users WHERE phone = '$SHARED'" | tr -d ' \r')" "1"
+
+echo
+echo "=============================================="
 echo " 3. PRICING — server quote"
 echo "=============================================="
 Q=$(POST /rides/quote "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6500,"destLng":-0.1960,"rideType":"STANDARD"}')

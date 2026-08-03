@@ -612,7 +612,10 @@ components:
           example: "+233501234567"
         role:
           type: string
-          enum: [RIDER, DRIVER, RESTAURANT_OWNER, COURIER, ADMIN, SUPER_ADMIN]
+          enum: [RIDER, DRIVER, RESTAURANT_OWNER, COURIER]
+          description: >
+            ADMIN and SUPER_ADMIN are rejected with 403 — an admin is created only by a
+            SUPER_ADMIN through POST /auth/admins.
         name:
           type: string
           description: Display name — sent on first-time sign-up; ignored for an existing phone
@@ -620,6 +623,14 @@ components:
           type: string
           enum: [OKADA, CARGO]
           description: Driver self-selected class at sign-up (Okada/Truck). Omit for a car → admin sets Standard/Luxe.
+        app:
+          type: string
+          enum: [PASSENGER, DRIVER, VENDOR, ADMIN]
+          description: >
+            Which app is asking. Accounts are scoped to it, so one number can hold a separate
+            passenger, driver and vendor account. Optional: on sign-up the server infers it from
+            the role, and on sign-in from the single account that matches. An app that holds
+            accounts in more than one app must send it.
 
     LoginRequest:
       type: object
@@ -628,6 +639,14 @@ components:
         phone:
           type: string
           example: "+233501234567"
+        app:
+          type: string
+          enum: [PASSENGER, DRIVER, VENDOR, ADMIN]
+          description: >
+            Which app is asking. Accounts are scoped to it, so one number can hold a separate
+            passenger, driver and vendor account. Optional: on sign-up the server infers it from
+            the role, and on sign-in from the single account that matches. An app that holds
+            accounts in more than one app must send it.
 
     EmailRegisterRequest:
       type: object
@@ -642,6 +661,14 @@ components:
           enum: [RIDER, DRIVER, RESTAURANT_OWNER, COURIER]
         name:
           type: string
+        app:
+          type: string
+          enum: [PASSENGER, DRIVER, VENDOR, ADMIN]
+          description: >
+            Which app is asking. Accounts are scoped to it, so one number can hold a separate
+            passenger, driver and vendor account. Optional: on sign-up the server infers it from
+            the role, and on sign-in from the single account that matches. An app that holds
+            accounts in more than one app must send it.
 
     EmailLoginRequest:
       type: object
@@ -650,6 +677,14 @@ components:
         email:
           type: string
           format: email
+        app:
+          type: string
+          enum: [PASSENGER, DRIVER, VENDOR, ADMIN]
+          description: >
+            Which app is asking. Accounts are scoped to it, so one number can hold a separate
+            passenger, driver and vendor account. Optional: on sign-up the server infers it from
+            the role, and on sign-in from the single account that matches. An app that holds
+            accounts in more than one app must send it.
 
     RegisterResponse:
       type: object
@@ -702,6 +737,14 @@ components:
           format: email
         code:
           type: string
+        app:
+          type: string
+          enum: [PASSENGER, DRIVER, VENDOR, ADMIN]
+          description: >
+            Which app is asking. Accounts are scoped to it, so one number can hold a separate
+            passenger, driver and vendor account. Optional: on sign-up the server infers it from
+            the role, and on sign-in from the single account that matches. An app that holds
+            accounts in more than one app must send it.
 
     TokenResponse:
       type: object
