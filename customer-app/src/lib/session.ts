@@ -22,3 +22,13 @@ export async function clearUserData(): Promise<void> {
   ]);
   useShopCart.getState().clear();
 }
+
+/**
+ * Load the stores that belong to a specific account, once we know who signed in.
+ *
+ * Recents are kept per user id rather than wiped, so signing back in restores your own search
+ * history instead of starting you from nothing every session.
+ */
+export async function loadUserData(userId: string | null): Promise<void> {
+  await useRecents.getState().hydrate(userId);
+}

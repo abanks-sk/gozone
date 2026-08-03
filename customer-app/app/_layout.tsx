@@ -25,7 +25,14 @@ export default function RootLayout() {
 
   // Rehydrate stored tokens + local prefs on cold start. Routing is handled
   // declaratively by app/index.tsx (<Redirect>).
-  useEffect(() => { hydrate(); hydratePayment(); hydrateProfile(); hydrateRecents(); hydrateSaved(); hydrateFavs(); }, []);
+  //
+  // Auth is awaited before recents because recents are stored per account: until the token has
+  // been read there is no user id to look them up under, and loading them unkeyed would show a
+  // signed-in user an empty history on every cold start.
+  useEffect(() => {
+    hydratePayment(); hydrateProfile(); hydrateSaved(); hydrateFavs();
+    hydrate().then(() => hydrateRecents(useAuthStore.getState().userId));
+  }, []);
 
   // Push: show notifications that arrive while the app is open, and make sure a device that is
   // already signed in has a token registered (verify-otp only covers a fresh sign-in, and until

@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { registerForPush } from '../../src/lib/push';
 import { useProfileStore } from '../../src/store/profileStore';
-import { clearUserData } from '../../src/lib/session';
+import { clearUserData, loadUserData } from '../../src/lib/session';
 import { roleHome, goBack } from '../../src/lib/routes';
 import { BrandScreen, GlowOrb, BrandInput, PillButton } from '../../src/components/brand';
 import { brand } from '../../src/theme/tokens';
@@ -67,6 +67,9 @@ export default function VerifyOtpScreen() {
       // the same call works for sign-up and login, since sign-up already sent the
       // name/username to /auth/register.
       await clearUserData();
+      // …then load back whatever belongs to the account that just signed in. Recents are kept per
+      // user, so a returning rider gets their own search history rather than a blank list.
+      await loadUserData(useAuthStore.getState().userId);
       const contact = isEmail ? { email: target } : { phone: target };
       const me = await fetchMe();
       if (me.name || me.phone || me.email) {

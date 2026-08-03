@@ -70,15 +70,26 @@ export default function RiderHomeScreen() {
   // workflow everything here depends on.
   const EXPANDED_Y = heroH;                              // resting position — map on top, content below
   const PEEK = 210 + insets.bottom;                      // handle + search bar + the three circles
-  const COLLAPSED_Y = Math.max(EXPANDED_Y, screenH - PEEK);
-  // On a very short viewport (a small browser window, mostly) the two positions collapse into one,
-  // and a handle that cannot move should not invite a drag.
-  const canCollapse = COLLAPSED_Y - EXPANDED_Y > 80;
-  const sheetY = useRef(new Animated.Value(EXPANDED_Y)).current;
+
+  /**
+   * How far the sheet can travel, measured from its own laid-out height.
+   *
+   * The sheet is anchored `top: EXPANDED_Y, bottom: 0` — the same box as the map — instead of being
+   * given a height computed from the window. That is what finally closes the gap along the bottom
+   * edge: a computed height only matches the visible area if the number you computed it from is
+   * the visible area, and under Android edge-to-edge it is not. Two things anchored to the same
+   * bottom cannot leave one showing beneath the other, whatever the system bars are doing.
+   */
+  const [sheetH, setSheetH] = useState(0);
+  const SLIDE = Math.max(0, sheetH - PEEK);
+  // On a very short viewport (a small browser window, mostly) there is nowhere to slide to, and a
+  // handle that cannot move should not invite a drag.
+  const canCollapse = SLIDE > 80;
+  const sheetY = useRef(new Animated.Value(0)).current;   // 0 = resting, SLIDE = pulled down
   // Where the sheet sits right now. Tracked in a ref rather than read off the Animated.Value,
   // because a native-driven value cannot be read synchronously from JS — `stopAnimation` hands
   // back the true position when a drag begins, which is the only moment we need it.
-  const sheetAt = useRef(EXPANDED_Y);
+  const sheetAt = useRef(0);
   const [collapsed, setCollapsed] = useState(false);
 
   // React Native Web has no native animation module: `useNativeDriver: true` logs a warning on
@@ -88,37 +99,43 @@ export default function RiderHomeScreen() {
 
   const snapTo = (to: number) => {
     sheetAt.current = to;
-    setCollapsed(to === COLLAPSED_Y);
+    setCollapsed(to > 0);
     Animated.spring(sheetY, {
       toValue: to, useNativeDriver: useNative, bounciness: 2, speed: 14,
     }).start();
   };
 
-  // Re-seat the sheet if the measured height changes (first layout, or a rotation).
+  // Re-seat the sheet when its travel changes (first layout, or a rotation).
   useEffect(() => {
-    const to = collapsed && canCollapse ? COLLAPSED_Y : EXPANDED_Y;
+    const to = collapsed && canCollapse ? SLIDE : 0;
     sheetAt.current = to;
     sheetY.setValue(to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [EXPANDED_Y, COLLAPSED_Y]);
+  }, [SLIDE]);
+
+  // The responder is built once, so it reads the live travel distance through a ref rather than
+  // closing over the value it happened to see on the first render — before onLayout, that is 0.
+  const slideRef = useRef(SLIDE);
+  slideRef.current = SLIDE;
 
   const pan = useRef(
     PanResponder.create({
       // Claim only real vertical drags, so a tap still reaches the search bar underneath.
       onMoveShouldSetPanResponder: (_e, g) =>
-        canCollapse && Math.abs(g.dy) > 5 && Math.abs(g.dy) > Math.abs(g.dx),
+        slideRef.current > 80 && Math.abs(g.dy) > 5 && Math.abs(g.dy) > Math.abs(g.dx),
       onPanResponderGrant: () => { sheetY.stopAnimation((v: number) => { if (typeof v === 'number') sheetAt.current = v; }); },
       onPanResponderMove: (_e, g) => {
-        const next = Math.min(COLLAPSED_Y, Math.max(EXPANDED_Y, sheetAt.current + g.dy));
+        const next = Math.min(slideRef.current, Math.max(0, sheetAt.current + g.dy));
         sheetY.setValue(next);
       },
       onPanResponderRelease: (_e, g) => {
         // A deliberate flick wins over position — releasing mid-way after throwing it downward
         // should finish the throw, not spring back because you let go too early.
-        const y = Math.min(COLLAPSED_Y, Math.max(EXPANDED_Y, sheetAt.current + g.dy));
-        if (g.vy > 0.5) return snapTo(COLLAPSED_Y);
-        if (g.vy < -0.5) return snapTo(EXPANDED_Y);
-        snapTo(y > (EXPANDED_Y + COLLAPSED_Y) / 2 ? COLLAPSED_Y : EXPANDED_Y);
+        const max = slideRef.current;
+        const y = Math.min(max, Math.max(0, sheetAt.current + g.dy));
+        if (g.vy > 0.5) return snapTo(max);
+        if (g.vy < -0.5) return snapTo(0);
+        snapTo(y > max / 2 ? max : 0);
       },
     }),
   ).current;
@@ -214,13 +231,16 @@ export default function RiderHomeScreen() {
 
       {/* ── Draggable sheet: everything that isn't the map ── */}
       <Animated.View
+        onLayout={(e) => {
+          const h = Math.round(e.nativeEvent.layout.height);
+          if (h > 0 && h !== sheetH) setSheetH(h);
+        }}
         style={{
-          position: 'absolute', left: 0, right: 0, top: 0,
-          // Exactly the distance from its resting position to the bottom of the measured screen.
-          // Taller and the inner ScrollView believes part of its viewport is on screen when it is
-          // below the fold, so the last of the content becomes unreachable; shorter and the map
-          // shows through underneath it.
-          height: screenH - EXPANDED_Y,
+          // Anchored to the same box as the map rather than sized from the window: `bottom: 0`
+          // resolves to wherever the map's own `bottom: 0` resolves, so there is no arithmetic
+          // left for the system bars to invalidate. The layout height this produces is also the
+          // real one, which keeps the inner ScrollView's viewport honest.
+          position: 'absolute', left: 0, right: 0, top: EXPANDED_Y, bottom: 0,
           transform: [{ translateY: sheetY }],
           backgroundColor: c.bg,
           borderTopLeftRadius: 28, borderTopRightRadius: 28,
@@ -234,7 +254,7 @@ export default function RiderHomeScreen() {
             people look at most. */}
         <View {...pan.panHandlers}>
           <TouchableOpacity activeOpacity={0.7} disabled={!canCollapse}
-            onPress={() => snapTo(collapsed ? EXPANDED_Y : COLLAPSED_Y)}
+            onPress={() => snapTo(collapsed ? 0 : SLIDE)}
             style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 8 }}>
             <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: c.border }} />
           </TouchableOpacity>
@@ -258,10 +278,19 @@ export default function RiderHomeScreen() {
           <View style={{ paddingHorizontal: 16, marginTop: 22 }}>
             {recents.length > 0 ? (
               <>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 2 }}>
-                  Recent
-                </Text>
-                {recents.slice(0, 4).map((p, i, arr) => (
+                <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                    Recent
+                  </Text>
+                  {/* Only the newest few fit here; the search screen lists everything this account
+                      has ever looked up. */}
+                  {recents.length > 5 && (
+                    <TouchableOpacity onPress={() => router.push('/search?next=request' as any)} activeOpacity={0.7}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: c.primary }}>See all</Text>
+                    </TouchableOpacity>
+                  )}
+                </Row>
+                {recents.slice(0, 5).map((p, i, arr) => (
                   <ListRow key={i} icon="time" title={p.label} subtitle={p.sub}
                     onPress={() => chooseRecent(p)} last={i === arr.length - 1} />
                 ))}

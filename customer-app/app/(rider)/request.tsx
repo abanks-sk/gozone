@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Dimensions, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Redirect, useRouter } from 'expo-router';
@@ -10,7 +10,7 @@ import { useTheme } from '../../src/theme/ThemeProvider';
 import { useRideDraft, hasDest } from '../../src/store/rideDraft';
 import { useProfileStore } from '../../src/store/profileStore';
 import { haversineKm, rideFare } from '../../src/lib/pricing';
-import { Btn, Card, Row } from '../../src/components/ui';
+import { Btn, Row } from '../../src/components/ui';
 import { LeafletMap } from '../../src/components/LeafletMap';
 import { LatLng } from '../../src/components/mapTypes';
 
@@ -33,7 +33,6 @@ export default function RideRequestScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
-  const screenH = Dimensions.get('window').height;
 
   const origin = useRideDraft((s) => s.origin);
   const dest = useRideDraft((s) => s.dest);
@@ -100,7 +99,6 @@ export default function RideRequestScreen() {
     : 'Now';
 
   const route = routePts.length ? routePts : [{ lat: origin.lat, lng: origin.lng }, { lat: dest.lat, lng: dest.lng }];
-  const mapH = Math.max(200, Math.round(screenH * 0.32)) + insets.top;
 
   function pickType(t: typeof RIDE_TYPES[number]) {
     setRideType(t.key);
@@ -140,39 +138,43 @@ export default function RideRequestScreen() {
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <StatusBar style="dark" />
 
-      {/* Map sits behind the top of the screen: pickup, destination and the road between them. */}
-      <View style={{ height: mapH }}>
-        <LeafletMap
-          style={{ flex: 1 }}
-          mode="view"
-          center={{ lat: (origin.lat + dest.lat) / 2, lng: (origin.lng + dest.lng) / 2 }}
-          zoom={13}
-          markers={[
-            { lat: origin.lat, lng: origin.lng, kind: 'pickup', label: origin.label },
-            { lat: dest.lat, lng: dest.lng, kind: 'dest', label: dest.label },
-          ]}
-          route={route}
-        />
-        <TouchableOpacity
-          onPress={() => router.back()}
-          activeOpacity={0.85}
-          style={{
-            position: 'absolute', top: insets.top + 10, left: 16,
-            width: 40, height: 40, borderRadius: 20, backgroundColor: c.surface,
-            alignItems: 'center', justifyContent: 'center',
-            shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 4,
-          }}
-        >
-          <Ionicons name="chevron-back" size={22} color={c.text} />
-        </TouchableOpacity>
-      </View>
+      {/* Full-screen map with the details on a sheet over it — the same arrangement as the live
+          tracking screen, so the two halves of one journey look like one product. The card used to
+          sit high up under a short map band, which read as a form on a picture of a map. */}
+      <LeafletMap
+        style={{ flex: 1 }}
+        mode="view"
+        center={{ lat: (origin.lat + dest.lat) / 2, lng: (origin.lng + dest.lng) / 2 }}
+        zoom={13}
+        markers={[
+          { lat: origin.lat, lng: origin.lng, kind: 'pickup', label: origin.label },
+          { lat: dest.lat, lng: dest.lng, kind: 'dest', label: dest.label },
+        ]}
+        route={route}
+      />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        style={{ flex: 1, marginTop: -24 }}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 28 }}
+      <TouchableOpacity
+        onPress={() => router.back()}
+        activeOpacity={0.85}
+        style={{
+          position: 'absolute', top: insets.top + 8, left: 16,
+          width: 40, height: 40, borderRadius: 20, backgroundColor: c.surface,
+          borderWidth: 1, borderColor: c.border,
+          alignItems: 'center', justifyContent: 'center',
+        }}
       >
-        <Card>
+        <Ionicons name="chevron-back" size={24} color={c.text} />
+      </TouchableOpacity>
+
+      <View
+        style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0,
+          backgroundColor: c.surface,
+          borderTopLeftRadius: 26, borderTopRightRadius: 26,
+          borderTopWidth: 1, borderColor: c.border,
+          paddingHorizontal: 20, paddingTop: 18, paddingBottom: insets.bottom + 18,
+        }}
+      >
           <Row style={{ justifyContent: 'space-between', marginBottom: 14 }}>
             <Text style={{ fontSize: 17, fontWeight: '800', color: c.text }}>GoRide</Text>
             <TouchableOpacity onPress={() => setTypeOpen((o) => !o)} activeOpacity={0.85}
@@ -265,10 +267,9 @@ export default function RideRequestScreen() {
             </Row>
           )}
 
-          <Btn label={scheduledFuture ? 'Schedule ride' : typeMeta.bargain ? 'Request ride' : `Book ${typeMeta.label}`}
-               onPress={requestRide} loading={loading} />
-        </Card>
-      </ScrollView>
+        <Btn label={scheduledFuture ? 'Schedule ride' : typeMeta.bargain ? 'Request ride' : `Book ${typeMeta.label}`}
+             onPress={requestRide} loading={loading} />
+      </View>
     </View>
   );
 }
