@@ -530,6 +530,7 @@ reference id so a retry can never double-credit.
 | `bids`             | request, driver, amount, type (ACCEPT\|COUNTER), status, driver name/phone/vehicle/plate/position                                                        |
 | `trips`            | request, driver, agreed fare (**the sum of every passenger's share**), status, timestamps, payment status/method, **shared**                              |
 | `trip_passengers`  | **one row per person, and where the money lives on a shared ride**: the request they boarded with, solo fare, locked (discounted) fare, pickup order, **picked_up_at** (the only thing separating a passenger at the kerb from one in the car — it closes their exit), their own payment status/method, rule_version |
+| `pickup_disputes`  | A passenger's objection to being marked aboard: the claim, the outcome, and who was right. Its own table because leaving a shared ride deletes the seat, and a complaint stored on the seat died with the person who raised it |
 | `driver_locations` | latest position per driver (`geography`, upserted)                                                                                                       |
 | `ride_ratings`     | two-way ratings                                                                                                                                          |
 | `sos_incidents`    | trip, user, position, NEW / HANDLED                                                                                                                      |

@@ -532,7 +532,8 @@ eq "too late to undo an old pickup"          "$(curl -s -o /dev/null -w '%{http_
 # assertion, so the person it lands on has to be able to answer back.
 eq "someone not on the trip can't dispute" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $COURIER" -d '{}' $GW/rides/trips/$LTID/dispute-pickup)" "403"
 DISP=$(POST "/rides/trips/$LTID/dispute-pickup" "$RIDER2" '{"note":"I am not in this car"}')
-eq "passenger disputes the pickup"         "$(echo "$DISP" | jq_ "d['pickupDisputeNote']")" "I am not in this car"
+# The note is what an admin actually reads, so assert it where they read it.
+eq "passenger disputes the pickup"         "$(GET /rides/pickup-disputes $ADMIN | jq_ "[p['note'] for p in d if p['riderId']=='$RID2_ID'][0]")" "I am not in this car"
 # Load-bearing: a dispute must NOT un-board them, or you could ride the whole way, object at the
 # drop-off and walk away — the free-ride hole, entered from the passenger's side.
 neq "  it does NOT un-board them"          "$(echo "$DISP" | jq_ "str(d['pickedUpAt'])")" "None"
@@ -577,11 +578,19 @@ UPHOLD=$(PATCH_ "/rides/pickup-disputes/$LTID/$RID2_ID" "$ADMIN" '{"decision":"U
 eq "admin upholds it"                      "$(echo "$UPHOLD" | jq_ "d['outcome'][:6]")" "UPHELD"
 eq "  the passenger is un-boarded"         "$(echo "$UPHOLD" | jq_ "str(d['pickedUpAt'])")" "None"
 eq "  so they can leave again"             "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickedUp']")" "False"
+# Each round of the same argument is its own row — settling one must not overwrite the last
+# decision. Three disputes were raised on this seat above.
+eq "every round is kept, not overwritten"  "$(GET "/rides/pickup-disputes?openOnly=false" $ADMIN | python -c "import sys,json;print(sum(1 for p in json.load(sys.stdin) if p['riderId']=='$RID2_ID' and p['tripId']=='$LTID'))")" "3"
 
 # Put them back on the kerb so the rest of the section can exercise the leave path itself.
 docker exec gozone-postgres psql -U gozone -d ride_db -q -c \
   "UPDATE trip_passengers SET picked_up_at = NULL WHERE trip_id = '$LTID' AND rider_id = '$RID2_ID';" >/dev/null 2>&1
 eq "the joiner leaves"                       "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RIDER2" $GW/rides/trips/$LTID/leave-pool)" "204"
+# The reason disputes are their own table: leaving deletes the seat, and a dispute stored on the
+# seat died with the person who raised it. A driver who repeatedly marks people aboard who are not
+# in the car is a pattern nobody could see if every complainant erased their own complaint.
+eq "  their disputes outlive the seat"       "$(GET "/rides/pickup-disputes?openOnly=false" $ADMIN | python -c "import sys,json;print(sum(1 for p in json.load(sys.stdin) if p['riderId']=='$RID2_ID' and p['tripId']=='$LTID'))")" "3"
+eq "  and the board still renders them"      "$(GET "/rides/pickup-disputes?openOnly=false" $ADMIN | jq_ "[p['paymentStatus'] for p in d if p['tripId']=='$LTID'][0]")" "LEFT"
 eq "  their request is cancelled, not re-opened" "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['request']['status']")" "CANCELLED"
 eq "  and they are off the ride"             "$(GET "/rides/trips/$LTID/passengers" $DRIVER | jq_ "len(d)")" "1"
 # The reason "downward only" had to go: leave it in and the driver is paid 22.50 for a job they
@@ -614,7 +623,21 @@ sleep 1
 SBAL1=$(GET "/wallet/balance?ownerType=DRIVER" $DRIVER | jq_ "d['balance']")
 neq "driver settled once, on the full 37.50" "$SBAL1" "$SBAL0"
 echo "        (driver wallet $SBAL0 -> $SBAL1 on two shared fares totalling GH¢37.50)"
-eq "the joiner can rate the driver" "$(POST "/rides/trips/$STID/rate" "$RIDER2" "{\"rateeId\":\"$(GET /auth/me $DRIVER | jq_ "d['id']")\",\"score\":5}" | jq_ "d['status']")" "rated"
+DRIVER_ID=$(GET /auth/me $DRIVER | jq_ "d['id']")
+eq "the joiner can rate the driver" "$(POST "/rides/trips/$STID/rate" "$RIDER2" "{\"rateeId\":\"$DRIVER_ID\",\"score\":5}" | jq_ "d['status']")" "rated"
+# A shared trip carried two people and the driver has an opinion about each. Keying "already rated"
+# on the trip alone let them rate one and silently locked out the rest.
+eq "driver rates passenger 1"       "$(POST "/rides/trips/$STID/rate" "$DRIVER" "{\"rateeId\":\"$RID1_ID\",\"score\":5}" | jq_ "d['status']")" "rated"
+eq "driver rates passenger 2 too"   "$(POST "/rides/trips/$STID/rate" "$DRIVER" "{\"rateeId\":\"$RID2_ID\",\"score\":4}" | jq_ "d['status']")" "rated"
+eq "  but not the same one twice"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $DRIVER" -d "{\"rateeId\":\"$RID2_ID\",\"score\":1}" $GW/rides/trips/$STID/rate)" "409"
+# Without this the endpoint takes any UUID as a ratee, which is a way to move a stranger's average.
+eq "  and not someone who wasn't on it" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $DRIVER" -d '{"rateeId":"aaaaaaaa-0000-0000-0000-000000000004","score":1}' $GW/rides/trips/$STID/rate)" "400"
+# ⚠️ Undo them. Ratings accumulate across runs, and §2c asserts that +…007 is a rider nobody has
+# rated — three runs of this section would push them over the "enough ratings to show an average"
+# threshold and break a test in a completely different part of the file. Same lesson as §7b: a
+# section that writes to shared demo state has to take it back.
+docker exec gozone-postgres psql -U gozone -d ride_db -q -c \
+  "DELETE FROM ride_ratings WHERE trip_id = '$STID' AND rater_id = '$DRIVER_ID';" >/dev/null 2>&1
 eqm "joined ride in their history at THEIR fare" "$(GET /rides/trips/mine $RIDER2 | jq_ "[t['fare'] for t in d if t.get('tripId')=='$STID'][0]")" "15"
 
 echo

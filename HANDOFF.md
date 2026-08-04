@@ -19,7 +19,7 @@ A complete context dump so a new session can continue seamlessly.
 **Everything raised in the user's device tap-through is now built**, and so is **ride sharing**
 (the P0 pooling feature that had been missed — see the last `###` entry). All 17 issues across
 sections A, B and C of `docs/ISSUES_FROM_TESTING.md` are implemented and that file is the triage
-record. `scripts/e2e.sh` is **304/304** green against the running stack.
+record. `scripts/e2e.sh` is **311/311** green against the running stack.
 
 ⚠️ **The newest thing to know:** on a shared ride a fare belongs to a **passenger**, not a trip.
 `trips.agreed_fare` is now the sum of everyone's share (what the driver earns);
@@ -2324,8 +2324,7 @@ app's API client even mentioned.
 §4b; the section leaves one COMPLETED shared trip, which is terminal and does not clutter the feed.
 
 **Known gaps, none of them hidden in the UI:**
-- **The driver rates only the passenger who booked.** The label says so on a shared trip rather
-  than claiming "your passenger"; a rating per passenger is not built.
+- ~~**The driver rates only the passenger who booked.**~~ **FIXED** — see the last entry.
 - **Not device-verified.** The corridor matching and both apps' shared-ride UI have only been
   exercised through the API and a type-check — the toggle, the green join card, the extra pickup
   pins and the per-passenger confirm buttons have never been seen on a handset.
@@ -2443,7 +2442,38 @@ and admin-web gains a **Pickup disputes** page.
 - **Verified in a browser, not just type-checked**: signed in as the seeded admin, staged a real
   dispute, saw it render with live data, clicked Uphold, watched it leave the open board, keep its
   record under "All", and confirmed in SQL that `picked_up_at` was actually cleared.
-- ⚠️ **Leaving a shared ride deletes the passenger row, and the dispute record with it.** Acceptable
-  — once they are off the ride there is no outstanding charge to justify — but the admin log line is
-  then the only trace.
+- ~~**Leaving a shared ride deletes the dispute record with the seat.**~~ **FIXED** — see the last entry.
 - `.claude/launch.json` (in the CodeQuest working dir, not the repo) runs admin-web for preview.
+
+### Closing the last two gaps (REBUILD ride-service, e2e 304 → 311)
+
+**Disputes are their own table now (ride V13).** They were columns on `trip_passengers`, and
+`leavePool` deletes that row — so a passenger who objected and then left destroyed their own
+complaint. That is the wrong thing to lose: a driver who repeatedly marks people aboard who are
+not in the car is a pattern nobody can see if every complainant erases their own evidence.
+`pickup_disputes` is keyed on (trip, rider) and references `trips`, so nothing cascades; the fare
+and boarding order are copied in because they are the substance of the claim and unreadable once
+the seat is gone. V13 migrates the existing rows across.
+- **Each round of the same argument is now its own row.** Re-raising a settled dispute inserts a
+  new one instead of reopening the old, so the previous decision is never overwritten. One *open*
+  dispute per rider per trip, enforced by a partial unique index rather than a service check —
+  same reasoning as the driver edit-requests.
+- The board renders a dispute whose seat is gone: `paymentStatus` comes back as **`LEFT`** and the
+  admin page badges it, rather than the row vanishing or erroring.
+
+**A driver can rate every passenger.** `existsByTripIdAndRaterId` allowed one rating per rater per
+*trip*, so on a shared ride they rated one person and were silently locked out of the rest — and
+the table had allowed `(trip, rater, ratee)` all along, the narrower check was the only thing in
+the way. Now per-person, with a per-passenger rating UI on the driver's completion screen (each
+score submits on its own, so the first is not lost if the second fails).
+- ⚠️ **The ratee must have been on the trip** (400 otherwise). Without it the endpoint accepted any
+  UUID as a ratee, which is a way to move a stranger's average. That was pre-existing.
+- Double-rating is now **409** rather than a bare 500 from an `IllegalStateException`.
+
+⚠️ **The e2e lesson, again.** Ratings accumulate across runs, and §2c asserts that `+…007` is a
+rider nobody has rated — three runs of the new assertions pushed them over the "enough ratings to
+show an average" threshold and broke a test in a completely different part of the file. §4b now
+deletes the ratings it creates. **Any section that writes to shared demo state has to take it
+back**; the suite was verified green twice in a row to prove it is repeatable.
+
+**Rebuild:** `docker compose build ride-service && docker compose up -d ride-service`.

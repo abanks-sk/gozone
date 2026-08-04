@@ -115,6 +115,12 @@ reason they will read. Resolving records the outcome rather than clearing the
 dispute — a settled argument about money should still say what was claimed and
 who was found to be right.
 
+Disputes live in their own table, not on the passenger row, because leaving a
+shared ride deletes that row: a complaint stored on the seat died with the person
+who raised it, and a driver who repeatedly marks people aboard who are not in the
+car is a pattern nobody could see. Each round of the same argument is a separate
+row, so settling one never overwrites the last decision.
+
 ### Delivery tracking = the ride primitive reused
 A courier is a driver carrying a parcel. `/food/deliveries/{id}/track` reuses the same
 WebSocket STOMP layer as `/rides/trips/{id}/track`. The location push flow is identical;

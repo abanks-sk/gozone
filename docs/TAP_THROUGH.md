@@ -1,7 +1,7 @@
 # Device tap-through checklist
 
 Everything here is **unverified by any automated test** and can only be cleared on a real device.
-The e2e suite (304/304) covers the backend; these are the phone-side behaviours it cannot reach —
+The e2e suite (311/311) covers the backend; these are the phone-side behaviours it cannot reach —
 React Native Web ignores synthetic clicks, so none of this has ever been seen running.
 
 **§14 (ride sharing) is the newest and least proven** — it is a whole feature whose UI has only
@@ -453,9 +453,9 @@ travelling and whose destination is near theirs
       reason (the passenger reads it)
 - [ ] Either way it leaves the **Open** filter and stays under **All** with its outcome recorded
 
-**Won't work, don't raise:** the driver rates only the passenger who booked; the label says so.
-Leaving a shared ride deletes the passenger row and the dispute record with it — once they are off
-the ride there is no charge left to justify, but the admin log line is then the only trace.
+- [ ] On a shared trip's completion screen the driver gets **a star row per passenger**, each with
+      its own Submit — not one rating for the whole car
+- [ ] Rating one and not the other works; the rated one shows as done
 
 ---
 
