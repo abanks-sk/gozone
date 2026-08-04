@@ -12,15 +12,53 @@ export interface RideRequest {
   status: string;
   kind?: 'RIDE' | 'PARCEL';
   rideType?: 'STANDARD' | 'LUXE' | 'OKADA';
+  /**
+   * The passenger agreed to share the car. Worth knowing before accepting: the trip may gain a
+   * second pickup on the way, and the fare will rise if it does.
+   */
+  shared?: boolean;
   parcelSize?: 'SMALL' | 'MEDIUM' | 'LARGE' | null;
   parcelDesc?: string | null;
   createdAt: string;
 }
 
+/** One person on a shared trip. Phone numbers are populated for the driver. */
+export interface TripPassenger {
+  riderId: string;
+  requestId: string | null;
+  /** Boarding order — 1 is whoever booked the ride. */
+  pickupSeq: number;
+  lockedFare: number;
+  soloFare: number;
+  paymentStatus: 'UNPAID' | 'AWAITING' | 'PAID';
+  paymentMethod: string | null;
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  riderPhone: string | null;
+  /**
+   * When you confirmed they were in the car. Null while they're still a pickup to make — and
+   * while they can still walk away from the fare.
+   */
+  pickedUpAt: string | null;
+  /**
+   * Set when this passenger says they are not in your car. It does not un-board them — it is their
+   * objection on the record, and while it is open you may undo the pickup at any time.
+   */
+  pickupDisputedAt: string | null;
+  pickupDisputeNote: string | null;
+}
+
 export interface Trip {
   id: string;
   driverId: string;
+  /** The whole trip's money — every passenger's share added up. This is what the driver earns. */
   agreedFare: number;
+  /** This ride can pick up more passengers along its corridor. */
+  shared?: boolean;
+  /** How many people are aboard — 1 on an ordinary trip. */
+  passengerCount?: number;
   status: string;
   startedAt?: string;
   completedAt?: string;
@@ -89,8 +127,36 @@ export const rideApi = {
   getTrip: (tripId: string) =>
     api.get<Trip>(`/rides/trips/${tripId}`).then(r => r.data),
 
-  confirmCash: (tripId: string) =>
-    api.post<Trip>(`/rides/trips/${tripId}/confirm-cash`).then(r => r.data),
+  /**
+   * Confirm cash was collected. Name the passenger on a shared trip — two people owe two
+   * different amounts at two different kerbs, and confirming "the trip" would credit one
+   * person's cash to everybody. Omitting it clears everyone awaiting cash, which is right on an
+   * ordinary single-passenger trip.
+   */
+  confirmCash: (tripId: string, riderId?: string) =>
+    api.post<Trip>(`/rides/trips/${tripId}/confirm-cash`, riderId ? { riderId } : {}).then(r => r.data),
+
+  /** Everyone on this trip: the pickups to make and the fares to collect. */
+  tripPassengers: (tripId: string) =>
+    api.get<TripPassenger[]>(`/rides/trips/${tripId}/passengers`).then(r => r.data),
+
+  /**
+   * Confirm a shared passenger is in the car.
+   *
+   * <p>Your own protection: until you tap it they can still leave and owe nothing. Only needed for
+   * people who joined en route — whoever booked is confirmed when you start the trip.
+   */
+  markPickedUp: (tripId: string, riderId: string) =>
+    api.post<TripPassenger>(`/rides/trips/${tripId}/passengers/${riderId}/picked-up`).then(r => r.data),
+
+  /**
+   * Take back a pickup you confirmed by mistake, re-opening that passenger's exit.
+   *
+   * <p>Only for a short window after confirming — the server is the authority on that and says so
+   * plainly when it has passed, rather than the app guessing from a phone's clock.
+   */
+  undoPickup: (tripId: string, riderId: string) =>
+    api.delete<TripPassenger>(`/rides/trips/${tripId}/passengers/${riderId}/picked-up`).then(r => r.data),
 
   /** Tell the customer we're at the pickup point — sends them a push notification. */
   announceArrival: (tripId: string) =>

@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, Text, TouchableOpacity, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { rideApi } from '../../src/api/ride';
+import { rideApi, TripPassenger } from '../../src/api/ride';
 import { mapsApi } from '../../src/api/maps';
 import { useDriverStore } from '../../src/store/driverStore';
 import { useAuthStore } from '../../src/store/authStore';
@@ -76,6 +76,12 @@ export default function DriverTripScreen() {
   // customer's phone — the open feed deliberately doesn't carry contact details.
   const [handover, setHandover] = useState<{ direction?: string | null; name?: string | null; phone?: string | null }>({});
 
+  // Everyone in the car, and what each of them owes. On a shared ride this is the whole job: an
+  // extra pickup the driver did not have when they accepted, and a second fare to collect.
+  const [passengers, setPassengers] = useState<TripPassenger[]>([]);
+  const [sharedTrip, setSharedTrip] = useState(false);
+  const [fare, setFare] = useState<number | null>(null);
+
   // The customer's phone comes with the full trip (participant-guarded).
   useEffect(() => {
     if (!trip) return;
@@ -84,9 +90,34 @@ export default function DriverTripScreen() {
       if (!active) return;
       setRiderPhone(t.riderPhone ?? null);
       setHandover({ direction: t.direction, name: t.partyName, phone: t.partyPhone });
+      setSharedTrip(!!t.shared);
+      setFare(Number(t.agreedFare));
     }).catch(() => {});
     return () => { active = false; };
   }, [trip?.id]);
+
+  /**
+   * Poll the passenger list while the trip runs.
+   *
+   * <p>Not a one-off fetch: on a shared ride somebody can get in AFTER the driver accepted, and
+   * the whole point is that the new pickup and the higher fare reach them without their doing
+   * anything. Stops once the trip is done, at which point the list is only about who still owes.
+   */
+  useEffect(() => {
+    if (!trip) return;
+    let active = true;
+    const tick = () => {
+      rideApi.tripPassengers(trip.id).then((p) => { if (active) setPassengers(p); }).catch(() => {});
+      rideApi.getTrip(trip.id).then((t) => {
+        if (!active) return;
+        setSharedTrip(!!t.shared);
+        setFare(Number(t.agreedFare));
+      }).catch(() => {});
+    };
+    tick();
+    const poll = setInterval(tick, 6000);
+    return () => { active = false; clearInterval(poll); };
+  }, [trip?.id, pay.status]);
   const locRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wpRef = useRef(0);
   const walkRef = useRef<{ lat: number; lng: number }[]>([]);
@@ -124,10 +155,68 @@ export default function DriverTripScreen() {
     return () => clearInterval(poll);
   }, [done, trip?.id, pay.status]);
 
-  async function confirmCash() {
+  /**
+   * Confirm cash. {@code riderId} names who paid — required on a shared ride, where two people
+   * hand over two different amounts at two different kerbs.
+   */
+  /**
+   * Confirm a shared passenger is in the car.
+   *
+   * <p>This is the driver's own protection, which is why it sits on their screen and not the
+   * passenger's: until they tap it the passenger can still leave and owe nothing, and after it the
+   * fare is theirs. Whoever booked the ride is confirmed automatically at Start.
+   */
+  const [pickingUp, setPickingUp] = useState<string | null>(null);
+  async function markPickedUp(riderId: string) {
+    if (!trip) return;
+    setPickingUp(riderId);
+    try {
+      const updated = await rideApi.markPickedUp(trip.id, riderId);
+      setPassengers((ps) => ps.map((p) => (p.riderId === riderId ? updated : p)));
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.message ?? 'Could not confirm the pickup');
+    } finally { setPickingUp(null); }
+  }
+
+  /**
+   * Take back a pickup confirmed by mistake.
+   *
+   * <p>Confirmed first: this re-opens the passenger's exit, so a stray tap here undoes the thing
+   * that guarantees the driver gets paid. The window is short and the server owns it — asking the
+   * phone's clock whether the button should still be there invites a device with a wrong time to
+   * hide an undo that would have worked, so it stays visible and the server's answer is shown.
+   */
+  function undoPickup(riderId: string) {
+    if (!trip) return;
+    Alert.alert(
+      'Undo this pickup?',
+      'Use this only if they are not actually in your car. They will be able to cancel again, and you would not be paid for them.',
+      [
+        { text: 'Keep' },
+        {
+          text: 'Undo', style: 'destructive',
+          onPress: async () => {
+            setPickingUp(riderId);
+            try {
+              const updated = await rideApi.undoPickup(trip.id, riderId);
+              setPassengers((ps) => ps.map((p) => (p.riderId === riderId ? updated : p)));
+            } catch (e: any) {
+              Alert.alert('Couldn’t undo', e?.response?.data?.message ?? 'Please try again.');
+            } finally { setPickingUp(null); }
+          },
+        },
+      ],
+    );
+  }
+
+  async function confirmCash(riderId?: string) {
     if (!trip) return;
     setConfirming(true);
-    try { const t = await rideApi.confirmCash(trip.id); setPay({ status: t.paymentStatus, method: t.paymentMethod }); }
+    try {
+      const t = await rideApi.confirmCash(trip.id, riderId);
+      setPay({ status: t.paymentStatus, method: t.paymentMethod });
+      setPassengers(await rideApi.tripPassengers(trip.id).catch(() => passengers));
+    }
     catch (e: any) { Alert.alert('Error', e?.response?.data?.message ?? 'Could not confirm'); }
     finally { setConfirming(false); }
   }
@@ -235,6 +324,13 @@ export default function DriverTripScreen() {
   const idx = FLOW.indexOf(trip.status as any);
   const tripKm = req ? haversine(req.originLat, req.originLng, req.destLat, req.destLng) : null;
   const isParcel = req?.kind === 'PARCEL';
+  // The fare from the server, not from the store: on a shared ride it GROWS when somebody joins,
+  // and the copy in the driver's store is whatever it was when they accepted.
+  const totalFare = fare ?? Number(trip.agreedFare);
+  // Everyone who boarded after the person who booked. These are the pickups the driver did not
+  // agree to when they took the job, so they get their own treatment rather than a count.
+  const extras = passengers.filter((p) => p.pickupSeq > 1);
+  const sharing = sharedTrip && passengers.length > 1;
   const STEP = stepsFor(isParcel);
   const ACTION = actionFor(isParcel);
 
@@ -248,8 +344,13 @@ export default function DriverTripScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: insets.top + 14, paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}>
-        <Text style={{ fontSize: 24, fontWeight: '800', color: c.text, marginBottom: 4 }}>{isParcel ? 'Active delivery' : 'Active trip'}</Text>
-        <Text style={{ fontSize: 13.5, color: c.textMuted, marginBottom: 18 }}>{isParcel ? 'Delivery' : 'Trip'} {trip.id.slice(0, 8)}… · GH₵ {trip.agreedFare}</Text>
+        <Text style={{ fontSize: 24, fontWeight: '800', color: c.text, marginBottom: 4 }}>
+          {isParcel ? 'Active delivery' : sharing ? 'Shared trip' : 'Active trip'}
+        </Text>
+        <Text style={{ fontSize: 13.5, color: c.textMuted, marginBottom: 18 }}>
+          {isParcel ? 'Delivery' : 'Trip'} {trip.id.slice(0, 8)}… · GH₵ {totalFare}
+          {sharing ? ` · ${passengers.length} passengers` : ''}
+        </Text>
 
         {/* Live map — pickup, destination, route and your position */}
         {!done && req && (() => {
@@ -268,6 +369,11 @@ export default function DriverTripScreen() {
                 { lat: req.originLat, lng: req.originLng, kind: 'pickup' as const, label: 'Pickup' },
                 { lat: req.destLat, lng: req.destLng, kind: 'dest' as const, label: 'Destination' },
               ];
+          // Anybody who joined en route needs a pin of their own. Their pickup is a place the
+          // driver has to actually find, and a card full of coordinates is not a way to find it.
+          extras.forEach((p, i) =>
+            legMarkers.push({ lat: p.originLat, lng: p.originLng, kind: 'pickup' as const,
+                              label: `Pickup ${i + 2}` }));
           const mid = toPickup
             ? { lat: (start.lat + req.originLat) / 2, lng: (start.lng + req.originLng) / 2 }
             : { lat: (req.originLat + req.destLat) / 2, lng: (req.originLng + req.destLng) / 2 };
@@ -325,6 +431,108 @@ export default function DriverTripScreen() {
                 </TouchableOpacity>
               ) : null}
             </Row>
+          </View>
+        )}
+
+        {/* Extra passengers picked up en route. Deliberately its own card rather than a line on
+            the passenger card above: this is work that appeared AFTER the driver accepted the job,
+            and it comes with a stop to make, a person to ring and a fare that went up. */}
+        {!done && extras.length > 0 && (
+          <View style={{ backgroundColor: `${c.success}10`, borderRadius: 20, borderWidth: 1.5, borderColor: c.success, padding: 16, marginBottom: 14 }}>
+            <Row style={{ gap: 8, marginBottom: 10 }}>
+              <Ionicons name="people" size={17} color={c.success} />
+              <Text style={{ flex: 1, fontSize: 14.5, fontWeight: '800', color: c.text }}>
+                {extras.length === 1 ? 'One more passenger' : `${extras.length} more passengers`}
+              </Text>
+              <Text style={{ fontSize: 14.5, fontWeight: '800', color: c.success }}>GH₵ {totalFare}</Text>
+            </Row>
+            {extras.map((p, i) => (
+              <View key={p.riderId} style={{ marginTop: i === 0 ? 0 : 14 }}>
+                <Row style={{ gap: 10, alignItems: 'center' }}>
+                  <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: p.pickedUpAt ? c.success : c.surface, borderWidth: p.pickedUpAt ? 0 : 1.5, borderColor: c.success, alignItems: 'center', justifyContent: 'center' }}>
+                    {p.pickedUpAt
+                      ? <Ionicons name="checkmark" size={14} color="#fff" />
+                      : <Text style={{ color: c.success, fontSize: 12.5, fontWeight: '800' }}>{p.pickupSeq}</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13.5, fontWeight: '700', color: c.text }}>
+                      {p.pickedUpAt ? 'On board' : `Pick up at ${p.originLat.toFixed(4)}, ${p.originLng.toFixed(4)}`}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 1 }}>
+                      Dropping at {p.destLat.toFixed(4)}, {p.destLng.toFixed(4)} · GH₵ {p.lockedFare}
+                    </Text>
+                  </View>
+                  {p.riderPhone ? (
+                    <TouchableOpacity activeOpacity={0.85}
+                      onPress={() => Linking.openURL(`tel:${p.riderPhone}`).catch(() => {})}
+                      style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="call" size={16} color={c.success} />
+                    </TouchableOpacity>
+                  ) : null}
+                </Row>
+
+                {/* Until this is tapped the passenger can still walk away and owe nothing, so the
+                    caption says so rather than leaving the driver to guess why it matters. Only on
+                    the road: the server refuses it before then, so offering it would be a button
+                    that fails. */}
+                {!p.pickedUpAt && (trip.status === 'ENROUTE' || trip.status === 'STARTED') && (
+                  <>
+                    <TouchableOpacity onPress={() => markPickedUp(p.riderId)} disabled={pickingUp === p.riderId}
+                      activeOpacity={0.9}
+                      style={{ marginTop: 9, backgroundColor: c.success, borderRadius: 999, paddingVertical: 11, alignItems: 'center', opacity: pickingUp === p.riderId ? 0.6 : 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>
+                        {pickingUp === p.riderId ? 'Confirming…' : 'They’re in — confirm pickup'}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={{ fontSize: 11.5, color: c.textMuted, marginTop: 5, textAlign: 'center' }}>
+                      Until you confirm, they can still cancel and you won’t be paid for them.
+                    </Text>
+                  </>
+                )}
+
+                {/* They say they are not in your car. Loud, because the alternative is a person
+                    being carried on your fare who never got in — and because the fix is one tap
+                    away and the driver is the only one who can make it. */}
+                {!!p.pickupDisputedAt && (
+                  <View style={{ marginTop: 9, backgroundColor: `${c.warning}18`, borderRadius: 12, padding: 11, borderWidth: 1, borderColor: c.warning }}>
+                    <Row style={{ gap: 8, alignItems: 'flex-start' }}>
+                      <Ionicons name="alert-circle" size={16} color={c.warning} />
+                      <Text style={{ flex: 1, fontSize: 12.5, color: c.text, lineHeight: 18 }}>
+                        This passenger says they're <Text style={{ fontWeight: '800' }}>not in your car</Text>.
+                        If that's right, undo the pickup — you won't be charged for the trip and
+                        they won't be billed. If they are in your car, carry on and support will see this.
+                      </Text>
+                    </Row>
+                  </View>
+                )}
+
+                {/* The way back out of a mis-tap. Understated normally: it is the one action that
+                    re-opens a passenger's exit, so it should be findable when you need it and easy
+                    to ignore when you don't — but once somebody has objected it becomes the point
+                    of the card, so it turns into a real button. Hidden once the fare is settled;
+                    there is nothing left to undo at that point. */}
+                {!!p.pickedUpAt && p.paymentStatus === 'UNPAID'
+                  && trip.status !== 'COMPLETED' && trip.status !== 'CANCELLED' && (
+                  p.pickupDisputedAt ? (
+                    <TouchableOpacity onPress={() => undoPickup(p.riderId)} disabled={pickingUp === p.riderId}
+                      activeOpacity={0.9}
+                      style={{ marginTop: 9, backgroundColor: c.warning, borderRadius: 999, paddingVertical: 11, alignItems: 'center', opacity: pickingUp === p.riderId ? 0.6 : 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>
+                        {pickingUp === p.riderId ? 'Undoing…' : "They're right — undo the pickup"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity onPress={() => undoPickup(p.riderId)} disabled={pickingUp === p.riderId}
+                      activeOpacity={0.7}
+                      style={{ marginTop: 7, alignSelf: 'flex-start', paddingVertical: 4, opacity: pickingUp === p.riderId ? 0.5 : 1 }}>
+                      <Text style={{ fontSize: 12.5, fontWeight: '600', color: c.textMuted, textDecorationLine: 'underline' }}>
+                        {pickingUp === p.riderId ? 'Undoing…' : 'Not in my car — undo'}
+                      </Text>
+                    </TouchableOpacity>
+                  )
+                )}
+              </View>
+            ))}
           </View>
         )}
 
@@ -408,18 +616,56 @@ export default function DriverTripScreen() {
               <Ionicons name="checkmark-done" size={28} color={c.success} />
             </View>
             <Text style={{ fontSize: 19, fontWeight: '800', color: c.text, marginTop: 12 }}>Trip complete</Text>
-            <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 2 }}>Fare GH₵ {trip.agreedFare}</Text>
+            <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 2 }}>
+              Fare GH₵ {totalFare}{sharing ? ` · ${passengers.length} passengers` : ''}
+            </Text>
 
-            {/* Payment */}
-            {pay.status === 'PAID' ? (
+            {/* Payment. On a shared trip each passenger settles separately, so this is a list of
+                people rather than one button: confirming "the trip" would credit one person's
+                cash to everybody, and the driver is standing there with only one person's money.
+                The wallet is not settled until every row is paid. */}
+            {sharing && pay.status !== 'PAID' ? (
+              <View style={{ marginTop: 14, alignSelf: 'stretch', backgroundColor: c.surfaceAlt, borderRadius: 16, padding: 14 }}>
+                <Text style={{ fontSize: 12.5, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                  Fares to collect
+                </Text>
+                {passengers.map((p, i) => (
+                  <View key={p.riderId} style={{ marginTop: i === 0 ? 0 : 12 }}>
+                    <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: c.text }}>
+                          Passenger {p.pickupSeq}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 1 }}>
+                          {p.paymentStatus === 'PAID' ? `Paid${p.paymentMethod ? ` · ${p.paymentMethod}` : ''}`
+                            : p.paymentStatus === 'AWAITING' ? `Paying ${p.paymentMethod ?? 'cash'} — collect it`
+                            : 'Waiting for them to pay'}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 15, fontWeight: '800', color: p.paymentStatus === 'PAID' ? c.success : c.text }}>
+                        GH₵ {p.lockedFare}
+                      </Text>
+                    </Row>
+                    {p.paymentStatus === 'AWAITING' && (
+                      <TouchableOpacity onPress={() => confirmCash(p.riderId)} disabled={confirming} activeOpacity={0.9}
+                        style={{ marginTop: 8, backgroundColor: c.success, borderRadius: 999, paddingVertical: 10, alignItems: 'center', opacity: confirming ? 0.6 : 1 }}>
+                        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>
+                          {confirming ? 'Confirming…' : `Confirm GH₵ ${p.lockedFare} received`}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+            ) : pay.status === 'PAID' ? (
               <Row style={{ justifyContent: 'center', gap: 8, marginTop: 14, backgroundColor: `${c.success}1A`, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 }}>
                 <Ionicons name="checkmark-circle" size={17} color={c.success} />
                 <Text style={{ fontSize: 14, fontWeight: '700', color: c.success }}>Paid{pay.method ? ` · ${pay.method}` : ''}</Text>
               </Row>
             ) : pay.method === 'cash' && pay.status === 'AWAITING' ? (
               <View style={{ marginTop: 14, alignSelf: 'stretch', backgroundColor: c.surfaceAlt, borderRadius: 16, padding: 14 }}>
-                <Text style={{ fontSize: 14, color: c.text, textAlign: 'center', marginBottom: 10 }}>{isParcel ? 'The customer' : 'The passenger'} is paying <Text style={{ fontWeight: '800' }}>GH₵ {trip.agreedFare} cash</Text>. Collect it, then confirm.</Text>
-                <TouchableOpacity onPress={confirmCash} disabled={confirming} activeOpacity={0.9}
+                <Text style={{ fontSize: 14, color: c.text, textAlign: 'center', marginBottom: 10 }}>{isParcel ? 'The customer' : 'The passenger'} is paying <Text style={{ fontWeight: '800' }}>GH₵ {totalFare} cash</Text>. Collect it, then confirm.</Text>
+                <TouchableOpacity onPress={() => confirmCash()} disabled={confirming} activeOpacity={0.9}
                   style={{ backgroundColor: c.success, borderRadius: 999, paddingVertical: 13, alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{confirming ? 'Confirming…' : 'Confirm cash received'}</Text>
                 </TouchableOpacity>
@@ -432,7 +678,13 @@ export default function DriverTripScreen() {
             )}
 
             {/* Rate the passenger */}
-            <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 20 }}>{rated ? 'Thanks for rating!' : isParcel ? 'Rate the customer' : 'Rate your passenger'}</Text>
+            {/* One rating, and on a shared trip it is explicitly for the person who booked —
+                rating everybody would need a rating per passenger, which is not built. Saying
+                "your passenger" on a trip that carried two would credit or blame the wrong one. */}
+            <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 20 }}>
+              {rated ? 'Thanks for rating!' : isParcel ? 'Rate the customer'
+                : sharing ? 'Rate the passenger who booked' : 'Rate your passenger'}
+            </Text>
             <Row style={{ gap: 10, marginTop: 10 }}>
               <StarRating value={rating} onChange={setRating} disabled={rated} />
             </Row>

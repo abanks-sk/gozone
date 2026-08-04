@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, Linking, TextInput, Text, TouchableOpacity, V
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { rideApi, Trip, BidOffer } from '../../src/api/ride';
+import { rideApi, Trip, BidOffer, PoolOffer } from '../../src/api/ride';
 import { walletApi } from '../../src/api/wallet';
 import { mapsApi, LatLng } from '../../src/api/maps';
 import { wsClient } from '../../src/realtime/wsClient';
@@ -50,6 +50,12 @@ export default function LiveRideScreen() {
   const [offers, setOffers] = useState<BidOffer[]>([]);
   const [driverInfo, setDriverInfo] = useState<BidOffer | null>(null);
   const [accepting, setAccepting] = useState(false);
+  // Shared rides already on the road that this request could join. Only ever non-empty when the
+  // passenger ticked "share" — the endpoint returns nothing otherwise.
+  const [poolOffers, setPoolOffers] = useState<PoolOffer[]>([]);
+  const [joining, setJoining] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [disputing, setDisputing] = useState(false);
   // Stop "searching" forever: after this long with no driver we surface a
   // "no drivers available" state instead of spinning indefinitely.
   const [timedOut, setTimedOut] = useState(false);
@@ -124,9 +130,50 @@ export default function LiveRideScreen() {
     return () => { active = false; };
   }, []);
 
+  /**
+   * What THIS passenger owes.
+   *
+   * <p>`agreedFare` is the whole car's money — on a shared ride it is two people's fares added up,
+   * and it is what the driver earns, not what anybody is billed. Every price shown to the
+   * passenger and every amount sent to a payment provider reads this instead. The fallback covers
+   * an ordinary solo trip, where the two are the same number.
+   */
+  const myFare = Number(trip?.myFare ?? trip?.agreedFare ?? 0);
+  const soloFare = trip?.mySoloFare != null ? Number(trip.mySoloFare) : null;
+  const isShared = !!trip?.shared && (trip?.passengerCount ?? 1) > 1;
+  const saved = soloFare != null && soloFare > myFare ? soloFare - myFare : 0;
+  /**
+   * Can this passenger get out?
+   *
+   * <p>Only somebody who *joined* — the person who booked the ride cancels it instead, which is a
+   * different operation with a different consequence for everyone else in the car. The exit closes
+   * at the car door: once the driver has confirmed them aboard, leaving would be a free ride.
+   * Blocked once paid too, because refunds are not built and the server refuses it anyway.
+   */
+  const canLeavePool = !!trip
+    && (trip.myPickupSeq ?? 1) > 1
+    && !trip.myPickedUp
+    && trip.status !== 'COMPLETED' && trip.status !== 'CANCELLED'
+    && (trip.paymentStatus ?? 'UNPAID') === 'UNPAID';
+
+  /**
+   * Marked as being in a car you are not in.
+   *
+   * <p>The other side of boarding: the driver's tap put a fare on this person, and this is how they
+   * answer back. Offered exactly when that has happened and they have not already said so.
+   */
+  const canDispute = !!trip
+    && !!trip.myPickedUp
+    && !trip.myPickupDisputed
+    && trip.status !== 'COMPLETED' && trip.status !== 'CANCELLED'
+    && (trip.paymentStatus ?? 'UNPAID') === 'UNPAID';
+  const disputed = !!trip?.myPickupDisputed;
+
   const searching = !trip;
   // Show the "no drivers" panel once the request is dead, or we timed out with no live offers.
-  const noDrivers = searching && (reqDead || (timedOut && offers.length === 0));
+  // A joinable shared ride counts as an offer: telling somebody nobody can take them while a car
+  // they could get into sits on the screen would be plainly false.
+  const noDrivers = searching && (reqDead || (timedOut && offers.length === 0 && poolOffers.length === 0));
   const completed = trip?.status === 'COMPLETED';
   const cancelled = trip?.status === 'CANCELLED';
   const paid = trip?.paymentStatus === 'PAID';
@@ -149,8 +196,17 @@ export default function LiveRideScreen() {
           setReqDead(true);
           return;
         }
-        const b = await rideApi.listBids(requestId);
-        if (active) setOffers(b);
+        // Driver bids and joinable shared rides are two answers to the same question — "how do I
+        // get there?" — so they are fetched together and shown together. pool-offers returns an
+        // empty list unless this request asked to share, so the extra call costs nothing for
+        // everybody else.
+        const [b, pool] = await Promise.all([
+          rideApi.listBids(requestId),
+          rideApi.poolOffers(requestId).catch(() => [] as PoolOffer[]),
+        ]);
+        if (!active) return;
+        setOffers(b);
+        setPoolOffers(pool);
       } catch {}
     };
     tick();
@@ -167,6 +223,29 @@ export default function LiveRideScreen() {
     try { const t = await rideApi.acceptBid(requestId, b.id); setTrip(t); setDriverInfo(b); }
     catch (e: any) { Alert.alert('Error', e?.response?.data?.message ?? 'Could not accept offer'); }
     finally { setAccepting(false); }
+  }
+
+  /**
+   * Get into a ride that is already on the road.
+   *
+   * <p>The offer list is a poll of a moving world, so this can legitimately fail — the car fills
+   * up, the trip ends, somebody else takes the seat. The server re-checks everything and says
+   * why; the message is shown rather than swallowed, and the list refreshes so the passenger is
+   * not staring at an offer that no longer exists.
+   */
+  async function joinPool(o: PoolOffer) {
+    setJoining(true);
+    try {
+      await rideApi.poolJoin(o.tripId, requestId);
+      // Re-read rather than assume: the join response is a receipt, but the status poll is what
+      // owns the trip shape this screen renders (driver card included).
+      const s = await rideApi.requestStatus(requestId);
+      if (s.trip) setTrip(s.trip);
+      if (s.driver) setDriverInfo(s.driver);
+    } catch (e: any) {
+      Alert.alert('Couldn’t join', e?.response?.data?.message ?? 'That ride is no longer available.');
+      rideApi.poolOffers(requestId).then(setPoolOffers).catch(() => {});
+    } finally { setJoining(false); }
   }
 
   // Cash awaits the driver's confirmation — poll until it flips to PAID.
@@ -188,23 +267,23 @@ export default function LiveRideScreen() {
       // whole point of having saved it. The reference it returns goes through exactly the same
       // verification as a checkout payment.
       if (isSavedCard(payMethod) && !payRef) {
-        const { reference } = await walletApi.chargeCard(cardIdOf(payMethod), Number(trip.agreedFare));
+        const { reference } = await walletApi.chargeCard(cardIdOf(payMethod), myFare);
         setTrip(await rideApi.payTrip(trip.id, 'card', reference));
         await clearPending();
       } else if (viaPaystack && !payRef) {
-        const { reference, authorizationUrl } = await walletApi.payInitialize(Number(trip.agreedFare));
+        const { reference, authorizationUrl } = await walletApi.payInitialize(myFare);
         const url = authorizationUrl.startsWith('http') ? authorizationUrl : `${apiBaseUrl()}${authorizationUrl}`;
         setPayRef(reference);
         // Survive the browser hand-off: returning from Paystack usually reloads the app, and a
         // reference kept only in React state dies with it — the customer pays and the fare stays
         // unpaid. See src/lib/pendingPayment.ts.
-        await setPending({ kind: 'trip', reference, amount: Number(trip.agreedFare), targetId: trip.id, method: payMethod });
+        await setPending({ kind: 'trip', reference, amount: myFare, targetId: trip.id, method: payMethod });
         await Linking.openURL(url);
       } else {
         const t = await rideApi.payTrip(trip.id, payMethod, payRef ?? undefined);
         setTrip(t);
         // Paid by card through checkout — offer it as one tap next time.
-        if (payRef) walletApi.rememberCard(payRef, Number(trip.agreedFare));
+        if (payRef) walletApi.rememberCard(payRef, myFare);
         setPayRef(null);
         await clearPending();
       }
@@ -249,6 +328,67 @@ export default function LiveRideScreen() {
     // moving the marker on the next one.
     return () => { stop(); clearInterval(staleTimer); };
   }, [trip?.id, completed, cancelled]);
+
+  /**
+   * Get out of a ride you joined.
+   *
+   * <p>Confirmed first, and the wording is careful: the passenger needs to know this ends *their*
+   * trip and not the ride — leaving a stranger to think they have cancelled somebody else's
+   * journey would be worse than not offering the button.
+   */
+  function leaveRide() {
+    if (!trip) return;
+    Alert.alert(
+      'Leave this ride?',
+      'You’ll be dropped from this shared ride and won’t be picked up. The other passenger carries on. You can request another ride afterwards.',
+      [
+        { text: 'Stay' },
+        {
+          text: 'Leave', style: 'destructive',
+          onPress: async () => {
+            setLeaving(true);
+            try {
+              await rideApi.leavePool(trip.id);
+              router.replace('/(rider)/home' as any);
+            } catch (e: any) {
+              Alert.alert('Couldn’t leave', e?.response?.data?.message ?? 'Please try again.');
+            } finally { setLeaving(false); }
+          },
+        },
+      ],
+    );
+  }
+
+  /**
+   * Tell the system you are not in that car.
+   *
+   * <p>Careful not to promise more than it does: this does not cancel anything or remove the fare
+   * by itself. It reaches the driver, who can correct it in a tap. Saying "we've told your driver"
+   * is the honest description of what happens next.
+   */
+  function disputePickup() {
+    if (!trip) return;
+    Alert.alert(
+      "You're not in this car?",
+      'Your driver marked you as picked up. We\'ll tell them straight away so they can correct it — and it stays on record if they don\'t.',
+      [
+        { text: 'Cancel' },
+        {
+          text: "I'm not in it", style: 'destructive',
+          onPress: async () => {
+            setDisputing(true);
+            try {
+              await rideApi.disputePickup(trip.id, 'Passenger says they are not in the vehicle');
+              const s = await rideApi.requestStatus(requestId);
+              if (s.trip) setTrip(s.trip);
+            } catch (e: any) {
+              Alert.alert('Error', e?.response?.data?.message ?? 'Could not send that. Please try again.');
+            } finally { setDisputing(false); }
+          },
+        },
+      ],
+    );
+  }
 
   async function sos() {
     if (!trip) return;
@@ -309,6 +449,58 @@ export default function LiveRideScreen() {
             <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 4 }}>
               {offers.length ? 'Pick a driver to confirm your ride.' : 'Nearby drivers are being notified — their offers will appear here.'}
             </Text>
+
+            {/* Shared rides already on the road. Shown ABOVE the driver offers because it is the
+                cheaper answer and it is available now — a car that is already moving beats one
+                that still has to reach you. */}
+            {poolOffers.length > 0 && (
+              <View style={{ marginTop: 14 }}>
+                <Row style={{ gap: 7, marginBottom: 8 }}>
+                  <Ionicons name="people" size={15} color={c.success} />
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: c.success, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Going your way now
+                  </Text>
+                </Row>
+                {poolOffers.map((o) => (
+                  <View key={o.tripId} style={{ marginBottom: 10, backgroundColor: `${c.success}12`, borderRadius: 16, borderWidth: 1.5, borderColor: c.success, padding: 13 }}>
+                    <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <View style={{ flex: 1, paddingRight: 10 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: c.text }} numberOfLines={1}>
+                          {o.driverName || 'A GoZone driver'}
+                        </Text>
+                        <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 2 }} numberOfLines={1}>
+                          {[o.vehicle, o.plate].filter(Boolean).join(' · ') || 'Already on the road'}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Row style={{ gap: 6, alignItems: 'flex-end' }}>
+                          {/* The struck-through solo price is the whole argument for sharing —
+                              a discount you cannot see the size of is not a discount. */}
+                          <Text style={{ fontSize: 13, color: c.textMuted, textDecorationLine: 'line-through' }}>
+                            GH₵ {o.yourSoloFare}
+                          </Text>
+                          <Text style={{ fontSize: 19, fontWeight: '800', color: c.success }}>GH₵ {o.yourFare}</Text>
+                        </Row>
+                        <Text style={{ fontSize: 11.5, fontWeight: '700', color: c.success }}>save {o.savingPct}%</Text>
+                      </View>
+                    </Row>
+
+                    <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 8, lineHeight: 18 }}>
+                      {o.passengerCount === 1 ? 'One passenger' : `${o.passengerCount} passengers`} aboard, heading
+                      {' '}{o.destGapKm < 0.5 ? 'to your destination' : `within ${o.destGapKm.toFixed(1)} km of your destination`}.
+                      {' '}Their fare drops to GH₵ {o.newFare} too.
+                    </Text>
+
+                    <TouchableOpacity onPress={() => joinPool(o)} disabled={joining} activeOpacity={0.9}
+                      style={{ marginTop: 11, backgroundColor: c.success, borderRadius: 999, paddingVertical: 12, alignItems: 'center', opacity: joining ? 0.6 : 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14.5 }}>
+                        {joining ? 'Joining…' : `Join this ride · GH₵ ${o.yourFare}`}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {offers.map((o) => (
               <View key={o.id} style={{ marginTop: 12, backgroundColor: c.surfaceAlt, borderRadius: 16, padding: 12 }}>
@@ -386,6 +578,20 @@ export default function LiveRideScreen() {
             <Text style={{ fontSize: 20, fontWeight: '800', color: c.text, marginTop: 10 }}>{tripPhase(trip.status).title}</Text>
             <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 4 }}>{tripPhase(trip.status).sub}</Text>
 
+            {/* Somebody else is in the car. Worth saying plainly and early: an unannounced extra
+                stop on the way reads as the driver going the wrong way. */}
+            {isShared && (
+              <Row style={{ gap: 9, marginTop: 12, backgroundColor: `${c.success}14`, borderRadius: 14, padding: 12 }}>
+                <Ionicons name="people" size={17} color={c.success} />
+                <Text style={{ flex: 1, fontSize: 13, color: c.text, lineHeight: 18 }}>
+                  You're sharing this ride with {(trip.passengerCount ?? 2) - 1} other
+                  {(trip.passengerCount ?? 2) - 1 > 1 ? ' passengers' : ' passenger'}
+                  {saved > 0 ? ` — your fare dropped to GH₵ ${myFare}, saving GH₵ ${saved.toFixed(2)}.` : '.'}
+                  {' '}There's one more stop on the way.
+                </Text>
+              </Row>
+            )}
+
             <View style={{ marginTop: 16, backgroundColor: c.surfaceAlt, borderRadius: 18, padding: 14 }}>
               <Row style={{ gap: 14 }}>
                 <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' }}>
@@ -402,7 +608,7 @@ export default function LiveRideScreen() {
                   </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: 17, fontWeight: '800', color: c.primary }}>GH₵ {trip.agreedFare}</Text>
+                  <Text style={{ fontSize: 17, fontWeight: '800', color: c.primary }}>GH₵ {myFare}</Text>
                   {driverInfo?.plate ? (
                     <View style={{ marginTop: 4, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
                       <Text style={{ fontSize: 12.5, fontWeight: '800', color: c.text, letterSpacing: 0.8 }}>{driverInfo.plate}</Text>
@@ -430,6 +636,40 @@ export default function LiveRideScreen() {
                 <Text style={{ fontSize: 14.5, fontWeight: '700', color: c.danger }}>SOS</Text>
               </TouchableOpacity>
             </Row>
+
+            {/* Only for someone who JOINED. The passenger who booked has no button here because
+                for them the operation is cancelling the ride, which would end the journey for
+                everyone else in the car — a different thing entirely, and not one to offer behind
+                the same word. Quiet styling: this is an escape hatch, not an invitation. */}
+            {canLeavePool && (
+              <TouchableOpacity onPress={leaveRide} disabled={leaving} activeOpacity={0.7}
+                style={{ marginTop: 12, alignItems: 'center', paddingVertical: 10, opacity: leaving ? 0.5 : 1 }}>
+                <Text style={{ fontSize: 13.5, fontWeight: '600', color: c.textMuted }}>
+                  {leaving ? 'Leaving…' : 'Leave this shared ride'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Once the driver marks you aboard your exit closes and the fare is yours, so if that
+                is wrong you need a way to say so from the same screen it happened on. */}
+            {canDispute && (
+              <TouchableOpacity onPress={disputePickup} disabled={disputing} activeOpacity={0.7}
+                style={{ marginTop: 12, alignItems: 'center', paddingVertical: 10, opacity: disputing ? 0.5 : 1 }}>
+                <Text style={{ fontSize: 13.5, fontWeight: '600', color: c.textMuted }}>
+                  {disputing ? 'Sending…' : "I'm not in this car"}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {disputed && (
+              <Row style={{ gap: 9, marginTop: 12, backgroundColor: `${c.warning}14`, borderRadius: 14, padding: 12 }}>
+                <Ionicons name="alert-circle" size={17} color={c.warning} />
+                <Text style={{ flex: 1, fontSize: 12.5, color: c.text, lineHeight: 18 }}>
+                  We've told your driver you're not in their car. If they don't correct it, our
+                  support team can see this.
+                </Text>
+              </Row>
+            )}
           </>
         )}
 
@@ -440,7 +680,15 @@ export default function LiveRideScreen() {
                 <Ionicons name="checkmark-done" size={26} color={c.success} />
               </View>
               <Text style={{ fontSize: 20, fontWeight: '800', color: c.text, marginTop: 10 }}>Trip complete</Text>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: c.primary, marginTop: 4 }}>GH₵ {trip?.agreedFare}</Text>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: c.primary, marginTop: 4 }}>GH₵ {myFare}</Text>
+              {saved > 0 && (
+                <Row style={{ gap: 6, marginTop: 4 }}>
+                  <Ionicons name="people" size={13} color={c.success} />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: c.success }}>
+                    Sharing saved you GH₵ {saved.toFixed(2)}
+                  </Text>
+                </Row>
+              )}
             </View>
 
             {/* Payment */}
@@ -462,20 +710,20 @@ export default function LiveRideScreen() {
                   <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>
                     {payRef
                       ? 'Finish paying in the Paystack checkout, then tap Verify to confirm.'
-                      : `You’ll pay GH₵ ${trip?.agreedFare} securely via Paystack (${methodMeta.label}).`}
+                      : `You’ll pay GH₵ ${myFare} securely via Paystack (${methodMeta.label}).`}
                   </Text>
                 )}
                 {payMethod === 'wallet' && (
-                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>Pay GH₵ {trip?.agreedFare} from your GoZone Wallet balance.</Text>
+                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>Pay GH₵ {myFare} from your GoZone Wallet balance.</Text>
                 )}
                 {payMethod === 'cash' && awaitingCash && (
                   <Row style={{ gap: 10, alignItems: 'center', marginBottom: 6 }}>
                     <ActivityIndicator color={c.primary} />
-                    <Text style={{ fontSize: 13.5, color: c.text, flex: 1 }}>Pay the driver GH₵ {trip?.agreedFare} in cash — waiting for them to confirm.</Text>
+                    <Text style={{ fontSize: 13.5, color: c.text, flex: 1 }}>Pay the driver GH₵ {myFare} in cash — waiting for them to confirm.</Text>
                   </Row>
                 )}
                 {payMethod === 'cash' && !awaitingCash && (
-                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>Pay the driver GH₵ {trip?.agreedFare} in cash. They’ll confirm it in their app.</Text>
+                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 10 }}>Pay the driver GH₵ {myFare} in cash. They’ll confirm it in their app.</Text>
                 )}
 
                 {!(payMethod === 'cash' && awaitingCash) && (
@@ -485,7 +733,7 @@ export default function LiveRideScreen() {
                       {paying ? 'Processing…'
                         : viaPaystack ? (payRef ? 'Verify payment' : `Pay with ${methodMeta.label}`)
                         : payMethod === 'cash' ? 'Pay with cash'
-                        : `Pay GH₵ ${trip?.agreedFare}`}
+                        : `Pay GH₵ ${myFare}`}
                     </Text>
                   </TouchableOpacity>
                 )}

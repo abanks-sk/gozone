@@ -393,6 +393,8 @@ function IncomingCard({ req, c, myLat, myLng, onAccept, onDecline, onCounter }: 
   const tripKm = haversine(req.originLat, req.originLng, req.destLat, req.destLng);
   const keep = req.proposedFare * (1 - COMMISSION);
   const pct = Math.max(0, secs / OFFER_SECONDS);
+  // Only rides are ever shared; a parcel has no passenger to share with.
+  const shared = req.kind !== 'PARCEL' && !!req.shared;
 
   return (
     <View style={{ backgroundColor: c.surface, borderRadius: 22, borderWidth: 1, borderColor: c.border, padding: 16, marginBottom: 14 }}>
@@ -401,15 +403,26 @@ function IncomingCard({ req, c, myLat, myLng, onAccept, onDecline, onCounter }: 
         <View style={{ width: `${pct * 100}%`, height: 4, backgroundColor: secs <= 8 ? c.danger : c.primary }} />
       </View>
 
-      {/* request-type chip */}
+      {/* request-type chip. A shared ride gets its own colour and its own word, because accepting
+          one is a different job: you may be sent a second pickup mid-trip and the fare will go up
+          when you are. Telling the driver afterwards would be a surprise, not information. */}
       <Row style={{ gap: 6, marginBottom: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: c.primarySoft, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
-          <Ionicons name={req.kind === 'PARCEL' ? 'cube' : 'car-sport'} size={13} color={c.primary} />
-          <Text style={{ fontSize: 11.5, fontWeight: '700', color: c.primary }}>
-            {req.kind === 'PARCEL' ? `${(req.parcelSize ?? 'MEDIUM')} parcel` : `${req.rideType ?? 'STANDARD'} ride`}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4,
+                       backgroundColor: shared ? `${c.success}1A` : c.primarySoft }}>
+          <Ionicons name={req.kind === 'PARCEL' ? 'cube' : shared ? 'people' : 'car-sport'} size={13}
+                    color={shared ? c.success : c.primary} />
+          <Text style={{ fontSize: 11.5, fontWeight: '700', color: shared ? c.success : c.primary }}>
+            {req.kind === 'PARCEL' ? `${(req.parcelSize ?? 'MEDIUM')} parcel`
+              : shared ? 'Shared ride' : `${req.rideType ?? 'STANDARD'} ride`}
           </Text>
         </View>
       </Row>
+      {shared ? (
+        <Text style={{ fontSize: 12.5, color: c.textMuted, marginBottom: 12, lineHeight: 18 }}>
+          This passenger is happy to share. You may pick up another passenger going the same way —
+          your fare goes up when they do.
+        </Text>
+      ) : null}
       {req.kind === 'PARCEL' && req.parcelDesc ? (
         <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 12 }} numberOfLines={2}>“{req.parcelDesc}”</Text>
       ) : null}

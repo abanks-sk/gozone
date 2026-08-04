@@ -15,10 +15,21 @@ import { LeafletMap } from '../../src/components/LeafletMap';
 import { LatLng } from '../../src/components/mapTypes';
 
 const RIDE_TYPES = [
-  { key: 'standard', label: 'Standard', icon: 'car-sport' as const, mult: 1, bargain: true, eta: '3 min' },
-  { key: 'premium', label: 'Luxe', icon: 'car-sport-sharp' as const, mult: 1.7, bargain: false, eta: '5 min' },
-  { key: 'okada', label: 'Okada', icon: 'bicycle' as const, mult: 0.6, bargain: true, eta: '1 min' },
+  // `share` is what makes the ride-sharing toggle appear. Only Standard: Luxe is sold on having
+  // the car to yourself and an okada has one seat, and the backend refuses either outright.
+  { key: 'standard', label: 'Standard', icon: 'car-sport' as const, mult: 1, bargain: true, share: true, eta: '3 min' },
+  { key: 'premium', label: 'Luxe', icon: 'car-sport-sharp' as const, mult: 1.7, bargain: false, share: false, eta: '5 min' },
+  { key: 'okada', label: 'Okada', icon: 'bicycle' as const, mult: 0.6, bargain: true, share: false, eta: '1 min' },
 ];
+
+/**
+ * What sharing takes off the fare, for the line under the toggle.
+ *
+ * <p>Mirrors the backend's `app.pooling.discount-per-extra`, and it is a forecast either way: what
+ * you actually pay depends on how many people end up in the car, and the server prices the join.
+ * The copy says "up to" for that reason rather than promising a number nobody has earned yet.
+ */
+const SHARE_DISCOUNT = 0.25;
 
 /**
  * Confirm the ride: where from, where to, which class, what you're offering.
@@ -48,6 +59,9 @@ export default function RideRequestScreen() {
   const [typeOpen, setTypeOpen] = useState(false);
   const [fare, setFare] = useState(() => rideFare(distance, 1));
   const [loading, setLoading] = useState(false);
+  // Off by default. Sharing means a stranger in the car and a stop on the way, which is a real
+  // trade the passenger has to opt into rather than something to default them into for the discount.
+  const [shared, setShared] = useState(false);
 
   const typeMeta = RIDE_TYPES.find((t) => t.key === rideType) ?? RIDE_TYPES[0];
   const fareFor = (t: typeof RIDE_TYPES[number]) => quotes[t.key] ?? rideFare(distance, t.mult);
@@ -103,6 +117,10 @@ export default function RideRequestScreen() {
   function pickType(t: typeof RIDE_TYPES[number]) {
     setRideType(t.key);
     setFare(fareFor(t)); // re-anchor the offer to the new class (server quote where we have one)
+    // Switching to a class that can't be shared has to clear the choice, not just hide it — the
+    // backend rejects the combination outright, so a hidden-but-still-set toggle would fail the
+    // request with an error about something the passenger can no longer see.
+    if (!t.share) setShared(false);
     setTypeOpen(false);
   }
 
@@ -116,6 +134,7 @@ export default function RideRequestScreen() {
         proposedFare: fare || 30,
         kind: 'RIDE',
         rideType: rideTypeMap[rideType] ?? 'STANDARD',
+        shared: shared && typeMeta.share,
         riderPhone: myPhone || undefined,
         scheduledAt: scheduledFuture ? new Date(scheduledAt!).toISOString() : undefined,
       });
@@ -236,10 +255,40 @@ export default function RideRequestScreen() {
             </TouchableOpacity>
           </Row>
 
+          {/* Ride sharing. Standard only — and it sits above the fare because it changes what the
+              fare means: a shared ride's price is not settled until the car is full. */}
+          {typeMeta.share && (
+            <TouchableOpacity onPress={() => setShared((s) => !s)} activeOpacity={0.85}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14,
+                backgroundColor: shared ? c.primarySoft : c.surfaceAlt, borderRadius: 16,
+                padding: 14, borderWidth: 1.5, borderColor: shared ? c.primary : 'transparent',
+              }}>
+              <View style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: shared ? c.primary : c.surface }}>
+                <Ionicons name="people" size={19} color={shared ? '#fff' : c.textMuted} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14.5, fontWeight: '700', color: c.text }}>Share this ride</Text>
+                <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 2, lineHeight: 17 }}>
+                  {shared
+                    ? `Save up to ${Math.round(SHARE_DISCOUNT * 100)}% — we'll match you with someone going the same way.`
+                    : `Ride with someone going your way and pay up to ${Math.round(SHARE_DISCOUNT * 100)}% less.`}
+                </Text>
+              </View>
+              {/* A drawn switch rather than RN's Switch: the platform control ignores our palette
+                  on Android and reads as a system setting sitting in the middle of a fare card. */}
+              <View style={{ width: 46, height: 27, borderRadius: 14, padding: 3, justifyContent: 'center', backgroundColor: shared ? c.primary : c.border }}>
+                <View style={{ width: 21, height: 21, borderRadius: 11, backgroundColor: '#fff', alignSelf: shared ? 'flex-end' : 'flex-start' }} />
+              </View>
+            </TouchableOpacity>
+          )}
+
           {typeMeta.bargain ? (
             <Row style={{ justifyContent: 'space-between', marginTop: 16, marginBottom: 16 }}>
               <View>
-                <Text style={{ fontSize: 12, color: c.textMuted, letterSpacing: 0.3, fontWeight: '600' }}>Your fare offer · drivers can counter</Text>
+                <Text style={{ fontSize: 12, color: c.textMuted, letterSpacing: 0.3, fontWeight: '600' }}>
+                  {shared ? 'Your fare offer · less if someone shares' : 'Your fare offer · drivers can counter'}
+                </Text>
                 <Row style={{ alignItems: 'flex-end', marginTop: 2 }}>
                   <Text style={{ fontSize: 22, fontWeight: '800', color: c.text }}>GH₵ </Text>
                   <TextInput
