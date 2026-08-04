@@ -109,8 +109,11 @@ any moment in the journey, which is the protection itself. The passenger is told
 object (`/trips/{id}/dispute-pickup`). A dispute deliberately does **not** un-board them —
 that would be the free-ride hole entered from the other side — but it is recorded, the
 driver is told, and while it is open the driver may undo at any time rather than only
-inside the window. `GET /rides/pickup-disputes` is the admin backstop; the endpoint exists,
-the admin-web page for it does not.
+inside the window. `GET /rides/pickup-disputes` is the admin backstop, with a page in admin-web:
+uphold takes the passenger off the ride, refusing keeps them on it and requires a
+reason they will read. Resolving records the outcome rather than clearing the
+dispute — a settled argument about money should still say what was claimed and
+who was found to be right.
 
 ### Delivery tracking = the ride primitive reused
 A courier is a driver carrying a parcel. `/food/deliveries/{id}/track` reuses the same

@@ -396,6 +396,7 @@ Vite + React, no router (simple page-state switch), axios against the same gatew
 | `Approvals` | Approve/reject pending drivers and vendors; assign vehicle class                                                                     |
 | `Kyc`       | Filter and review driver KYC submissions                                                                                             |
 | `Incidents` | SOS alerts raised from trips; mark handled                                                                                           |
+| `Disputes`  | Pickup disputes: a passenger says they are not in the car a driver marked them into. Uphold (they come off the ride, no fare) or refuse with a reason they will read. Carries both phone numbers — these are settled by ringing people, not from the screen |
 | `Promos`    | Create promos (kind, discount terms, target, background image, live preview), activate (= approve vendor applications), hide, delete |
 | `Fees`      | Platform service fee % and delivery base/per-km                                                                                      |
 | `Payouts`   | Cash-out board: what's owed, mark paid, or mark failed (which refunds the earner)                                                    |
@@ -445,7 +446,7 @@ Owns rides **and parcels** — they share one request table.
 `requests/{id}/bid`, `requests/{id}/bids`, `requests/{id}/bids/{bidId}/accept`, `bids/{id}`,
 `trips/mine`, `trips/{id}`, `trips/{id}/status`, `trips/{id}/pay`, `trips/{id}/confirm-cash`,
 `trips/{id}/rate`, `trips/{id}/sos`, `requests/{id}/pool-offers`, `trips/{id}/pool-join`,
-`trips/{id}/leave-pool`, `trips/{id}/passengers`, `trips/{id}/passengers/{riderId}/picked-up` (POST/DELETE), `trips/{id}/dispute-pickup`, `pickup-disputes`, `trips/{id}/pool-candidates`,
+`trips/{id}/leave-pool`, `trips/{id}/passengers`, `trips/{id}/passengers/{riderId}/picked-up` (POST/DELETE), `trips/{id}/dispute-pickup`, `pickup-disputes` (+ admin resolve), `trips/{id}/pool-candidates`,
 `locations`, `sos`, `sos/{id}/handle`, and the Google Maps proxy under `maps/`.
 
 **Key logic**:

@@ -1,7 +1,7 @@
 # Device tap-through checklist
 
 Everything here is **unverified by any automated test** and can only be cleared on a real device.
-The e2e suite (289/289) covers the backend; these are the phone-side behaviours it cannot reach —
+The e2e suite (304/304) covers the backend; these are the phone-side behaviours it cannot reach —
 React Native Web ignores synthetic clicks, so none of this has ever been seen running.
 
 **§14 (ride sharing) is the newest and least proven** — it is a whole feature whose UI has only
@@ -445,9 +445,17 @@ travelling and whose destination is near theirs
 - [ ] **Works even after 5 minutes** — an open dispute lifts the driver's undo deadline. Confirm a
       pickup, wait past the window, dispute, and the driver can still undo it
 
+**The admin backstop** (admin-web → Pickup disputes, browser-verified already)
+
+- [ ] With a dispute open, the page lists it with **both phone numbers**, the driver's vehicle and
+      plate, the fare at stake and what the passenger said
+- [ ] **Uphold** removes the passenger from the ride; **Refuse** keeps them on it and demands a
+      reason (the passenger reads it)
+- [ ] Either way it leaves the **Open** filter and stays under **All** with its outcome recorded
+
 **Won't work, don't raise:** the driver rates only the passenger who booked; the label says so.
-`GET /rides/pickup-disputes` exists for admins but **there is no admin-web page for it** — a
-dispute a driver refuses to correct is reachable via the API only.
+Leaving a shared ride deletes the passenger row and the dispute record with it — once they are off
+the ride there is no charge left to justify, but the admin log line is then the only trace.
 
 ---
 

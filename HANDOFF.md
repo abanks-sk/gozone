@@ -19,7 +19,7 @@ A complete context dump so a new session can continue seamlessly.
 **Everything raised in the user's device tap-through is now built**, and so is **ride sharing**
 (the P0 pooling feature that had been missed — see the last `###` entry). All 17 issues across
 sections A, B and C of `docs/ISSUES_FROM_TESTING.md` are implemented and that file is the triage
-record. `scripts/e2e.sh` is **289/289** green against the running stack.
+record. `scripts/e2e.sh` is **304/304** green against the running stack.
 
 ⚠️ **The newest thing to know:** on a shared ride a fare belongs to a **passenger**, not a trip.
 `trips.agreed_fare` is now the sum of everyone's share (what the driver earns);
@@ -2415,8 +2415,35 @@ put a fare on was told neither. ride **V11** adds `trip_passengers.pickup_disput
   it neither. Without this, somebody wrongly marked aboard who notices at minute six is still
   stuck — which was the entire problem. Undoing clears the dispute and notifies them.
 - **`GET /rides/pickup-disputes`** (ADMIN/SUPER_ADMIN) is the backstop when a driver won't correct
-  one. ⚠️ **The endpoint exists; there is no admin-web page for it yet** — the data is reachable,
-  the screen is not built.
+  one. *(The admin page for it is built — see the next entry.)*
 - Driver app: a disputed passenger gets a loud amber card and the quiet "undo" link becomes a real
   button. Both outcomes are spelled out, including that carrying on is legitimate if the passenger
   really is in the car.
+
+### Pickup disputes get an admin board (REBUILD ride-service, e2e 289 → 304)
+The dispute endpoint existed with nothing behind it, which made "an admin can settle it" a claim
+the product could not keep. ride **V12** adds `pickup_dispute_resolved_at` + `pickup_dispute_outcome`,
+and admin-web gains a **Pickup disputes** page.
+
+- ⚠️ **Resolving no longer clears the dispute — it records the outcome.** Clearing it meant a
+  settled argument about money left no trace of what was claimed or who was found to be right.
+  "Open" is now `disputed_at IS NOT NULL AND resolved_at IS NULL`, which is also what the board
+  lists. The driver's own undo writes an outcome too ("the driver undid the pickup themselves").
+- **`PATCH /rides/pickup-disputes/{tripId}/{riderId}`** — UPHELD clears `picked_up_at`, so the
+  passenger comes off the ride and is not charged; anything else refuses it and they stay on.
+  ⚠️ **Refusing without a note is a 400**, because it leaves a fare on somebody who said it was not
+  theirs and the passenger reads the reason. Upholding logs at WARN with both parties named — it
+  moves money away from a driver, and that is the entry someone reads when the driver asks why.
+- **`GET /rides/pickup-disputes?openOnly=`** now returns a fuller `PickupDisputeResponse`: both
+  parties' phone numbers, the driver's name/vehicle/plate (from the accepted bid, so no
+  cross-service call), the fare at stake and the note. The board is settled by ringing people, not
+  by reading a truncated UUID — same lesson as the KYC page.
+- ⚠️ **A settled dispute is raisable again.** `myPickupDisputed` means *open*, not "ever raised", or
+  a passenger marked aboard a second time could never object again.
+- **Verified in a browser, not just type-checked**: signed in as the seeded admin, staged a real
+  dispute, saw it render with live data, clicked Uphold, watched it leave the open board, keep its
+  record under "All", and confirmed in SQL that `picked_up_at` was actually cleared.
+- ⚠️ **Leaving a shared ride deletes the passenger row, and the dispute record with it.** Acceptable
+  — once they are off the ride there is no outstanding charge to justify — but the admin log line is
+  then the only trace.
+- `.claude/launch.json` (in the CodeQuest working dir, not the repo) runs admin-web for preview.

@@ -492,9 +492,9 @@ echo "--- leaving is not cancelling ---"
 # than the job they accepted — which is why the pricing rule is a ceiling and not a one-way ratchet.
 LR1=$(POST /rides/requests "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6500,"destLng":-0.1960,"proposedFare":30,"kind":"RIDE","rideType":"STANDARD","shared":true}')
 LRID1=$(echo "$LR1" | jq_ "d['id']")
-LB=$(POST "/rides/requests/$LRID1/bid" "$DRIVER" '{"type":"ACCEPT","amount":30,"driverName":"Kwame Driver","lat":5.6050,"lng":-0.1875}')
+LB=$(POST "/rides/requests/$LRID1/bid" "$DRIVER" '{"type":"ACCEPT","amount":30,"driverName":"Kwame Driver","driverPhone":"+233201000002","vehicle":"Toyota Vitz (silver)","plate":"GR-2244-22","lat":5.6050,"lng":-0.1875}')
 LTID=$(POST "/rides/requests/$LRID1/bids/$(echo "$LB" | jq_ "d['bidId']")/accept" "$RIDER" '{}' | jq_ "d['id']")
-LR2=$(POST /rides/requests "$RIDER2" '{"originLat":5.6250,"originLng":-0.1915,"destLat":5.6470,"destLng":-0.1975,"proposedFare":20,"kind":"RIDE","rideType":"STANDARD","shared":true}')
+LR2=$(POST /rides/requests "$RIDER2" '{"originLat":5.6250,"originLng":-0.1915,"destLat":5.6470,"destLng":-0.1975,"proposedFare":20,"kind":"RIDE","rideType":"STANDARD","shared":true,"riderPhone":"+233201000007"}')
 LRID2=$(echo "$LR2" | jq_ "d['id']")
 POST "/rides/trips/$LTID/pool-join" "$RIDER2" "{\"requestId\":\"$LRID2\"}" >/dev/null
 eqm "  (joined: booker down to 22.50)" "$(GET "/rides/requests/$LRID1/status" $RIDER | jq_ "d['trip']['myFare']")" "22.50"
@@ -540,12 +540,43 @@ eq "  so leaving is still refused"         "$(curl -s -o /dev/null -w '%{http_co
 eq "  the app knows not to ask twice"      "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickupDisputed']")" "True"
 eq "  an admin can see it"                 "$(GET /rides/pickup-disputes $ADMIN | python -c "import sys,json;print(any(p['riderId']=='$RID2_ID' for p in json.load(sys.stdin)))")" "True"
 eq "  and only an admin can"               "$(CODE /rides/pickup-disputes $DRIVER)" "403"
+# The board is settled on the phone, so it has to carry enough to ring both parties. A truncated
+# UUID is not something anyone can act on — same lesson as the KYC board.
+eq "  the board names the driver"          "$(GET /rides/pickup-disputes $ADMIN | jq_ "[p['driverName'] for p in d if p['riderId']=='$RID2_ID'][0]")" "Kwame Driver"
+eq "  and carries both phone numbers"      "$(GET /rides/pickup-disputes $ADMIN | jq_ "[bool(p['riderPhone']) and bool(p['driverPhone']) for p in d if p['riderId']=='$RID2_ID'][0]")" "True"
+eqm "  and the fare at stake"               "$(GET /rides/pickup-disputes $ADMIN | jq_ "[str(p['lockedFare']) for p in d if p['riderId']=='$RID2_ID'][0]")" "15.00"
+# Refusing leaves a fare on somebody who says it is not theirs, so it cannot be done silently.
+eq "refusing without a reason is refused"  "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $ADMIN" -d '{"decision":"REJECTED"}' $GW/rides/pickup-disputes/$LTID/$RID2_ID)" "400"
+eq "a passenger can't settle their own"    "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER2" -d '{"decision":"UPHELD"}' $GW/rides/pickup-disputes/$LTID/$RID2_ID)" "403"
 # The point of the whole exchange: an objection lifts the driver's deadline, so somebody wrongly
 # marked aboard who notices at minute six is not stuck with it.
 eq "a dispute lets the driver undo even now" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "200"
 eq "  the dispute is closed with it"       "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickupDisputed']")" "False"
 eq "  and the dispute board is clear"      "$(GET /rides/pickup-disputes $ADMIN | python -c "import sys,json;print(any(p['riderId']=='$RID2_ID' for p in json.load(sys.stdin)))")" "False"
+# Settled, not deleted. An argument about money should leave a record of what was claimed and who
+# was found to be right — clearing the flag would erase both.
+eq "  but it is kept on the record"        "$(GET "/rides/pickup-disputes?openOnly=false" $ADMIN | python -c "import sys,json;print(any(p['riderId']=='$RID2_ID' and p['resolvedAt'] for p in json.load(sys.stdin)))")" "True"
+eq "  saying the driver conceded"          "$(GET "/rides/pickup-disputes?openOnly=false" $ADMIN | jq_ "[p['outcome'][:6] for p in d if p['riderId']=='$RID2_ID'][0]")" "UPHELD"
 eq "nothing to dispute when not aboard"    "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER2" -d '{}' $GW/rides/trips/$LTID/dispute-pickup)" "409"
+
+# The admin backstop, for when the driver does NOT concede. Refusing first: the passenger stays on
+# the ride and keeps the fare.
+POST "/rides/trips/$LTID/passengers/$RID2_ID/picked-up" "$DRIVER" '{}' >/dev/null
+POST "/rides/trips/$LTID/dispute-pickup" "$RIDER2" '{"note":"still not in it"}' >/dev/null
+eq "a settled dispute can be raised again" "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickupDisputed']")" "True"
+REFUSE=$(PATCH_ "/rides/pickup-disputes/$LTID/$RID2_ID" "$ADMIN" '{"decision":"REJECTED","note":"Driver sent a photo of them in the car"}')
+eq "admin refuses it"                      "$(echo "$REFUSE" | jq_ "d['outcome'][:8]")" "REJECTED"
+neq "  the passenger stays aboard"         "$(echo "$REFUSE" | jq_ "str(d['pickedUpAt'])")" "None"
+eq "  and off the open board"              "$(GET /rides/pickup-disputes $ADMIN | python -c "import sys,json;print(any(p['riderId']=='$RID2_ID' for p in json.load(sys.stdin)))")" "False"
+eq "  resolving twice is refused"          "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -H "Authorization: Bearer $ADMIN" -d '{"decision":"UPHELD"}' $GW/rides/pickup-disputes/$LTID/$RID2_ID)" "409"
+
+# Now upholding: this is the one that moves money away from a driver, so it must actually
+# un-board the passenger and not merely close the ticket.
+POST "/rides/trips/$LTID/dispute-pickup" "$RIDER2" '{"note":"I really am not in this car"}' >/dev/null
+UPHOLD=$(PATCH_ "/rides/pickup-disputes/$LTID/$RID2_ID" "$ADMIN" '{"decision":"UPHELD","note":"Driver could not describe them"}')
+eq "admin upholds it"                      "$(echo "$UPHOLD" | jq_ "d['outcome'][:6]")" "UPHELD"
+eq "  the passenger is un-boarded"         "$(echo "$UPHOLD" | jq_ "str(d['pickedUpAt'])")" "None"
+eq "  so they can leave again"             "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickedUp']")" "False"
 
 # Put them back on the kerb so the rest of the section can exercise the leave path itself.
 docker exec gozone-postgres psql -U gozone -d ride_db -q -c \
