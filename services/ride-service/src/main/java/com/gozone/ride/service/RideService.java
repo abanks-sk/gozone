@@ -39,6 +39,7 @@ public class RideService {
     private final BidRepository bidRepo;
     private final TripRepository tripRepo;
     private final TripPassengerRepository passengerRepo;
+    private final PickupDisputeRepository disputeRepo;
     private final DriverLocationRepository locationRepo;
     private final RideRatingRepository ratingRepo;
     private final SosIncidentRepository sosRepo;
@@ -91,6 +92,7 @@ public class RideService {
                        BidRepository bidRepo,
                        TripRepository tripRepo,
                        TripPassengerRepository passengerRepo,
+                       PickupDisputeRepository disputeRepo,
                        DriverLocationRepository locationRepo,
                        RideRatingRepository ratingRepo,
                        SosIncidentRepository sosRepo,
@@ -101,6 +103,7 @@ public class RideService {
         this.bidRepo      = bidRepo;
         this.tripRepo     = tripRepo;
         this.passengerRepo = passengerRepo;
+        this.disputeRepo  = disputeRepo;
         this.locationRepo = locationRepo;
         this.ratingRepo   = ratingRepo;
         this.sosRepo      = sosRepo;
@@ -277,7 +280,8 @@ public class RideService {
                 : passengerRepo.findById(new TripPassenger.TripPassengerId(found.getId(), req.getRiderId()))
                     .orElse(null);
             trip = me != null
-                ? TripResponse.forPassenger(found, me, (int) passengerRepo.countByIdTripId(found.getId()))
+                ? TripResponse.forPassenger(found, me,
+                    (int) passengerRepo.countByIdTripId(found.getId()), disputeOpen(found.getId(), req.getRiderId()))
                 : TripResponse.from(found);
             // The winning driver's details for the live-screen driver card. The accepted bid hangs
             // off the trip's OWN request, not the caller's — a joiner never had a bid of their own,
@@ -493,7 +497,8 @@ public class RideService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
         }
         return me != null
-            ? TripResponse.forPassenger(trip, me, (int) passengerRepo.countByIdTripId(tripId))
+            ? TripResponse.forPassenger(trip, me,
+                (int) passengerRepo.countByIdTripId(tripId), disputeOpen(tripId, actor))
             : TripResponse.from(trip);
     }
 
@@ -536,7 +541,8 @@ public class RideService {
         rollUpPayment(trip); // settles the driver once every passenger has paid
         log.info("[PAY] trip={} rider={} amount={} method={} status={}",
             tripId, riderId, due, method, me.getPaymentStatus());
-        return TripResponse.forPassenger(trip, me, (int) passengerRepo.countByIdTripId(tripId));
+        return TripResponse.forPassenger(trip, me,
+            (int) passengerRepo.countByIdTripId(tripId), disputeOpen(tripId, rider));
     }
 
     /**
@@ -899,36 +905,63 @@ public class RideService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "You've already paid for this ride — contact support.");
         }
-        // Raising it twice is not two disputes. Keep the first timestamp: it is the record of when
-        // the objection was made, which is the fact that matters if this is ever adjudicated.
-        // A dispute that was already settled and is being raised again IS new, though — clear the
-        // resolution so it re-enters the queue rather than looking answered.
-        if (!me.hasOpenPickupDispute()) {
-            me.setPickupDisputedAt(OffsetDateTime.now());
-            me.setPickupDisputeResolvedAt(null);
-            me.setPickupDisputeOutcome(null);
-        }
-        me.setPickupDisputeNote(trimToNull(note));
-        passengerRepo.save(me);
+        // Raising it twice is not two disputes — the existing one is updated and keeps its original
+        // timestamp, which is the fact that matters if this is ever adjudicated. A dispute that was
+        // already settled and is raised again IS new, and gets a new row: the old decision stays on
+        // the record rather than being overwritten by the next round of the same argument.
+        PickupDispute d = disputeRepo
+            .findByTripIdAndRiderIdAndResolvedAtIsNull(tripId, rider)
+            .orElseGet(() -> {
+                PickupDispute fresh = new PickupDispute();
+                fresh.setTripId(tripId);
+                fresh.setRiderId(rider);
+                return fresh;
+            });
+        // Copied, not joined: the seat is deleted if they leave the ride, and the fare they were
+        // objecting to is the substance of the claim.
+        d.setPickupSeq(me.getPickupSeq());
+        d.setLockedFare(me.getLockedFare());
+        d.setNote(trimToNull(note));
+        disputeRepo.save(d);
 
         notifyClient.send(trip.getDriverId(), "A passenger disputes their pickup",
             "Someone says they're not in your car. If that's right, undo the pickup in your trip.");
-        log.warn("[POOL] rider={} disputes pickup on trip={} note={}", riderId, tripId, me.getPickupDisputeNote());
+        log.warn("[POOL] rider={} disputes pickup on trip={} note={}", riderId, tripId, d.getNote());
         return TripPassengerResponse.of(me, requestOf(me, trip), false);
     }
 
     /** Admin: pickup disputes, so a driver refusing to correct one is not the end of it. */
     @Transactional(readOnly = true)
     public List<PickupDisputeResponse> listPickupDisputes(boolean openOnly) {
-        return passengerRepo.findDisputes(openOnly).stream()
-            .map(p -> {
-                Trip trip = p.getTrip();
-                RideRequest r = requestOf(p, trip);
-                Bid winning = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
-                    trip.getRequest().getId(), Bid.BidStatus.ACCEPTED).orElse(null);
-                return PickupDisputeResponse.of(p, trip, r, winning);
-            })
+        return disputeRepo.findForBoard(openOnly).stream()
+            .map(this::describeDispute)
+            .filter(java.util.Objects::nonNull)
             .toList();
+    }
+
+    /** Does this passenger have a live objection to being marked aboard? */
+    private boolean disputeOpen(UUID tripId, UUID riderId) {
+        return disputeRepo.findByTripIdAndRiderIdAndResolvedAtIsNull(tripId, riderId).isPresent();
+    }
+
+    /**
+     * Flesh a dispute out for the admin board.
+     *
+     * <p>The seat may be gone — someone can raise a dispute and then leave the ride — so everything
+     * is looked up defensively and the row still renders. That is the whole reason the dispute is
+     * its own table.
+     */
+    private PickupDisputeResponse describeDispute(PickupDispute d) {
+        Trip trip = tripRepo.findById(d.getTripId()).orElse(null);
+        if (trip == null) return null;
+        TripPassenger seat = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(d.getTripId(), d.getRiderId())).orElse(null);
+        // Their own request where they are still aboard; the trip's otherwise, which at least gives
+        // the admin the route the argument is about.
+        RideRequest req = seat != null ? requestOf(seat, trip) : trip.getRequest();
+        Bid winning = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
+            trip.getRequest().getId(), Bid.BidStatus.ACCEPTED).orElse(null);
+        return PickupDisputeResponse.of(d, trip, req, winning, seat);
     }
 
     /**
@@ -944,48 +977,48 @@ public class RideService {
      */
     public PickupDisputeResponse resolvePickupDispute(UUID tripId, UUID riderId,
                                                       boolean uphold, String note) {
-        Trip trip = tripRepo.findById(tripId)
-            .orElseThrow(() -> new IllegalStateException("Trip not found"));
-        TripPassenger p = passengerRepo
-            .findById(new TripPassenger.TripPassengerId(tripId, riderId))
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                "That passenger isn't on this trip."));
-        if (!p.hasOpenPickupDispute()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "There's no open dispute on that passenger.");
-        }
+        tripRepo.findById(tripId).orElseThrow(() -> new IllegalStateException("Trip not found"));
+        PickupDispute d = disputeRepo.findByTripIdAndRiderIdAndResolvedAtIsNull(tripId, riderId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                "There's no open dispute on that passenger."));
         String reason = trimToNull(note);
         if (!uphold && reason == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Say why the dispute is being refused — the passenger reads it.");
         }
 
+        // The seat may be gone: someone can raise a dispute and then leave the ride. The decision
+        // is still worth recording — it is the only thing that says whether the driver was wrong.
+        TripPassenger p = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, riderId)).orElse(null);
+        Trip trip = tripRepo.findById(tripId).orElseThrow();
+
         if (uphold) {
             // Their word is taken: off the ride's books, and free to leave again.
-            p.setPickedUpAt(null);
-            p.setPickupDisputeOutcome("UPHELD" + (reason != null ? " — " + reason : ""));
+            if (p != null) {
+                p.setPickedUpAt(null);
+                passengerRepo.save(p);
+            }
+            d.setOutcome("UPHELD" + (reason != null ? " — " + reason : ""));
             notifyClient.send(riderId, "Your dispute was upheld",
                 "You're no longer marked as being in that car"
                     + (reason != null ? ". " + reason : "."));
             notifyClient.send(trip.getDriverId(), "A pickup was reversed",
                 "Support reviewed a passenger's dispute and removed them from your trip.");
         } else {
-            p.setPickupDisputeOutcome("REJECTED — " + reason);
+            d.setOutcome("REJECTED — " + reason);
             notifyClient.send(riderId, "Your dispute was reviewed",
                 "We've looked into it and you remain on this ride. " + reason);
         }
-        p.setPickupDisputeResolvedAt(OffsetDateTime.now());
-        passengerRepo.save(p);
+        d.setResolvedAt(OffsetDateTime.now());
+        disputeRepo.save(d);
 
         // Upholding one moves money away from a driver, so it belongs in the log at WARN with both
         // parties named — this is the entry someone reads when a driver asks why they were docked.
         log.warn("[POOL] admin resolved pickup dispute trip={} rider={} outcome={}",
-            tripId, riderId, p.getPickupDisputeOutcome());
+            tripId, riderId, d.getOutcome());
 
-        RideRequest r = requestOf(p, trip);
-        Bid winning = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
-            trip.getRequest().getId(), Bid.BidStatus.ACCEPTED).orElse(null);
-        return PickupDisputeResponse.of(p, trip, r, winning);
+        return describeDispute(d);
     }
 
     /**
@@ -1029,7 +1062,9 @@ public class RideService {
         // are asking for exactly this — so an open dispute lifts the clock. Without that, somebody
         // wrongly marked aboard who notices at minute six is still stuck, which is the whole
         // problem this was meant to solve.
-        boolean disputed = p.hasOpenPickupDispute();
+        PickupDispute open = disputeRepo
+            .findByTripIdAndRiderIdAndResolvedAtIsNull(tripId, riderId).orElse(null);
+        boolean disputed = open != null;
         if (!disputed && p.getPickedUpAt().isBefore(OffsetDateTime.now().minusSeconds(pickupUndoSeconds))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Too late to undo that pickup — contact support.");
@@ -1038,10 +1073,11 @@ public class RideService {
         p.setPickedUpAt(null);
         // The objection has been answered, so it leaves the admin queue — but it is marked settled
         // rather than deleted. The claim and the fact that the driver conceded it both stay on the
-        // row, which is the whole point of keeping a record of an argument about money.
+        // record, which is the whole point of keeping one about an argument over money.
         if (disputed) {
-            p.setPickupDisputeResolvedAt(OffsetDateTime.now());
-            p.setPickupDisputeOutcome("UPHELD — the driver undid the pickup themselves");
+            open.setResolvedAt(OffsetDateTime.now());
+            open.setOutcome("UPHELD — the driver undid the pickup themselves");
+            disputeRepo.save(open);
         }
         passengerRepo.save(p);
         if (disputed) {
@@ -1340,8 +1376,21 @@ public class RideService {
         if (!isDriver && !isPassenger) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You were not on this trip");
         }
-        if (ratingRepo.existsByTripIdAndRaterId(tripId, rater)) {
-            throw new IllegalStateException("Already rated this trip");
+        // Per person, not per trip. A driver on a shared ride has an opinion about each passenger,
+        // and keying this on the trip alone let them rate one and silently locked out the rest.
+        if (ratingRepo.existsByTripIdAndRaterIdAndRateeId(tripId, rater, dto.getRateeId())) {
+            // 409, not the bare IllegalStateException this used to throw: a second tap on a rating
+            // is an ordinary thing to do and the app should be able to say "already rated" rather
+            // than showing a server error.
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "You've already rated them for this trip.");
+        }
+        // Rate somebody who was actually on it. Without this the endpoint accepts any UUID as a
+        // ratee, which is a way to move a stranger's average.
+        boolean rateeOnTrip = (trip.getDriverId() != null && trip.getDriverId().equals(dto.getRateeId()))
+            || passengerRepo.existsById(new TripPassenger.TripPassengerId(tripId, dto.getRateeId()));
+        if (!rateeOnTrip) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "They weren't on this trip.");
         }
         RideRating rating = new RideRating();
         rating.setTripId(tripId);

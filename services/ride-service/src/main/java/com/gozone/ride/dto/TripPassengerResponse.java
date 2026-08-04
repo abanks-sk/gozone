@@ -33,10 +33,7 @@ public record TripPassengerResponse(
      * When the driver confirmed they were in the car. Null while they are still a pickup to make —
      * and while they can still walk away.
      */
-    java.time.OffsetDateTime pickedUpAt,
-    /** When they objected to being marked aboard, and why. Null unless they have. */
-    java.time.OffsetDateTime pickupDisputedAt,
-    String pickupDisputeNote
+    java.time.OffsetDateTime pickedUpAt
 ) {
     public static TripPassengerResponse of(TripPassenger p, RideRequest req, boolean includePhone) {
         return new TripPassengerResponse(
@@ -52,9 +49,7 @@ public record TripPassengerResponse(
             req.getDest().getY(),
             req.getDest().getX(),
             includePhone ? req.getRiderPhone() : null,
-            p.getPickedUpAt(),
-            p.getPickupDisputedAt(),
-            p.getPickupDisputeNote()
+            p.getPickedUpAt()
         );
     }
 }

@@ -1,6 +1,7 @@
 package com.gozone.ride.dto;
 
 import com.gozone.ride.model.Bid;
+import com.gozone.ride.model.PickupDispute;
 import com.gozone.ride.model.RideRequest;
 import com.gozone.ride.model.Trip;
 import com.gozone.ride.model.TripPassenger;
@@ -46,29 +47,36 @@ public record PickupDisputeResponse(
     OffsetDateTime resolvedAt,
     String outcome
 ) {
-    public static PickupDisputeResponse of(TripPassenger p, Trip trip, RideRequest req, Bid winningBid) {
+    /**
+     * @param seat the passenger row, or null when they have since left the ride — the dispute
+     *             outlives the seat on purpose, so the board must render without one.
+     */
+    public static PickupDisputeResponse of(PickupDispute d, Trip trip, RideRequest req,
+                                           Bid winningBid, TripPassenger seat) {
         return new PickupDisputeResponse(
             trip.getId(),
             trip.getStatus().name(),
-            p.getId().getRiderId(),
+            d.getRiderId(),
             req != null ? req.getRiderPhone() : null,
             trip.getDriverId(),
             winningBid != null ? winningBid.getDriverName() : null,
             winningBid != null ? winningBid.getDriverPhone() : null,
             winningBid != null ? winningBid.getVehicle() : null,
             winningBid != null ? winningBid.getPlate() : null,
-            p.getLockedFare(),
-            p.getPickupSeq(),
-            p.getPaymentStatus().name(),
+            d.getLockedFare(),
+            d.getPickupSeq(),
+            // No seat means they left the ride after raising this. "LEFT" rather than a payment
+            // status, because there is no longer a fare of theirs to be in any state.
+            seat != null ? seat.getPaymentStatus().name() : "LEFT",
             req != null ? req.getOrigin().getY() : 0,
             req != null ? req.getOrigin().getX() : 0,
             req != null ? req.getDest().getY() : 0,
             req != null ? req.getDest().getX() : 0,
-            p.getPickedUpAt(),
-            p.getPickupDisputedAt(),
-            p.getPickupDisputeNote(),
-            p.getPickupDisputeResolvedAt(),
-            p.getPickupDisputeOutcome()
+            seat != null ? seat.getPickedUpAt() : null,
+            d.getRaisedAt(),
+            d.getNote(),
+            d.getResolvedAt(),
+            d.getOutcome()
         );
     }
 }

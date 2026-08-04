@@ -61,7 +61,7 @@ public record TripResponse(
 ) {
     /** Trip-level view: the whole fare and the rolled-up payment state. What the driver sees. */
     public static TripResponse from(Trip t) {
-        return build(t, null, 1);
+        return build(t, null, 1, false);
     }
 
     /**
@@ -70,11 +70,13 @@ public record TripResponse(
      * <p>Use wherever the caller has been identified as a passenger — anything else hands somebody
      * a bill that is not theirs.
      */
-    public static TripResponse forPassenger(Trip t, TripPassenger p, int passengerCount) {
-        return build(t, p, passengerCount);
+    public static TripResponse forPassenger(Trip t, TripPassenger p, int passengerCount,
+                                            boolean disputeOpen) {
+        return build(t, p, passengerCount, disputeOpen);
     }
 
-    private static TripResponse build(Trip t, TripPassenger p, int passengerCount) {
+    private static TripResponse build(Trip t, TripPassenger p, int passengerCount,
+                                      boolean disputeOpen) {
         var req = t.getRequest();
         return new TripResponse(
             t.getId(),
@@ -97,7 +99,7 @@ public record TripResponse(
             p != null ? p.getPickedUpAt() != null : null,
             // Open, not "ever raised": a settled dispute must not leave the passenger permanently
             // unable to object again if the driver marks them aboard a second time.
-            p != null ? p.hasOpenPickupDispute() : null
+            p != null ? disputeOpen : null
         );
     }
 }

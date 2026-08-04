@@ -530,7 +530,8 @@ paths:
         reach here — the driver undoes the pickup as soon as they are told, which settles it and
         drops it off the open list. What remains is a disagreement. Carries both parties' phone
         numbers because that is how these are actually settled; a truncated UUID is not something
-        anyone can act on.
+        anyone can act on. Each round of the same argument is a separate row — settling one never
+        overwrites the last decision — and rows survive the passenger leaving the ride.
       operationId: listPickupDisputes
       parameters:
         - name: openOnly
@@ -692,6 +693,11 @@ paths:
     post:
       tags: [ratings]
       summary: Two-way rating after trip completion
+      description: >
+        One rating per rater PER PERSON, not per trip — a shared ride carries several passengers
+        and the driver has an opinion about each. The ratee must actually have been on the trip
+        (the driver, or one of its passengers), or the endpoint would take any UUID and become a
+        way to move a stranger's average.
       operationId: rateTrip
       parameters:
         - name: id
@@ -709,6 +715,12 @@ paths:
       responses:
         '200':
           description: Rating recorded; aggregates updated
+        '400':
+          description: That person wasn't on this trip
+        '403':
+          description: You weren't on this trip
+        '409':
+          description: You've already rated them for this trip
 
   /trips/{id}/sos:
     post:
@@ -1206,14 +1218,6 @@ components:
           format: date-time
           nullable: true
           description: When the driver confirmed they were in the car; null while still a pickup to make
-        pickupDisputedAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: When they objected to being marked aboard. Does not clear pickedUpAt
-        pickupDisputeNote:
-          type: string
-          nullable: true
 
     PickupDisputeResponse:
       type: object
@@ -1236,7 +1240,14 @@ components:
           type: number
           description: What the passenger is charged if the dispute fails
         pickupSeq: { type: integer }
-        paymentStatus: { type: string, enum: [UNPAID, AWAITING, PAID] }
+        paymentStatus:
+          type: string
+          enum: [UNPAID, AWAITING, PAID, LEFT]
+          description: >
+            LEFT means the passenger raised this and then left the ride, so there is no seat or
+            fare any more. The dispute outlives the seat on purpose — a driver who repeatedly marks
+            people aboard who are not in the car is a pattern nobody could see if every complainant
+            who walked away erased their own complaint.
         originLat: { type: number }
         originLng: { type: number }
         destLat: { type: number }

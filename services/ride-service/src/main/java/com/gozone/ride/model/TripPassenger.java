@@ -71,36 +71,9 @@ public class TripPassenger {
     @Column(name = "picked_up_at")
     private OffsetDateTime pickedUpAt;
 
-    /**
-     * When this passenger objected to being marked aboard, and why. Null unless they have.
-     *
-     * <p>Deliberately does NOT clear {@link #pickedUpAt} — a dispute that un-boarded on demand
-     * would be the free-ride hole again, entered from the passenger's side. It is a record and a
-     * signal: the driver is told and may undo without the usual time limit, and an admin can see it
-     * if the two disagree.
-     */
-    @Column(name = "pickup_disputed_at")
-    private OffsetDateTime pickupDisputedAt;
-
-    @Column(name = "pickup_dispute_note", columnDefinition = "text")
-    private String pickupDisputeNote;
-
-    /**
-     * How the dispute ended, and when. Null while it is still open.
-     *
-     * <p>The objection is not deleted on resolution — an argument about money should leave a record
-     * of what was claimed and who was found to be right, and clearing the flag would erase both.
-     */
-    @Column(name = "pickup_dispute_resolved_at")
-    private OffsetDateTime pickupDisputeResolvedAt;
-
-    @Column(name = "pickup_dispute_outcome", columnDefinition = "text")
-    private String pickupDisputeOutcome;
-
-    /** Open = raised and not yet answered. What the admin board lists. */
-    public boolean hasOpenPickupDispute() {
-        return pickupDisputedAt != null && pickupDisputeResolvedAt == null;
-    }
+    // A passenger's objection to being marked aboard lives in `pickup_disputes`, not here — this
+    // row is deleted when somebody leaves a shared ride, and a dispute stored on it died with the
+    // person who raised it. See PickupDispute.
 
     @Column(name = "rule_version", nullable = false, length = 20)
     private String ruleVersion = "v1";
@@ -127,14 +100,6 @@ public class TripPassenger {
     public void setJoinedAt(OffsetDateTime joinedAt) { this.joinedAt = joinedAt; }
     public OffsetDateTime getPickedUpAt() { return pickedUpAt; }
     public void setPickedUpAt(OffsetDateTime pickedUpAt) { this.pickedUpAt = pickedUpAt; }
-    public OffsetDateTime getPickupDisputedAt() { return pickupDisputedAt; }
-    public void setPickupDisputedAt(OffsetDateTime pickupDisputedAt) { this.pickupDisputedAt = pickupDisputedAt; }
-    public String getPickupDisputeNote() { return pickupDisputeNote; }
-    public void setPickupDisputeNote(String pickupDisputeNote) { this.pickupDisputeNote = pickupDisputeNote; }
-    public OffsetDateTime getPickupDisputeResolvedAt() { return pickupDisputeResolvedAt; }
-    public void setPickupDisputeResolvedAt(OffsetDateTime at) { this.pickupDisputeResolvedAt = at; }
-    public String getPickupDisputeOutcome() { return pickupDisputeOutcome; }
-    public void setPickupDisputeOutcome(String outcome) { this.pickupDisputeOutcome = outcome; }
     public String getRuleVersion() { return ruleVersion; }
     public void setRuleVersion(String ruleVersion) { this.ruleVersion = ruleVersion; }
 
