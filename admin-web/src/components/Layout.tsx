@@ -13,6 +13,7 @@ const NAV: { key: Page; label: string; icon: string; superOnly?: boolean }[] = [
   { key: 'fees', label: 'Fees', icon: '💵' },
   { key: 'payouts', label: 'Payouts', icon: '🏧' },
   { key: 'incidents', label: 'Incidents', icon: '🚨' },
+  { key: 'disputes', label: 'Pickup disputes', icon: '⚖️' },
   { key: 'admins', label: 'Admins', icon: '👤', superOnly: true },
 ];
 

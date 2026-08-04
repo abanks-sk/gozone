@@ -10,9 +10,10 @@ import Admins from './pages/Admins';
 import Promos from './pages/Promos';
 import Fees from './pages/Fees';
 import Incidents from './pages/Incidents';
+import Disputes from './pages/Disputes';
 import Payouts from './pages/Payouts';
 
-export type Page = 'dashboard' | 'approvals' | 'edits' | 'kyc' | 'promos' | 'fees' | 'payouts' | 'incidents' | 'admins';
+export type Page = 'dashboard' | 'approvals' | 'edits' | 'kyc' | 'promos' | 'fees' | 'payouts' | 'incidents' | 'disputes' | 'admins';
 
 function isAdmin() {
   const r = getRole();
@@ -43,6 +44,7 @@ export default function App() {
       {page === 'fees' && <Fees />}
       {page === 'payouts' && <Payouts />}
       {page === 'incidents' && <Incidents />}
+      {page === 'disputes' && <Disputes />}
       {page === 'admins' && (isSuper ? <Admins /> : <Dashboard onReviewKyc={() => setPage('kyc')} onApprovals={() => setPage('approvals')} />)}
     </Layout>
   );
