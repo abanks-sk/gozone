@@ -20,6 +20,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -44,8 +46,31 @@ public class RideService {
     private final WalletClient walletClient;
     private final NotifyClient notifyClient;
 
+    // ── Ride sharing (pooling) config ───────────────────────────────────────────
+    /** How near the joiner's destination must be to where the car is already going. */
     @Value("${app.pooling.max-distance-km:3.0}")
     private double maxPoolDistanceKm;
+
+    /** How far off the car's remaining line the joiner's pickup may sit. */
+    @Value("${app.pooling.max-detour-km:2.0}")
+    private double maxPoolDetourKm;
+
+    /** How far the joiner's direction of travel may differ from the car's. */
+    @Value("${app.pooling.max-bearing-deg:50}")
+    private double maxPoolBearingDeg;
+
+    @Value("${app.pooling.max-passengers:3}")
+    private int maxPoolPassengers;
+
+    @Value("${app.pooling.discount-per-extra:0.25}")
+    private double poolDiscountPerExtra;
+
+    @Value("${app.pooling.min-discount-factor:0.55}")
+    private double poolMinDiscountFactor;
+
+    /** How long a driver has to take back a pickup they confirmed by mistake. */
+    @Value("${app.pooling.pickup-undo-seconds:300}")
+    private int pickupUndoSeconds;
 
     @Value("${app.pooling.rule-version:v1}")
     private String ruleVersion;
@@ -95,6 +120,7 @@ public class RideService {
         req.setScheduledAt(dto.getScheduledAt()); // null = ride now
         req.setKind(parseEnum(RideRequest.Kind.class, dto.getKind(), RideRequest.Kind.RIDE));
         req.setRideType(parseEnum(RideRequest.RideType.class, dto.getRideType(), RideRequest.RideType.STANDARD));
+        req.setShared(dto.isShared());
         req.setParcelSize(parseEnum(RideRequest.ParcelSize.class, dto.getParcelSize(), null));
         req.setParcelDesc(dto.getParcelDesc());
         req.setDirection(parseEnum(RideRequest.Direction.class, dto.getDirection(), null));
@@ -108,6 +134,17 @@ public class RideService {
                 && (req.getPartyName() == null || req.getPartyPhone() == null)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "A parcel needs the other person's name and phone number.");
+        }
+
+        // Sharing is a Standard-ride idea and refusing it here is the point: Luxe is sold on
+        // having the car to yourself, an okada has one seat, and a parcel has no passenger to
+        // share with. Rejecting rather than quietly clearing the flag means a client that asks
+        // for the wrong thing is told so instead of silently selling a ride nobody can join.
+        if (req.isShared()
+                && (req.getKind() != RideRequest.Kind.RIDE
+                    || req.getRideType() != RideRequest.RideType.STANDARD)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Ride sharing is only available on Standard rides.");
         }
 
         requestRepo.save(req);
@@ -189,9 +226,16 @@ public class RideService {
     public List<RideHistoryItem> myRides(String riderId) {
         return requestRepo.findByRiderIdOrderByCreatedAtDesc(UUID.fromString(riderId)).stream()
             .map(r -> {
-                Trip trip = tripRepo.findByRequestId(r.getId()).orElse(null);
+                // A shared ride joined en route has no trip of its own — the trip belongs to
+                // whoever booked it — so the passenger row is the way through. Without this, a
+                // joined ride shows in the history as a request that never went anywhere.
+                TripPassenger seat = passengerRepo.findByRequestId(r.getId()).orElse(null);
+                Trip trip = seat != null ? seat.getTrip() : tripRepo.findByRequestId(r.getId()).orElse(null);
                 String status = trip != null ? trip.getStatus().name() : r.getStatus().name();
-                BigDecimal fare = trip != null ? trip.getAgreedFare() : r.getProposedFare();
+                // Their own share, never the trip total: on a shared ride the total is two people's
+                // money and putting it in one person's history reads as what they were charged.
+                BigDecimal fare = seat != null ? seat.getLockedFare()
+                    : trip != null ? trip.getAgreedFare() : r.getProposedFare();
                 return new RideHistoryItem(
                     r.getId(), trip != null ? trip.getId() : null, status, fare,
                     r.getOrigin().getY(), r.getOrigin().getX(), r.getDest().getY(), r.getDest().getX(),
@@ -206,25 +250,43 @@ public class RideService {
         if (!req.getRiderId().equals(UUID.fromString(riderId))) {
             throw new IllegalStateException("Not your request");
         }
+
+        // Where this request ended up. Booking a ride outright creates a trip against the request;
+        // joining a shared ride en route does not — the trip belongs to whoever booked it, and the
+        // passenger row is the only link back. Look for a seat first, because a joiner has both a
+        // request and a ride and only one of the two lookups finds it.
+        TripPassenger seat = passengerRepo.findByRequestId(requestId).orElse(null);
+        Trip found = seat != null ? seat.getTrip() : tripRepo.findByRequestId(requestId).orElse(null);
+
         // Lazy expiry: an immediate request nobody accepted within the TTL flips to
         // EXPIRED here, so the polling rider is told "no drivers available" promptly
         // (the scheduled sweep is only a backstop for riders who stopped polling).
         if (req.getStatus() == RideRequest.Status.OPEN
                 && req.getScheduledAt() == null
                 && req.getCreatedAt().isBefore(OffsetDateTime.now().minusSeconds(requestTtlSeconds))
-                && tripRepo.findByRequestId(requestId).isEmpty()
+                && found == null
                 && bidRepo.findByRequestIdAndStatus(requestId, Bid.BidStatus.PENDING).isEmpty()) {
             req.setStatus(RideRequest.Status.EXPIRED);
             requestRepo.save(req);
         }
-        TripResponse trip = tripRepo.findByRequestId(requestId)
-            .map(TripResponse::from)
-            .orElse(null);
-        // Winning driver's details (from the accepted bid) for the live-screen driver card.
-        BidOffer driver = trip == null ? null
-            : bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(requestId, Bid.BidStatus.ACCEPTED)
+
+        TripResponse trip = null;
+        BidOffer driver = null;
+        if (found != null) {
+            TripPassenger me = seat != null ? seat
+                : passengerRepo.findById(new TripPassenger.TripPassengerId(found.getId(), req.getRiderId()))
+                    .orElse(null);
+            trip = me != null
+                ? TripResponse.forPassenger(found, me, (int) passengerRepo.countByIdTripId(found.getId()))
+                : TripResponse.from(found);
+            // The winning driver's details for the live-screen driver card. The accepted bid hangs
+            // off the trip's OWN request, not the caller's — a joiner never had a bid of their own,
+            // and looking on their request would leave them with a blank driver card.
+            driver = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
+                    found.getRequest().getId(), Bid.BidStatus.ACCEPTED)
                 .map(b -> BidOffer.from(b, driverDistanceKm(b, req)))
                 .orElse(null);
+        }
         // Ownership was checked at the top of this method, so the owner shape is correct here.
         return new RideStatusResponse(RideRequestResponse.forOwner(req), trip, driver);
     }
@@ -353,11 +415,19 @@ public class RideService {
         trip.setRequest(req);
         trip.setDriverId(bid.getDriverId());
         trip.setAgreedFare(bid.getAmount());
+        // Whether this car can pick anybody else up was decided by the passenger when they asked
+        // for the ride, not by the driver accepting it.
+        trip.setShared(req.isShared());
         tripRepo.save(trip);
 
         TripPassenger passenger = new TripPassenger();
         passenger.setId(new TripPassenger.TripPassengerId(trip.getId(), req.getRiderId()));
         passenger.setTrip(trip);
+        passenger.setRequestId(req.getId());
+        // Solo and locked start equal: nobody has joined yet, so the agreed price IS the share.
+        // Every later discount is computed from soloFare, so this is the number the passenger can
+        // always be shown as "what you would have paid alone".
+        passenger.setSoloFare(bid.getAmount());
         passenger.setLockedFare(bid.getAmount());
         passenger.setPickupSeq((short) 1);
         passenger.setRuleVersion(ruleVersion);
@@ -391,6 +461,12 @@ public class RideService {
         trip.setStatus(newStatus);
         if (newStatus == Trip.Status.STARTED) {
             trip.setStartedAt(OffsetDateTime.now());
+            // STARTED already means "the passenger who booked is in the car" — that is what the
+            // driver is confirming when they tap it. Recording it here rather than asking them to
+            // confirm the same thing twice; joiners board later and get their own confirmation.
+            passengerRepo.findById(new TripPassenger.TripPassengerId(tripId, trip.getRequest().getRiderId()))
+                .filter(p -> p.getPickedUpAt() == null)
+                .ifPresent(p -> { p.setPickedUpAt(OffsetDateTime.now()); passengerRepo.save(p); });
         }
         if (newStatus == Trip.Status.COMPLETED) {
             trip.setCompletedAt(OffsetDateTime.now());
@@ -408,11 +484,17 @@ public class RideService {
             .orElseThrow(() -> new IllegalStateException("Trip not found"));
         UUID actor = UUID.fromString(userId);
         boolean isDriver = trip.getDriverId() != null && trip.getDriverId().equals(actor);
-        boolean isRider = trip.getRequest() != null && trip.getRequest().getRiderId().equals(actor);
-        if (!isDriver && !isRider) {
+        // Membership is the passenger table, not the trip's request. On a shared ride the second
+        // passenger is every bit a participant and is not named anywhere on the booking request —
+        // checking that alone would lock them out of the trip they are sitting in.
+        TripPassenger me = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, actor)).orElse(null);
+        if (!isDriver && me == null) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
         }
-        return TripResponse.from(trip);
+        return me != null
+            ? TripResponse.forPassenger(trip, me, (int) passengerRepo.countByIdTripId(tripId))
+            : TripResponse.from(trip);
     }
 
     /**
@@ -421,14 +503,19 @@ public class RideService {
      * cash awaits the driver's confirmation.
      */
     public TripResponse payTrip(UUID tripId, String riderId, String method, String reference) {
+        UUID rider = UUID.fromString(riderId);
         Trip trip = tripRepo.findById(tripId)
             .orElseThrow(() -> new IllegalStateException("Trip not found"));
-        if (!trip.getRequest().getRiderId().equals(UUID.fromString(riderId))) {
-            throw new IllegalStateException("Not your trip");
-        }
+
+        // The caller pays THEIR share, not the trip's total. On a shared ride those are different
+        // numbers, and charging the trip total would bill each passenger for everybody.
+        TripPassenger me = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, rider))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip"));
+        BigDecimal due = me.getLockedFare();
 
         boolean viaPaystack = reference != null && !reference.isBlank();
-        if (viaPaystack && !walletClient.verifyPayment(trip.getAgreedFare(), reference)) {
+        if (viaPaystack && !walletClient.verifyPayment(due, reference)) {
             throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,
                 "Payment could not be verified. If you completed it, please try again.");
         }
@@ -437,17 +524,19 @@ public class RideService {
         // the balance won't cover it, before the trip is marked paid — an empty wallet used to
         // pay fine and the driver was credited anyway.
         if (!viaPaystack && "wallet".equalsIgnoreCase(method)) {
-            walletClient.chargeWallet(trip.getRequest().getRiderId(), trip.getAgreedFare(), trip.getId());
+            walletClient.chargeWallet(rider, due, trip.getId());
         }
 
-        trip.setPaymentMethod(method);
-        trip.setPaymentStatus((!viaPaystack && "cash".equalsIgnoreCase(method))
+        me.setPaymentMethod(method);
+        me.setPaymentStatus((!viaPaystack && "cash".equalsIgnoreCase(method))
             ? Trip.PaymentStatus.AWAITING
             : Trip.PaymentStatus.PAID);
-        tripRepo.save(trip);
-        settleIfPaid(trip); // pays out the driver once the (completed) trip is paid
-        log.info("[PAY] trip={} method={} status={}", tripId, method, trip.getPaymentStatus());
-        return TripResponse.from(trip);
+        passengerRepo.save(me);
+
+        rollUpPayment(trip); // settles the driver once every passenger has paid
+        log.info("[PAY] trip={} rider={} amount={} method={} status={}",
+            tripId, riderId, due, method, me.getPaymentStatus());
+        return TripResponse.forPassenger(trip, me, (int) passengerRepo.countByIdTripId(tripId));
     }
 
     /**
@@ -477,18 +566,68 @@ public class RideService {
         return TripResponse.from(trip);
     }
 
-    /** Driver confirms a cash payment was collected. */
-    public TripResponse confirmCash(UUID tripId, String driverId) {
+    /**
+     * Driver confirms cash was collected.
+     *
+     * <p>{@code riderId} names which passenger handed money over — on a shared ride two people pay
+     * two different amounts at two different kerbs, and confirming "the trip" would credit one
+     * person's cash to everybody. Omitting it clears every passenger still awaiting cash, which on
+     * an ordinary single-passenger trip is exactly the old behaviour and the only sensible reading.
+     */
+    public TripResponse confirmCash(UUID tripId, String driverId, UUID riderId) {
         Trip trip = tripRepo.findById(tripId)
             .orElseThrow(() -> new IllegalStateException("Trip not found"));
         if (!trip.getDriverId().equals(UUID.fromString(driverId))) {
             throw new IllegalStateException("Not your trip");
         }
-        trip.setPaymentStatus(Trip.PaymentStatus.PAID);
+
+        List<TripPassenger> settling = riderId != null
+            ? passengerRepo.findById(new TripPassenger.TripPassengerId(tripId, riderId))
+                .map(List::of).orElse(List.of())
+            : passengerRepo.findByIdTripId(tripId).stream()
+                .filter(p -> p.getPaymentStatus() == Trip.PaymentStatus.AWAITING)
+                .toList();
+        if (settling.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "No cash payment is waiting to be confirmed.");
+        }
+        for (TripPassenger p : settling) {
+            p.setPaymentStatus(Trip.PaymentStatus.PAID);
+            passengerRepo.save(p);
+        }
+
+        rollUpPayment(trip);
+        log.info("[PAY] trip={} cash confirmed by driver {} for {} passenger(s)",
+            tripId, driverId, settling.size());
+        return TripResponse.from(trip);
+    }
+
+    /**
+     * Fold every passenger's payment state up into the trip's, and settle when the money is all in.
+     *
+     * <p>The trip is PAID only when everybody has paid, because the driver is owed the whole fare
+     * and the wallet settles a trip exactly once. A shared ride where one passenger has paid and
+     * the other is still fumbling for cash is AWAITING — not half-paid, which the ledger has no
+     * way to express.
+     */
+    private void rollUpPayment(Trip trip) {
+        List<TripPassenger> all = passengerRepo.findByIdTripId(trip.getId());
+        if (all.isEmpty()) return;
+        boolean allPaid = all.stream().allMatch(p -> p.getPaymentStatus() == Trip.PaymentStatus.PAID);
+        boolean anyStarted = all.stream().anyMatch(p -> p.getPaymentStatus() != Trip.PaymentStatus.UNPAID);
+        trip.setPaymentStatus(allPaid ? Trip.PaymentStatus.PAID
+            : anyStarted ? Trip.PaymentStatus.AWAITING
+            : Trip.PaymentStatus.UNPAID);
+        // The trip-level method is only meaningful when it is unambiguous; two passengers can pay
+        // different ways, and the driver's screen reads this to decide whether to expect cash.
+        String method = all.stream().map(TripPassenger::getPaymentMethod)
+            .filter(java.util.Objects::nonNull).distinct().count() == 1
+            ? all.stream().map(TripPassenger::getPaymentMethod)
+                .filter(java.util.Objects::nonNull).findFirst().orElse(null)
+            : "mixed";
+        trip.setPaymentMethod(method);
         tripRepo.save(trip);
         settleIfPaid(trip);
-        log.info("[PAY] trip={} cash confirmed by driver {}", tripId, driverId);
-        return TripResponse.from(trip);
     }
 
     /** Driver pushes GPS location — stored and broadcast over WebSocket. */
@@ -512,7 +651,427 @@ public class RideService {
         );
     }
 
-    /** Find route-compatible open requests for pooling. */
+    // ── Ride sharing (pooling) ──────────────────────────────────────────────────
+    //
+    // Two ways in, one matcher. A rider who ticked "share" is shown rides already on the road that
+    // are going their way (poolOffers) and steps into one (poolJoin); a driver can look the other
+    // way down the same relation and see who they could pick up (poolCandidates). Both run
+    // poolFit, so the driver is never shown somebody the rider would not be offered, and neither
+    // is ever shown a match the other side's screen contradicts.
+    //
+    // This is deliberately corridor geometry, not routing: no detour-time model, no ETA cap, no
+    // re-solving the driver's route. See CLAUDE.md — the simplification is the design, and the
+    // rule_version stamped on every quote is what makes it safe to replace later.
+
+    /** A candidate match that passed every gate, and by how much. */
+    private record PoolFit(double detourKm, double destGapKm) {}
+
+    /**
+     * Rides already under way that this request could join.
+     *
+     * <p>Polled by the rider while drivers are still bidding, so it sits beside those bids as a
+     * third choice: take a price, counter it, or get into a car that is going there anyway for
+     * less. Returns an empty list rather than an error whenever nothing qualifies — "no shared
+     * rides near you" is the normal case, not a failure.
+     */
+    @Transactional(readOnly = true)
+    public List<PoolOffer> poolOffers(UUID requestId, String riderId) {
+        UUID rider = UUID.fromString(riderId);
+        RideRequest joiner = requestRepo.findById(requestId)
+            .orElseThrow(() -> new IllegalStateException("Request not found"));
+        if (!joiner.getRiderId().equals(rider)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your ride request");
+        }
+        if (!isPoolable(joiner)) return List.of();
+        // Already aboard something: there is nothing left to offer, and offering anyway would let
+        // one request be sold twice.
+        if (passengerRepo.findByRequestId(requestId).isPresent()) return List.of();
+
+        List<PoolOffer> offers = new ArrayList<>();
+        for (Trip trip : tripRepo.findActiveSharedNearDest(
+                joiner.getDest().getY(), joiner.getDest().getX(), maxPoolDistanceKm)) {
+
+            if (rider.equals(trip.getDriverId())) continue;   // nobody rides in their own car
+            List<TripPassenger> aboard = passengerRepo.findByIdTripIdOrderByPickupSeqAsc(trip.getId());
+            if (aboard.isEmpty() || aboard.size() >= maxPoolPassengers) continue;
+            if (aboard.stream().anyMatch(p -> p.getId().getRiderId().equals(rider))) continue;
+
+            PoolFit fit = poolFit(trip, joiner);
+            if (fit == null) continue;
+
+            int newCount = aboard.size() + 1;
+            double factor = shareFactor(newCount);
+            BigDecimal yourSolo = joiner.getProposedFare();
+            BigDecimal yourFare = applyFactor(yourSolo, factor);
+
+            // What the ride costs the person already in it, before and after. The offer says out
+            // loud that they gain too — otherwise joining reads as taking something off somebody.
+            TripPassenger first = aboard.get(0);
+            BigDecimal theirNow = first.getLockedFare();
+            BigDecimal theirNext = min(theirNow, applyFactor(first.getSoloFare(), factor));
+
+            Bid winning = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
+                trip.getRequest().getId(), Bid.BidStatus.ACCEPTED).orElse(null);
+            double[] car = carPosition(trip);
+
+            offers.add(new PoolOffer(
+                trip.getId(), trip.getDriverId(),
+                winning != null ? winning.getDriverName() : null,
+                winning != null ? winning.getVehicle() : null,
+                winning != null ? winning.getPlate() : null,
+                car[0], car[1],
+                trip.getRequest().getDest().getY(), trip.getRequest().getDest().getX(),
+                yourFare, yourSolo, theirNow, theirNext, savingPct(yourSolo, yourFare),
+                aboard.size(), fit.detourKm(), fit.destGapKm(), ruleVersion));
+        }
+        // Least detour first: the closest car is both the soonest pickup and the one whose driver
+        // is least inconvenienced.
+        offers.sort(Comparator.comparingDouble(PoolOffer::detourKm));
+        return offers;
+    }
+
+    /**
+     * The rider steps into a shared ride already under way.
+     *
+     * <p>Every check {@link #poolOffers} made runs again here, because the offer list is a poll of
+     * a moving world: between it being drawn and the tap landing, the car can fill up, the trip can
+     * finish, and the rider's own request can be matched to a driver. The list is a suggestion;
+     * this is the decision.
+     */
+    public PoolJoinResponse poolJoin(UUID tripId, String riderId, PoolJoinRequest req) {
+        UUID rider = UUID.fromString(riderId);
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+
+        RideRequest joining = requestRepo.findById(req.getRequestId())
+            .orElseThrow(() -> new IllegalStateException("Ride request not found"));
+
+        // The request must belong to the caller — nobody matchmakes on someone else's behalf.
+        if (!joining.getRiderId().equals(rider)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your ride request");
+        }
+        if (rider.equals(trip.getDriverId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are driving this trip");
+        }
+        if (!trip.isShared() || trip.getRequest().getKind() != RideRequest.Kind.RIDE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This ride isn't shared.");
+        }
+        if (trip.getStatus() != Trip.Status.MATCHED
+                && trip.getStatus() != Trip.Status.ENROUTE
+                && trip.getStatus() != Trip.Status.STARTED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "That ride has already finished.");
+        }
+        if (!isPoolable(joining)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "This request can no longer join a shared ride.");
+        }
+        if (passengerRepo.findByRequestId(joining.getId()).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "You're already on a ride.");
+        }
+
+        List<TripPassenger> aboard = passengerRepo.findByIdTripIdOrderByPickupSeqAsc(tripId);
+        if (aboard.size() >= maxPoolPassengers) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "That ride is full.");
+        }
+        if (aboard.stream().anyMatch(p -> p.getId().getRiderId().equals(rider))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "You're already on this ride.");
+        }
+        if (poolFit(trip, joining) == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "That ride is no longer going your way.");
+        }
+
+        TripPassenger passenger = new TripPassenger();
+        passenger.setId(new TripPassenger.TripPassengerId(tripId, rider));
+        passenger.setTrip(trip);
+        passenger.setRequestId(joining.getId());
+        passenger.setSoloFare(joining.getProposedFare());
+        // Set to the solo fare and immediately discounted by repriceTrip below, which prices
+        // everyone on board by the same rule rather than treating the newcomer as a special case.
+        passenger.setLockedFare(joining.getProposedFare());
+        passenger.setJoinDistanceKm(BigDecimal.valueOf(haversineKm(
+                joining.getOrigin().getY(), joining.getOrigin().getX(),
+                joining.getDest().getY(), joining.getDest().getX()))
+            .setScale(3, RoundingMode.HALF_UP));
+        passenger.setPickupSeq((short) (aboard.size() + 1));
+        passenger.setRuleVersion(ruleVersion);
+        passengerRepo.save(passenger);
+
+        joining.setStatus(RideRequest.Status.MATCHED);
+        requestRepo.save(joining);
+
+        // Drivers who bid on this request are still sat waiting on an answer. The rider has taken
+        // a different ride, so tell them — otherwise they hold their offer open for a passenger
+        // who is already in somebody else's car.
+        for (Bid pending : bidRepo.findByRequestIdAndStatus(joining.getId(), Bid.BidStatus.PENDING)) {
+            pending.setStatus(Bid.BidStatus.REJECTED);
+            bidRepo.save(pending);
+        }
+
+        repriceTrip(trip);
+
+        TripPassenger saved = passengerRepo.findByRequestId(joining.getId()).orElse(passenger);
+        int count = aboard.size() + 1;
+
+        // Somebody is now getting into a moving car. The driver has a new pickup they did not have
+        // a minute ago, and the passenger already aboard is about to be joined by a stranger and
+        // to pay less for it — neither of them is watching a screen for this.
+        notifyClient.send(trip.getDriverId(), "New shared passenger",
+            "Someone joined your shared ride. Check your trip for the extra pickup.");
+        for (TripPassenger other : aboard) {
+            notifyClient.send(other.getId().getRiderId(), "Someone's sharing your ride",
+                "Your fare is now GH₵ " + other.getLockedFare() + " — you're picking up one more passenger on the way.");
+        }
+
+        log.info("[POOL] rider={} joined trip={} fare={} (solo {}) passengers={} rule={}",
+            riderId, tripId, saved.getLockedFare(), saved.getSoloFare(), count, ruleVersion);
+        return new PoolJoinResponse(tripId, saved.getLockedFare(), saved.getSoloFare(), count, ruleVersion);
+    }
+
+    /**
+     * The driver confirms a passenger has got into the car.
+     *
+     * <p>The booking passenger is stamped automatically when the trip goes STARTED — that is what
+     * that transition already means. This exists for everybody who joined afterwards: they board at
+     * their own kerb, minutes later, on a trip that is already under way, so no trip-level status
+     * can speak for them.
+     *
+     * <p>It is the driver's own protection. Until they confirm it, the passenger can still walk
+     * away; after it, the fare is owed. Only allowed once the car is actually moving
+     * (ENROUTE/STARTED), so a driver cannot mark somebody aboard the moment they are matched and
+     * strand them before ever setting off.
+     */
+    public TripPassengerResponse markPickedUp(UUID tripId, String driverId, UUID riderId) {
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        if (trip.getDriverId() == null || !trip.getDriverId().equals(UUID.fromString(driverId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
+        }
+        if (trip.getStatus() != Trip.Status.ENROUTE && trip.getStatus() != Trip.Status.STARTED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "You can only pick someone up once you're on the road.");
+        }
+        TripPassenger p = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, riderId))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "That passenger isn't on this trip."));
+
+        // Idempotent: a double tap is not an error, and re-stamping would move a time that is now
+        // the record of when somebody's exit closed.
+        if (p.getPickedUpAt() == null) {
+            p.setPickedUpAt(OffsetDateTime.now());
+            passengerRepo.save(p);
+            // Tell them. Somebody has just been put on the hook for a fare by a stranger's tap, and
+            // being told is the precondition for objecting — an unannounced charge is one nobody
+            // can contest.
+            notifyClient.send(riderId, "You're marked as on board",
+                "Your driver confirmed you're in the car. If you're not, say so in the app.");
+            log.info("[POOL] driver={} picked up rider={} on trip={}", driverId, riderId, tripId);
+        }
+        return TripPassengerResponse.of(p, requestOf(p, trip), true);
+    }
+
+    /**
+     * The passenger says they are not in that car.
+     *
+     * <p>The other half of boarding. Confirming a pickup puts a fare on somebody by one person's
+     * assertion; this is how the person it lands on answers back.
+     *
+     * <p>⚠️ It deliberately does <b>not</b> clear the boarding flag. A dispute that un-boarded on
+     * demand would be the free-ride hole entered from the passenger's side: ride the whole way,
+     * object at the drop-off, walk away. What it does is put the objection on the record, tell the
+     * driver — who can fix it in one tap and, once a dispute is open, may do so at any time rather
+     * than only inside the usual short window — and make it visible to an admin if they disagree.
+     */
+    public TripPassengerResponse disputePickup(UUID tripId, String riderId, String note) {
+        UUID rider = UUID.fromString(riderId);
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        TripPassenger me = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, rider))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "You're not on this ride"));
+
+        if (me.getPickedUpAt() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "You're not marked as on board, so there's nothing to dispute.");
+        }
+        if (me.getPaymentStatus() != Trip.PaymentStatus.UNPAID) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "You've already paid for this ride — contact support.");
+        }
+        // Raising it twice is not two disputes. Keep the first timestamp: it is the record of when
+        // the objection was made, which is the fact that matters if this is ever adjudicated.
+        if (me.getPickupDisputedAt() == null) {
+            me.setPickupDisputedAt(OffsetDateTime.now());
+        }
+        me.setPickupDisputeNote(trimToNull(note));
+        passengerRepo.save(me);
+
+        notifyClient.send(trip.getDriverId(), "A passenger disputes their pickup",
+            "Someone says they're not in your car. If that's right, undo the pickup in your trip.");
+        log.warn("[POOL] rider={} disputes pickup on trip={} note={}", riderId, tripId, me.getPickupDisputeNote());
+        return TripPassengerResponse.of(me, requestOf(me, trip), false);
+    }
+
+    /** Admin: open pickup disputes, so a driver refusing to correct one is not the end of it. */
+    @Transactional(readOnly = true)
+    public List<TripPassengerResponse> listPickupDisputes() {
+        return passengerRepo.findByPickupDisputedAtIsNotNullOrderByPickupDisputedAtDesc().stream()
+            .map(p -> {
+                Trip trip = p.getTrip();
+                RideRequest r = requestOf(p, trip);
+                return r == null ? null : TripPassengerResponse.of(p, r, true);
+            })
+            .filter(java.util.Objects::nonNull)
+            .toList();
+    }
+
+    /**
+     * The driver takes back a pickup they confirmed by mistake.
+     *
+     * <p>Confirming a pickup closes the passenger's exit, so a mis-tap traps somebody in a ride
+     * they are not in and will be billed for. That was a real hole and this is the way out of it.
+     *
+     * <p>Time-boxed on purpose. A mis-tap is noticed in seconds; an open-ended undo would turn "you
+     * are aboard and owe the fare" into something revocable at any point in the journey, which is
+     * the protection it replaced. After the window the message points at support, because a wrong
+     * fare an hour later is a refund question and refunds are not built here.
+     *
+     * <p>Blocked once they have paid — at that point there is nothing left to undo, and a passenger
+     * who has settled cannot be un-boarded into being able to walk away from it.
+     */
+    public TripPassengerResponse undoPickup(UUID tripId, String driverId, UUID riderId) {
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        if (trip.getDriverId() == null || !trip.getDriverId().equals(UUID.fromString(driverId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
+        }
+        if (trip.getStatus() == Trip.Status.COMPLETED || trip.getStatus() == Trip.Status.CANCELLED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "That trip is finished — contact support to correct a fare.");
+        }
+        TripPassenger p = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, riderId))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "That passenger isn't on this trip."));
+        if (p.getPickedUpAt() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "They aren't marked as on board.");
+        }
+        if (p.getPaymentStatus() != Trip.PaymentStatus.UNPAID) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "They've already paid — contact support.");
+        }
+        // The window exists to stop a driver revoking "aboard and owes the fare" late and
+        // unilaterally. A passenger who has objected makes it neither late nor unilateral — they
+        // are asking for exactly this — so an open dispute lifts the clock. Without that, somebody
+        // wrongly marked aboard who notices at minute six is still stuck, which is the whole
+        // problem this was meant to solve.
+        boolean disputed = p.getPickupDisputedAt() != null;
+        if (!disputed && p.getPickedUpAt().isBefore(OffsetDateTime.now().minusSeconds(pickupUndoSeconds))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Too late to undo that pickup — contact support.");
+        }
+
+        p.setPickedUpAt(null);
+        // The objection has been answered, so it stops being open. The note stays as the record of
+        // what was said.
+        p.setPickupDisputedAt(null);
+        passengerRepo.save(p);
+        if (disputed) {
+            notifyClient.send(p.getId().getRiderId(), "Your driver corrected it",
+                "You're no longer marked as being in that car.");
+        }
+        // Worth a line in the log on its own: this is the one action that re-opens somebody's exit
+        // after it closed, so if a fare is ever disputed this is where the story starts.
+        log.info("[POOL] driver={} undid pickup of rider={} on trip={}", driverId, riderId, tripId);
+        return TripPassengerResponse.of(p, requestOf(p, trip), true);
+    }
+
+    /**
+     * A joiner changes their mind and gets out.
+     *
+     * <p>Deliberately not "cancel the trip". A shared ride belongs to the person who booked it, and
+     * somebody who stepped into it must be able to leave without ending a journey the other
+     * passenger is halfway through — which is exactly what cancelling would do, and why
+     * {@code updateTripStatus} only lets the booking passenger cancel. The two are different
+     * operations because they have different victims.
+     *
+     * <p>Leaving unwinds the join: the seat goes, the request is CANCELLED, and everyone left
+     * aboard is re-priced for the smaller car. That last part is the reason the pricing rule is a
+     * ceiling rather than a ratchet — the remaining passenger's fare returns to what they agreed at
+     * booking, and the driver is not left carrying somebody for less than the job they accepted.
+     *
+     * <p>Only before boarding. Once the driver has confirmed this person is in the car
+     * ({@link #markPickedUp}) the exit closes, or a passenger could ride the whole way and then
+     * leave rather than pay.
+     */
+    public void leavePool(UUID tripId, String riderId) {
+        UUID rider = UUID.fromString(riderId);
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+
+        TripPassenger me = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, rider))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "You're not on this ride"));
+
+        // The person who booked cannot "leave" their own ride — for them the operation is
+        // cancelling it, which already exists and which they alone are allowed to do.
+        if (me.getPickupSeq() <= 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "This is your ride — cancel it instead of leaving it.");
+        }
+        if (trip.getStatus() == Trip.Status.COMPLETED || trip.getStatus() == Trip.Status.CANCELLED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "That ride has already finished.");
+        }
+        // The exit closes at the car door. Without this, a passenger could be driven the whole way
+        // and then "leave" instead of paying — the fare is only collected at the end, so leaving
+        // late is indistinguishable from a free ride.
+        if (me.getPickedUpAt() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "You're already on this ride — speak to your driver.");
+        }
+        // Money already handed over is a refund, and refunds are not built. Blocking here is
+        // honest; silently dropping the seat and keeping the payment would not be.
+        if (me.getPaymentStatus() != Trip.PaymentStatus.UNPAID) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "You've already paid for this ride — contact support.");
+        }
+
+        passengerRepo.delete(me);
+
+        // Their request is finished, not free again. Re-opening it would look right and then die
+        // quietly: an immediate request expires on `created_at`, so one that has been sitting in a
+        // car for ten minutes is already past its TTL and the next sweep would kill it.
+        if (me.getRequestId() != null) {
+            requestRepo.findById(me.getRequestId()).ifPresent(r -> {
+                r.setStatus(RideRequest.Status.CANCELLED);
+                requestRepo.save(r);
+            });
+        }
+
+        repriceTrip(trip);
+
+        // The driver is on their way to a kerb where nobody is now standing, and the remaining
+        // passenger's fare has just moved through no act of their own. Both need telling.
+        notifyClient.send(trip.getDriverId(), "A shared passenger left",
+            "One of your shared passengers cancelled. That pickup is off — check your trip.");
+        for (TripPassenger other : passengerRepo.findByIdTripIdOrderByPickupSeqAsc(tripId)) {
+            notifyClient.send(other.getId().getRiderId(), "Your shared ride changed",
+                "The other passenger cancelled. Your fare is now GH₵ " + other.getLockedFare() + ".");
+        }
+
+        log.info("[POOL] rider={} left trip={} — {} passenger(s) remain, fare now {}",
+            riderId, tripId, passengerRepo.countByIdTripId(tripId), trip.getAgreedFare());
+    }
+
+    /**
+     * The other direction: open requests this driver could pick up on their way.
+     *
+     * <p>Same matcher as the rider's offer list, so the two screens can never disagree about
+     * whether a pairing is possible. Informational — a driver cannot seat somebody who has not
+     * chosen to share; only {@link #poolJoin}, called by the rider, puts anybody in the car.
+     */
     @Transactional(readOnly = true)
     public List<RideRequestResponse> poolCandidates(UUID tripId, String userId) {
         Trip trip = tripRepo.findById(tripId)
@@ -520,81 +1079,189 @@ public class RideService {
         if (trip.getDriverId() == null || !trip.getDriverId().equals(UUID.fromString(userId))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
         }
-
-        // A courier on a parcel run is never offered passengers to pick up.
-        if (trip.getRequest().getKind() != RideRequest.Kind.RIDE) {
-            return List.of();
-        }
+        // A courier on a parcel run is never offered passengers, and an ordinary trip's passenger
+        // never agreed to share their car.
+        if (!trip.isShared() || trip.getRequest().getKind() != RideRequest.Kind.RIDE) return List.of();
+        if (passengerRepo.countByIdTripId(tripId) >= maxPoolPassengers) return List.of();
 
         Point dest = trip.getRequest().getDest();
-        double destLat = dest.getY();
-        double destLng = dest.getX();
-
-        // Same-corridor match: open requests within maxPoolDistanceKm of this trip's destination.
-        // Rides only — pooling is people sharing a car, and the shared request table means a
-        // parcel would otherwise show up here as a "passenger" to pick up.
-        return requestRepo.findNearby(destLat, destLng, maxPoolDistanceKm, requestTtlSeconds)
+        // Cast the net at the destination gap and let poolFit apply the real rules — the radius
+        // query is a cheap pre-filter, not the match.
+        return requestRepo.findNearby(dest.getY(), dest.getX(), maxPoolDistanceKm, requestTtlSeconds)
             .stream()
-            .filter(r -> r.getStatus() == RideRequest.Status.OPEN)
-            .filter(r -> r.getKind() == RideRequest.Kind.RIDE)
+            .filter(this::isPoolable)
+            .filter(r -> poolFit(trip, r) != null)
             .map(RideRequestResponse::from)
             .toList();
     }
 
     /**
-     * Rider joins an en-route trip at a fixed fair-share quote.
-     * Fair-share = (joining rider's haversine distance / total trip distance) × base fare × currentOccupancy
-     * locked_fare is never recomputed after this call.
+     * Who is on a trip. For the driver: the pickups to make and the fares to collect, with phone
+     * numbers. For a passenger: who they are sharing with, without them.
      */
-    public PoolJoinResponse poolJoin(UUID tripId, String riderId, PoolJoinRequest req) {
+    @Transactional(readOnly = true)
+    public List<TripPassengerResponse> tripPassengers(UUID tripId, String userId) {
+        UUID actor = UUID.fromString(userId);
         Trip trip = tripRepo.findById(tripId)
             .orElseThrow(() -> new IllegalStateException("Trip not found"));
-
-        if (trip.getStatus() != Trip.Status.ENROUTE && trip.getStatus() != Trip.Status.MATCHED) {
-            throw new IllegalStateException("Trip is not accepting pool riders");
+        boolean isDriver = trip.getDriverId() != null && trip.getDriverId().equals(actor);
+        boolean isPassenger = passengerRepo.existsById(new TripPassenger.TripPassengerId(tripId, actor));
+        if (!isDriver && !isPassenger) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your trip");
         }
-
-        RideRequest joiningReq = requestRepo.findById(req.getRequestId())
-            .orElseThrow(() -> new IllegalStateException("Ride request not found"));
-
-        // The joining request must belong to the caller (can't matchmake others' requests).
-        if (!joiningReq.getRiderId().equals(UUID.fromString(riderId))) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your ride request");
-        }
-
-        // Pooling seats people. Because rides and parcels share one request table, guard both
-        // ends: a parcel can't join a trip, and a parcel trip can't take on passengers.
-        if (joiningReq.getKind() != RideRequest.Kind.RIDE
-                || trip.getRequest().getKind() != RideRequest.Kind.RIDE) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only rides can be pooled.");
-        }
-
-        long currentOccupancy = passengerRepo.countByIdTripId(tripId);
-        double joinDistKm = haversineKm(
-            joiningReq.getOrigin().getY(), joiningReq.getOrigin().getX(),
-            trip.getRequest().getDest().getY(), trip.getRequest().getDest().getX()
-        );
-
-        // Fair-share: joining distance proportion × base fare × (1 + 0.1 per existing passenger discount)
-        BigDecimal fairShare = trip.getAgreedFare()
-            .multiply(BigDecimal.valueOf(0.7))
-            .divide(BigDecimal.valueOf(Math.max(1, currentOccupancy)), 2, RoundingMode.HALF_UP);
-
-        TripPassenger passenger = new TripPassenger();
-        passenger.setId(new TripPassenger.TripPassengerId(tripId, UUID.fromString(riderId)));
-        passenger.setTrip(trip);
-        passenger.setLockedFare(fairShare);
-        passenger.setJoinDistanceKm(BigDecimal.valueOf(joinDistKm).setScale(3, RoundingMode.HALF_UP));
-        passenger.setPickupSeq((short)(currentOccupancy + 1));
-        passenger.setRuleVersion(ruleVersion);
-        passengerRepo.save(passenger);
-
-        joiningReq.setStatus(RideRequest.Status.MATCHED);
-        requestRepo.save(joiningReq);
-
-        log.info("[POOL] rider={} joined trip={} fare={} rule={}", riderId, tripId, fairShare, ruleVersion);
-        return new PoolJoinResponse(tripId, fairShare, ruleVersion);
+        return passengerRepo.findByIdTripIdOrderByPickupSeqAsc(tripId).stream()
+            .map(p -> {
+                RideRequest r = requestOf(p, trip);
+                return r == null ? null : TripPassengerResponse.of(p, r, isDriver);
+            })
+            .filter(java.util.Objects::nonNull)
+            .toList();
     }
+
+    /** Can this request join a shared ride at all? */
+    private boolean isPoolable(RideRequest r) {
+        return r.isShared()
+            && r.getStatus() == RideRequest.Status.OPEN
+            && r.getKind() == RideRequest.Kind.RIDE
+            && r.getRideType() == RideRequest.RideType.STANDARD
+            // A ride booked for this evening cannot be put into a car that is moving now.
+            && (r.getScheduledAt() == null || !r.getScheduledAt().isAfter(OffsetDateTime.now()));
+    }
+
+    /**
+     * Does this request fit that trip's remaining journey? Returns the geometry when it does.
+     *
+     * <p>Three gates, and all three are needed. The destination gap alone would seat somebody
+     * heading to the same suburb from the opposite side of the city; the detour alone would seat
+     * somebody standing on the route but travelling the other way; the bearing alone says nothing
+     * about how far out of the way anyone is.
+     */
+    private PoolFit poolFit(Trip trip, RideRequest joiner) {
+        RideRequest booked = trip.getRequest();
+        double destLat = booked.getDest().getY(), destLng = booked.getDest().getX();
+        double jFromLat = joiner.getOrigin().getY(), jFromLng = joiner.getOrigin().getX();
+        double jToLat = joiner.getDest().getY(), jToLng = joiner.getDest().getX();
+
+        double destGapKm = haversineKm(jToLat, jToLng, destLat, destLng);
+        if (destGapKm > maxPoolDistanceKm) return null;
+
+        double[] car = carPosition(trip);
+
+        // Only the road still to be driven counts. Before the first pickup that is
+        // car → pickup → destination; once the passenger is aboard the pickup is behind us and the
+        // leg is simply car → destination. Measuring against the original whole route would offer
+        // the driver a detour to somewhere they drove past ten minutes ago.
+        boolean beforeFirstPickup = trip.getStatus() == Trip.Status.MATCHED
+                                 || trip.getStatus() == Trip.Status.ENROUTE;
+        double bookedFromLat = booked.getOrigin().getY(), bookedFromLng = booked.getOrigin().getX();
+        double detourKm = beforeFirstPickup
+            ? Math.min(
+                segmentDistanceKm(jFromLat, jFromLng, car[0], car[1], bookedFromLat, bookedFromLng),
+                segmentDistanceKm(jFromLat, jFromLng, bookedFromLat, bookedFromLng, destLat, destLng))
+            : segmentDistanceKm(jFromLat, jFromLng, car[0], car[1], destLat, destLng);
+        if (detourKm > maxPoolDetourKm) return null;
+
+        // Same road, opposite way is not a match — and it is the failure mode a distance-only rule
+        // produces constantly, because a dual carriageway puts both directions within metres.
+        double carBearing = bearingDeg(car[0], car[1], destLat, destLng);
+        double joinerBearing = bearingDeg(jFromLat, jFromLng, jToLat, jToLng);
+        if (bearingGapDeg(carBearing, joinerBearing) > maxPoolBearingDeg) return null;
+
+        return new PoolFit(round3(detourKm), round3(destGapKm));
+    }
+
+    /**
+     * Where the car actually is.
+     *
+     * <p>The driver's last GPS ping when it is recent, the trip's pickup point otherwise. A
+     * position from an hour ago is worse than no position: it would measure the corridor from
+     * somewhere the car has long left, and every answer downstream would be confidently wrong.
+     */
+    private double[] carPosition(Trip trip) {
+        return locationRepo.findById(trip.getDriverId())
+            .filter(l -> l.getUpdatedAt() != null
+                      && l.getUpdatedAt().isAfter(OffsetDateTime.now().minusMinutes(5)))
+            .map(l -> new double[] { l.getPoint().getY(), l.getPoint().getX() })
+            .orElseGet(() -> new double[] {
+                trip.getRequest().getOrigin().getY(), trip.getRequest().getOrigin().getX() });
+    }
+
+    /**
+     * What fraction of their solo fare each passenger pays when {@code passengers} share the car.
+     *
+     * <p>Everyone pays the same fraction of their own quote, so a long trip still costs more than
+     * a short one and nobody subsidises anybody. Two at 75% hands the driver 150% of a single
+     * fare — the discount comes out of the extra passenger, not out of the driver's pocket, which
+     * is the only version of this that a driver would ever agree to.
+     */
+    private double shareFactor(int passengers) {
+        if (passengers <= 1) return 1.0;
+        return Math.max(poolMinDiscountFactor, 1.0 - poolDiscountPerExtra * (passengers - 1));
+    }
+
+    /**
+     * Re-price every passenger for the current occupancy and re-total the driver's fare.
+     *
+     * <p>Always recomputed from {@code soloFare}, never from the current locked fare, so discounts
+     * cannot compound: applying 75% twice would put a third passenger on 56% of their own quote.
+     *
+     * <p>The guarantee is a <b>ceiling, not a ratchet</b>. Occupancy moves in both directions —
+     * people join, and people change their minds — so the fare follows it both ways, capped at what
+     * each passenger agreed when they booked. A one-way "downward only" rule reads kinder and is
+     * worse: when a joiner leaves, it would strand the remaining passenger's discount and hand the
+     * driver less than the job they accepted, so a stranger's change of mind would come out of the
+     * driver's pocket. A discount unwinding to the price you already accepted is not a surprise;
+     * being charged more than you accepted would be, and the cap makes that impossible.
+     *
+     * <p>A deliberate departure from "locked_fare is never recomputed" in the playbook.
+     */
+    private void repriceTrip(Trip trip) {
+        List<TripPassenger> all = passengerRepo.findByIdTripIdOrderByPickupSeqAsc(trip.getId());
+        if (all.isEmpty()) return;
+        double factor = shareFactor(all.size());
+        BigDecimal total = BigDecimal.ZERO;
+        for (TripPassenger p : all) {
+            // Somebody who has already handed over money is not re-quoted; refunds are a different
+            // conversation and this is not the place to start one.
+            if (p.getPaymentStatus() != Trip.PaymentStatus.PAID) {
+                // The ceiling is the whole guarantee. Occupancy goes both ways — people join and
+                // people change their minds — so the fare tracks it in both directions, but it can
+                // never climb past what this passenger agreed to when they booked. A discount
+                // unwinding back to the price you accepted is not a surprise; being charged more
+                // than you accepted would be.
+                p.setLockedFare(min(applyFactor(p.getSoloFare(), factor), p.getSoloFare()));
+                p.setRuleVersion(ruleVersion);
+                passengerRepo.save(p);
+            }
+            total = total.add(p.getLockedFare());
+        }
+        trip.setAgreedFare(total);
+        tripRepo.save(trip);
+    }
+
+    /** The request a passenger boarded with — the trip's own for whoever booked it. */
+    private RideRequest requestOf(TripPassenger p, Trip trip) {
+        if (p.getRequestId() == null) return trip.getRequest();
+        return requestRepo.findById(p.getRequestId()).orElse(trip.getRequest());
+    }
+
+    private static BigDecimal applyFactor(BigDecimal fare, double factor) {
+        return fare.multiply(BigDecimal.valueOf(factor)).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal min(BigDecimal a, BigDecimal b) {
+        return a.compareTo(b) <= 0 ? a : b;
+    }
+
+    private static int savingPct(BigDecimal solo, BigDecimal shared) {
+        if (solo == null || solo.signum() <= 0) return 0;
+        return solo.subtract(shared)
+            .multiply(BigDecimal.valueOf(100))
+            .divide(solo, 0, RoundingMode.HALF_UP)
+            .intValue();
+    }
+
+    private static double round3(double v) { return Math.round(v * 1000.0) / 1000.0; }
 
     /** Two-way rating after trip completion. */
     public void rateTrip(UUID tripId, String raterId, RatingRequestDto dto) {
@@ -768,5 +1435,56 @@ public class RideService {
             + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
             * Math.sin(dLng / 2) * Math.sin(dLng / 2);
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // ── Corridor geometry (pooling) ─────────────────────────────────────────────
+    //
+    // Flat-Earth arithmetic on purpose. Across one city the error from treating a degree of
+    // latitude as a fixed number of kilometres is centimetres, and the alternative — great-circle
+    // cross-track distance — is far harder to read for an answer nobody could measure the
+    // difference in. Anything continental would need the real thing.
+
+    /** Degrees → kilometres in a local plane centred on {@code refLat}. */
+    private static double[] toKmXY(double lat, double lng, double refLat) {
+        double kmPerDegLat = 111.32;
+        double kmPerDegLng = 111.32 * Math.cos(Math.toRadians(refLat));
+        return new double[] { lng * kmPerDegLng, lat * kmPerDegLat };
+    }
+
+    /**
+     * Shortest distance in km from a point to the line SEGMENT a→b.
+     *
+     * <p>A segment rather than an infinite line, and that matters: the parameter is clamped to
+     * [0,1], so a pickup behind the car measures its distance to the car itself instead of to an
+     * imaginary road stretching backwards. Somebody 300 m behind is a small reverse, somebody 8 km
+     * behind is not on the route — which is exactly the distinction the clamp produces for free.
+     */
+    private static double segmentDistanceKm(double pLat, double pLng,
+                                            double aLat, double aLng,
+                                            double bLat, double bLng) {
+        double ref = (aLat + bLat) / 2.0;
+        double[] p = toKmXY(pLat, pLng, ref);
+        double[] a = toKmXY(aLat, aLng, ref);
+        double[] b = toKmXY(bLat, bLng, ref);
+        double vx = b[0] - a[0], vy = b[1] - a[1];
+        double wx = p[0] - a[0], wy = p[1] - a[1];
+        double len2 = vx * vx + vy * vy;
+        double t = len2 <= 1e-9 ? 0.0 : Math.max(0.0, Math.min(1.0, (wx * vx + wy * vy) / len2));
+        return Math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy));
+    }
+
+    /** Initial great-circle bearing a→b, degrees clockwise from north. */
+    private static double bearingDeg(double lat1, double lng1, double lat2, double lng2) {
+        double dLng = Math.toRadians(lng2 - lng1);
+        double la1 = Math.toRadians(lat1), la2 = Math.toRadians(lat2);
+        double y = Math.sin(dLng) * Math.cos(la2);
+        double x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dLng);
+        return (Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0;
+    }
+
+    /** Smaller angle between two bearings, 0–180 — so 350° and 10° are 20° apart, not 340°. */
+    private static double bearingGapDeg(double a, double b) {
+        double d = Math.abs(a - b) % 360.0;
+        return d > 180.0 ? 360.0 - d : d;
     }
 }

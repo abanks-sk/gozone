@@ -21,8 +21,20 @@ public class Trip {
     @Column(name = "driver_id", nullable = false)
     private UUID driverId;
 
+    /**
+     * What the driver is owed for the whole trip.
+     *
+     * <p>On a shared trip this is the SUM of every passenger's locked fare, not any one person's
+     * fare — it is the number that settles to the driver's wallet and the number commission comes
+     * off. It grows each time somebody joins, which is the point: two people at a discount are
+     * worth more to the driver than one at full price.
+     */
     @Column(name = "agreed_fare", nullable = false, precision = 10, scale = 2)
     private BigDecimal agreedFare;
+
+    /** This trip can pick up more passengers along its corridor. Set from the booking request. */
+    @Column(nullable = false)
+    private boolean shared = false;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -51,6 +63,8 @@ public class Trip {
     public void setDriverId(UUID driverId) { this.driverId = driverId; }
     public BigDecimal getAgreedFare() { return agreedFare; }
     public void setAgreedFare(BigDecimal agreedFare) { this.agreedFare = agreedFare; }
+    public boolean isShared() { return shared; }
+    public void setShared(boolean shared) { this.shared = shared; }
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
     public OffsetDateTime getStartedAt() { return startedAt; }

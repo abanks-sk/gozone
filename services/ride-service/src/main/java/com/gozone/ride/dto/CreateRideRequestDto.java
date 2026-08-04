@@ -17,6 +17,7 @@ public class CreateRideRequestDto {
     private OffsetDateTime scheduledAt; // null = ride now
     private String kind;        // RIDE | PARCEL (default RIDE)
     private String rideType;    // STANDARD | LUXE | OKADA (rides)
+    private boolean shared;     // willing to share the car for a cheaper fare (STANDARD rides only)
     private String parcelSize;  // SMALL | MEDIUM | LARGE (parcels)
     private String parcelDesc;  // what the parcel is
     private String direction;   // SEND | RECEIVE (parcels) — which end the customer is at
@@ -42,6 +43,8 @@ public class CreateRideRequestDto {
     public void setKind(String kind) { this.kind = kind; }
     public String getRideType() { return rideType; }
     public void setRideType(String rideType) { this.rideType = rideType; }
+    public boolean isShared() { return shared; }
+    public void setShared(boolean shared) { this.shared = shared; }
     public String getParcelSize() { return parcelSize; }
     public void setParcelSize(String parcelSize) { this.parcelSize = parcelSize; }
     public String getParcelDesc() { return parcelDesc; }

@@ -309,15 +309,30 @@ paths:
   /trips/{id}/confirm-cash:
     post:
       tags: [trips]
-      summary: Driver confirms cash received → marks the trip paid
+      summary: Driver confirms cash received
+      description: >
+        riderId names which passenger handed money over — on a shared ride two people owe two
+        different amounts at two different kerbs, and confirming "the trip" would credit one
+        person's cash to everybody. Omit it to clear every passenger still awaiting cash, which on
+        an ordinary single-passenger trip is the only sensible reading.
       operationId: confirmCash
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                riderId: { type: string, format: uuid }
       responses:
         '200':
-          description: Marked paid
+          description: Marked paid (the trip flips to PAID only once every passenger has)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TripResponse' }
+        '404':
+          description: No cash payment is waiting to be confirmed
 
   /trips/{id}/status:
     patch:
@@ -345,11 +360,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/TripResponse'
 
-  /trips/{id}/pool-candidates:
-    post:
+  /requests/{id}/pool-offers:
+    get:
       tags: [pooling]
-      summary: Find route-compatible riders for en-route pooling
-      operationId: getPoolCandidates
+      summary: Shared rides already on the road that this request could join
+      description: >
+        Polled by the rider alongside driver offers while they wait, so the two appear together as
+        alternatives: take a driver's price, counter it, or step into a car that is going your way
+        anyway for less. A match needs all three of — destination within the corridor radius, pickup
+        within the detour limit of the road still to be driven, and a direction of travel that
+        agrees with the car's. Returns an empty list whenever nothing qualifies, which is the
+        ordinary case, not an error.
+      operationId: getPoolOffers
       parameters:
         - name: id
           in: path
@@ -359,18 +381,27 @@ paths:
             format: uuid
       responses:
         '200':
-          description: Compatible open requests
+          description: Joinable rides, least detour first
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/RideRequestResponse'
+                  $ref: '#/components/schemas/PoolOffer'
+        '403':
+          description: Not your ride request
 
   /trips/{id}/pool-join:
     post:
       tags: [pooling]
-      summary: Rider joins an en-route trip at a fixed fair-share quote
+      summary: Rider steps into a shared ride already under way
+      description: >
+        Re-runs every check the offer list made, because that list is a poll of a moving world: the
+        car can fill, the trip can finish and the rider's own request can be matched to a driver
+        between the offer being drawn and the tap landing. Joining re-prices EVERY passenger from
+        their own solo fare at the new occupancy — capped at that solo fare, so nobody is ever
+        charged more than they agreed at booking — and the trip's agreedFare becomes the sum, so the
+        driver earns more from carrying two people at a discount than one at full price.
       operationId: poolJoin
       parameters:
         - name: id
@@ -387,11 +418,211 @@ paths:
               $ref: '#/components/schemas/PoolJoinRequest'
       responses:
         '200':
-          description: Joined; locked_fare set (never recomputed); rule_version stamped
+          description: Joined; the joiner's fare is locked and rule_version stamped
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PoolJoinResponse'
+        '400':
+          description: That ride isn't shared
+        '403':
+          description: Not your ride request, or you are driving this trip
+        '409':
+          description: Ride full, already finished, no longer going your way, or you are already aboard
+
+  /trips/{id}/passengers/{riderId}/picked-up:
+    post:
+      tags: [pooling]
+      summary: Driver confirms a passenger is in the car
+      description: >
+        Only needed for people who joined en route — the passenger who booked is stamped
+        automatically when the trip goes STARTED, which is what that transition already means. A
+        joiner boards at their own kerb minutes later on a trip that is already under way, so no
+        trip-level status can speak for them. This closes their exit: before it they can leave-pool
+        and owe nothing, after it the fare is owed. Idempotent. Allowed only while ENROUTE or
+        STARTED, so a driver cannot mark somebody aboard at match time and strand them.
+      operationId: markPickedUp
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: riderId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Passenger marked as aboard
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripPassengerResponse' }
+        '403':
+          description: Not your trip
+        '404':
+          description: That passenger isn't on this trip
+        '409':
+          description: The trip is not on the road yet
+    delete:
+      tags: [pooling]
+      summary: Driver takes back a pickup confirmed by mistake
+      description: >
+        Re-opens that passenger's exit. Confirming a pickup traps somebody who is not actually in
+        the car — they cannot leave and will be billed for a ride they never took — so this is the
+        way out of a mis-tap. Time-boxed (app.pooling.pickup-undo-seconds, default 300): a mis-tap
+        is noticed in seconds, whereas an open-ended undo would turn "aboard and owes the fare" into
+        something revocable at any point in the journey, giving back the very protection the pickup
+        confirmation provides. Refused once the passenger has paid, or the trip has finished — both
+        are refund questions, and refunds are not built.
+      operationId: undoPickup
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: riderId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Pickup undone; the passenger may leave again
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripPassengerResponse' }
+        '403':
+          description: Not your trip
+        '404':
+          description: That passenger isn't on this trip
+        '409':
+          description: >
+            Not marked as on board, already paid, the trip has finished, or the undo window
+            has passed
+
+  /trips/{id}/dispute-pickup:
+    post:
+      tags: [pooling]
+      summary: Passenger says they are not in that car
+      description: >
+        The other half of boarding. Confirming a pickup puts a fare on somebody by one person's
+        assertion; this is how the person it lands on answers back. It deliberately does NOT clear
+        the boarding flag — a dispute that un-boarded on demand would be the free-ride hole entered
+        from the passenger's side (ride the whole way, object at the drop-off, walk away). Instead
+        it records the objection, notifies the driver, and while it is open the driver may undo the
+        pickup at ANY time rather than only inside the usual short window. Raising it twice keeps
+        the original timestamp. Undoing the pickup closes the dispute.
+      operationId: disputePickup
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, description: What the passenger says }
+      responses:
+        '200':
+          description: Objection recorded; boarding unchanged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripPassengerResponse' }
+        '403':
+          description: You're not on this ride
+        '409':
+          description: You're not marked as on board, or you have already paid
+
+  /pickup-disputes:
+    get:
+      tags: [pooling]
+      summary: "Admin: open pickup disputes"
+      description: >
+        The backstop when a driver will not correct one. ADMIN/SUPER_ADMIN only. A dispute leaves
+        this list when the driver undoes the pickup.
+      operationId: listPickupDisputes
+      responses:
+        '200':
+          description: Open disputes, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TripPassengerResponse' }
+        '403':
+          description: Not an admin
+
+  /trips/{id}/leave-pool:
+    post:
+      tags: [pooling]
+      summary: A joiner gets out of a shared ride
+      description: >
+        Not the same as cancelling. A shared ride belongs to whoever booked it, and only they may
+        cancel it — a joiner leaving must not end a journey the other passenger is halfway through.
+        Only before boarding: once the driver has confirmed them in the car
+        (picked-up) the exit closes, or a passenger could ride the whole way and then leave rather
+        than pay. Leaving drops the seat, CANCELS the leaver's request (not re-opened: an immediate request
+        expires on created_at, so one that has sat in a car for ten minutes would be swept away
+        moments after appearing to work) and re-prices whoever is left, back up to at most the fare
+        they agreed at booking. Blocked once the leaver has paid — refunds are not built.
+      operationId: leavePool
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Left; the ride continues for everyone else
+        '400':
+          description: You booked this ride — cancel it instead of leaving it
+        '403':
+          description: You're not on this ride
+        '409':
+          description: The ride has finished, you are already aboard, or you have already paid
+
+  /trips/{id}/passengers:
+    get:
+      tags: [pooling]
+      summary: Everyone on a trip
+      description: >
+        The driver's pickup list, or who a passenger is sharing with. riderPhone is populated only
+        for the driver.
+      operationId: getTripPassengers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Passengers in boarding order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TripPassengerResponse'
+        '403':
+          description: Not your trip
+
+  /trips/{id}/pool-candidates:
+    post:
+      tags: [pooling]
+      summary: Open requests this driver could pick up along their route
+      description: >
+        The other direction through the same matcher, so the driver's screen and the rider's offer
+        list can never disagree. Informational only — a driver cannot seat anybody; only pool-join,
+        called by the rider, puts someone in the car.
+      operationId: getPoolCandidates
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Compatible open requests (empty unless this trip is shared and has room)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RideRequestResponse'
 
   /locations:
     post:
@@ -588,6 +819,12 @@ components:
           type: string
           enum: [STANDARD, LUXE, OKADA]
           default: STANDARD
+        shared:
+          type: boolean
+          default: false
+          description: >
+            Willing to share the car with someone going the same way, for a cheaper fare.
+            Rejected with 400 on anything but a STANDARD ride.
         parcelSize:
           type: string
           enum: [SMALL, MEDIUM, LARGE]
@@ -650,6 +887,9 @@ components:
         rideType:
           type: string
           enum: [STANDARD, LUXE, OKADA]
+        shared:
+          type: boolean
+          description: The passenger opted into ride sharing — the driver feed labels these differently
         parcelSize:
           type: string
           enum: [SMALL, MEDIUM, LARGE]
@@ -820,6 +1060,111 @@ components:
         partyPhone:
           type: string
           nullable: true
+        shared:
+          type: boolean
+          description: This ride can pick up more passengers along its corridor
+        passengerCount:
+          type: integer
+          description: How many people are aboard — 1 on an ordinary trip
+        myFare:
+          type: number
+          nullable: true
+          description: >
+            What the CALLER personally owes. agreedFare is the whole trip's money (everybody's
+            share added up, which is what the driver earns); on a shared ride that is not any one
+            passenger's bill. Anything a passenger is asked to pay must read myFare.
+            Null when the caller is the driver rather than a passenger.
+        mySoloFare:
+          type: number
+          nullable: true
+          description: What the caller would have paid alone, so the app can show what sharing saved
+        myPickedUp:
+          type: boolean
+          nullable: true
+          description: The driver has confirmed the caller is in the car; the app hides leave-pool once true
+        myPickupDisputed:
+          type: boolean
+          nullable: true
+          description: The caller has already objected, so the app does not offer it twice
+        myPickupSeq:
+          type: integer
+          nullable: true
+          description: >
+            The caller's boarding position — 1 if they booked this ride, higher if they joined it.
+            Tells "cancel the ride" from "get out of someone else's": only a joiner may leave-pool,
+            only the booker may cancel. Null when the caller is the driver.
+
+    PoolOffer:
+      type: object
+      description: A shared ride already on the road that the caller could get into.
+      properties:
+        tripId: { type: string, format: uuid }
+        driverId: { type: string, format: uuid }
+        driverName: { type: string, nullable: true }
+        vehicle: { type: string, nullable: true }
+        plate: { type: string, nullable: true }
+        driverLat:
+          type: number
+          nullable: true
+          description: Where the car is now, so the offer can be drawn on the map before anyone commits
+        driverLng: { type: number, nullable: true }
+        destLat: { type: number }
+        destLng: { type: number }
+        yourFare:
+          type: number
+          description: What the caller would pay — the price the join actually executes at
+        yourSoloFare: { type: number }
+        currentFare:
+          type: number
+          description: What the passenger already aboard pays today
+        newFare:
+          type: number
+          description: What they would pay once the caller joins — always lower, never higher
+        savingPct: { type: integer }
+        passengerCount:
+          type: integer
+          description: People already aboard (the caller would be this many plus one)
+        detourKm:
+          type: number
+          description: How far off the car's remaining line the caller's pickup sits
+        destGapKm: { type: number }
+        ruleVersion: { type: string, example: v1 }
+
+    TripPassengerResponse:
+      type: object
+      properties:
+        riderId: { type: string, format: uuid }
+        requestId: { type: string, format: uuid, nullable: true }
+        pickupSeq:
+          type: integer
+          description: Boarding order — 1 is whoever booked the ride
+        lockedFare: { type: number }
+        soloFare: { type: number }
+        paymentStatus: { type: string, enum: [UNPAID, AWAITING, PAID] }
+        paymentMethod: { type: string, nullable: true }
+        originLat: { type: number }
+        originLng: { type: number }
+        destLat: { type: number }
+        destLng: { type: number }
+        riderPhone:
+          type: string
+          nullable: true
+          description: >
+            Only ever populated for the driver. A passenger reading the same list gets it blanked —
+            sharing a car with someone is not consent to hand them your number.
+        pickedUpAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the driver confirmed they were in the car; null while still a pickup to make
+        pickupDisputedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When they objected to being marked aboard. Does not clear pickedUpAt
+        pickupDisputeNote:
+          type: string
+          nullable: true
 
     PoolJoinRequest:
       type: object
@@ -837,7 +1182,13 @@ components:
           format: uuid
         lockedFare:
           type: number
-          description: Fixed fair-share fare; never changed after this
+          description: What the joiner now owes, after the sharing discount
+        soloFare:
+          type: number
+          description: What they would have paid alone
+        passengerCount:
+          type: integer
+          description: How many are now aboard, the joiner included
         ruleVersion:
           type: string
           example: v1

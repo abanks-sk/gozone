@@ -28,6 +28,8 @@ public record RideRequestResponse(
     String status,
     String kind,
     String rideType,
+    /** The passenger opted into ride sharing — the driver's feed labels the card differently. */
+    boolean shared,
     String parcelSize,
     String parcelDesc,
     /** SEND | RECEIVE for parcels — tells a courier which end the customer is waiting at. */
@@ -60,6 +62,7 @@ public record RideRequestResponse(
             r.getStatus().name(),
             r.getKind().name(),
             r.getRideType().name(),
+            r.isShared(),
             r.getParcelSize() != null ? r.getParcelSize().name() : null,
             r.getParcelDesc(),
             r.getDirection() != null ? r.getDirection().name() : null,

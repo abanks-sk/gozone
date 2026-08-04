@@ -146,28 +146,125 @@ public class RideController {
         return ResponseEntity.ok(rideService.driverArrived(id, driverId));
     }
 
+    /**
+     * Driver confirms cash. An optional {@code riderId} in the body names which passenger paid —
+     * needed on a shared ride, where two people owe two different amounts.
+     */
     @PostMapping("/trips/{id}/confirm-cash")
     public ResponseEntity<TripResponse> confirmCash(
             @PathVariable UUID id,
-            @AuthenticationPrincipal String driverId) {
-        return ResponseEntity.ok(rideService.confirmCash(id, driverId));
+            @AuthenticationPrincipal String driverId,
+            @RequestBody(required = false) Map<String, String> body) {
+        String rider = body != null ? body.get("riderId") : null;
+        return ResponseEntity.ok(rideService.confirmCash(id, driverId,
+            rider != null && !rider.isBlank() ? UUID.fromString(rider) : null));
     }
 
-    // ── Pooling ───────────────────────────────────────────────────────────────
+    // ── Ride sharing (pooling) ────────────────────────────────────────────────
 
-    @PostMapping("/trips/{id}/pool-candidates")
-    public ResponseEntity<List<RideRequestResponse>> poolCandidates(
+    /**
+     * Shared rides already on the road that this request could join.
+     *
+     * <p>Polled by the rider alongside driver offers while they wait, so the two appear together
+     * as alternatives. Empty whenever nothing is going their way, which is the ordinary case.
+     */
+    @GetMapping("/requests/{id}/pool-offers")
+    public ResponseEntity<List<PoolOffer>> poolOffers(
             @PathVariable UUID id,
-            @AuthenticationPrincipal String userId) {
-        return ResponseEntity.ok(rideService.poolCandidates(id, userId));
+            @AuthenticationPrincipal String riderId) {
+        return ResponseEntity.ok(rideService.poolOffers(id, riderId));
     }
 
+    /** The rider steps into a shared ride already under way. */
     @PostMapping("/trips/{id}/pool-join")
     public ResponseEntity<PoolJoinResponse> poolJoin(
             @PathVariable UUID id,
             @AuthenticationPrincipal String riderId,
             @Valid @RequestBody PoolJoinRequest req) {
         return ResponseEntity.ok(rideService.poolJoin(id, riderId, req));
+    }
+
+    /**
+     * Driver confirms a passenger is in the car.
+     *
+     * <p>Only needed for people who joined en route — the passenger who booked is stamped when the
+     * trip goes STARTED. It closes their exit: after this they owe the fare.
+     */
+    @PostMapping("/trips/{id}/passengers/{riderId}/picked-up")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER')")
+    public ResponseEntity<TripPassengerResponse> markPickedUp(
+            @PathVariable UUID id,
+            @PathVariable UUID riderId,
+            @AuthenticationPrincipal String driverId) {
+        return ResponseEntity.ok(rideService.markPickedUp(id, driverId, riderId));
+    }
+
+    /**
+     * Driver takes back a pickup confirmed by mistake, re-opening that passenger's exit.
+     *
+     * <p>DELETE on the same resource the POST creates. Time-boxed — a mis-tap is noticed in
+     * seconds, and an open-ended undo would give back the fare protection it exists to provide.
+     */
+    @DeleteMapping("/trips/{id}/passengers/{riderId}/picked-up")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER')")
+    public ResponseEntity<TripPassengerResponse> undoPickup(
+            @PathVariable UUID id,
+            @PathVariable UUID riderId,
+            @AuthenticationPrincipal String driverId) {
+        return ResponseEntity.ok(rideService.undoPickup(id, driverId, riderId));
+    }
+
+    /**
+     * Passenger says they are not in that car.
+     *
+     * <p>Does not un-board them — that would let somebody ride the whole way and object at the
+     * drop-off. It records the objection and tells the driver, who can undo it in one tap and, once
+     * a dispute is open, is no longer bound by the usual undo window.
+     */
+    @PostMapping("/trips/{id}/dispute-pickup")
+    public ResponseEntity<TripPassengerResponse> disputePickup(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String riderId,
+            @RequestBody(required = false) Map<String, String> body) {
+        return ResponseEntity.ok(rideService.disputePickup(id, riderId,
+            body != null ? body.get("note") : null));
+    }
+
+    /** Admin: open pickup disputes — the backstop when a driver won't correct one. */
+    @GetMapping("/pickup-disputes")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<List<TripPassengerResponse>> pickupDisputes() {
+        return ResponseEntity.ok(rideService.listPickupDisputes());
+    }
+
+    /**
+     * A joiner gets out of a shared ride.
+     *
+     * <p>Not the same as cancelling: cancelling ends the trip and only the passenger who booked it
+     * may do that. This drops one seat and re-prices whoever is left.
+     */
+    @PostMapping("/trips/{id}/leave-pool")
+    public ResponseEntity<Void> leavePool(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String riderId) {
+        rideService.leavePool(id, riderId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Everyone on a trip: the driver's pickup list, or who a passenger is sharing with. */
+    @GetMapping("/trips/{id}/passengers")
+    public ResponseEntity<List<TripPassengerResponse>> tripPassengers(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String userId) {
+        return ResponseEntity.ok(rideService.tripPassengers(id, userId));
+    }
+
+    /** The other direction: open requests this driver could pick up along their route. */
+    @PostMapping("/trips/{id}/pool-candidates")
+    public ResponseEntity<List<RideRequestResponse>> poolCandidates(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String userId) {
+        return ResponseEntity.ok(rideService.poolCandidates(id, userId));
     }
 
     // ── Location ──────────────────────────────────────────────────────────────

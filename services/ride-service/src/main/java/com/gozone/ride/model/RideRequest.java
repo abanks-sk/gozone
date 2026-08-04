@@ -45,6 +45,14 @@ public class RideRequest {
     @Column(name = "ride_type", nullable = false, length = 20)
     private RideType rideType = RideType.STANDARD;
 
+    /**
+     * The passenger is willing to share the car with somebody going the same way, in exchange for
+     * a cheaper fare. Only ever true for a STANDARD ride: Luxe is sold on having the car to
+     * yourself and an okada has one seat.
+     */
+    @Column(nullable = false)
+    private boolean shared = false;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "parcel_size", length = 20)
     private ParcelSize parcelSize;
@@ -103,6 +111,8 @@ public class RideRequest {
     public void setKind(Kind kind) { this.kind = kind; }
     public RideType getRideType() { return rideType; }
     public void setRideType(RideType rideType) { this.rideType = rideType; }
+    public boolean isShared() { return shared; }
+    public void setShared(boolean shared) { this.shared = shared; }
     public ParcelSize getParcelSize() { return parcelSize; }
     public void setParcelSize(ParcelSize parcelSize) { this.parcelSize = parcelSize; }
     public String getParcelDesc() { return parcelDesc; }

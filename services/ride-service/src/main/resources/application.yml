@@ -54,7 +54,25 @@ app:
     wallet-url: ${WALLET_SERVICE_URL:http://localhost:8084}
     notify-url: ${NOTIFY_URL:http://localhost:8084/wallet/notify}
   pooling:
-    max-distance-km: 3.0       # Reject pool candidates beyond this from the route
+    # How near the joiner's destination has to be to where the car is already heading.
+    max-distance-km: ${POOL_MAX_DEST_GAP_KM:3.0}
+    # How far off the car's remaining line the joiner's pickup may sit — the detour being asked for.
+    max-detour-km: ${POOL_MAX_DETOUR_KM:2.0}
+    # "Routes align": how far the joiner's direction of travel may differ from the car's, in degrees.
+    # Without this, somebody driving the same road the other way looks like a perfect match.
+    max-bearing-deg: ${POOL_MAX_BEARING_DEG:50}
+    # Seats. A saloon carries four, but three strangers plus a driver is the practical ceiling.
+    max-passengers: ${POOL_MAX_PASSENGERS:3}
+    # Each extra passenger takes this much off EVERY passenger's own solo fare.
+    # Two people at 75% each pays the driver 150% of one fare — which is why sharing is worth
+    # running at all, rather than a discount the driver quietly funds.
+    discount-per-extra: ${POOL_DISCOUNT_PER_EXTRA:0.25}
+    # Floor, so a full car never approaches free.
+    min-discount-factor: ${POOL_MIN_DISCOUNT_FACTOR:0.55}
+    # How long a driver has to undo a pickup they confirmed by mistake. Deliberately short: a
+    # mis-tap is noticed within seconds, whereas an open-ended undo turns "the passenger is aboard
+    # and owes the fare" back into something the driver can revoke at any point in the journey.
+    pickup-undo-seconds: ${POOL_PICKUP_UNDO_SECONDS:300}
     rule-version: v1
   ride:
     request-ttl-seconds: 90    # Immediate requests auto-expire after this if no driver takes them
