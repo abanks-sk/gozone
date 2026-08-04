@@ -524,21 +524,70 @@ paths:
   /pickup-disputes:
     get:
       tags: [pooling]
-      summary: "Admin: open pickup disputes"
+      summary: "Admin: pickup disputes"
       description: >
-        The backstop when a driver will not correct one. ADMIN/SUPER_ADMIN only. A dispute leaves
-        this list when the driver undoes the pickup.
+        The backstop when a driver will not correct one. ADMIN/SUPER_ADMIN only. Most disputes never
+        reach here — the driver undoes the pickup as soon as they are told, which settles it and
+        drops it off the open list. What remains is a disagreement. Carries both parties' phone
+        numbers because that is how these are actually settled; a truncated UUID is not something
+        anyone can act on.
       operationId: listPickupDisputes
+      parameters:
+        - name: openOnly
+          in: query
+          required: false
+          schema: { type: boolean, default: true }
+          description: True (default) = the live queue. False also returns settled ones.
       responses:
         '200':
-          description: Open disputes, newest first
+          description: Disputes, newest first
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/TripPassengerResponse' }
+                items: { $ref: '#/components/schemas/PickupDisputeResponse' }
         '403':
           description: Not an admin
+
+  /pickup-disputes/{tripId}/{riderId}:
+    patch:
+      tags: [pooling]
+      summary: "Admin: settle a pickup dispute"
+      description: >
+        UPHELD takes the passenger off the ride — picked_up_at is cleared, so they may leave again
+        and are not charged. Anything else refuses it and they stay on, which is why a refusal
+        REQUIRES a note (400 without one): the passenger reads it, and "rejected" with no reason is
+        not an answer. Either way the dispute is marked resolved rather than deleted — what was
+        claimed and what was decided both stay on the record.
+      operationId: resolvePickupDispute
+      parameters:
+        - { name: tripId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: riderId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [UPHELD, REJECTED] }
+                note: { type: string, description: Required when refusing; shown to the passenger }
+      responses:
+        '200':
+          description: Settled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PickupDisputeResponse' }
+        '400':
+          description: Refusing without a reason
+        '403':
+          description: Not an admin
+        '404':
+          description: That passenger isn't on this trip
+        '409':
+          description: There is no open dispute on that passenger
+
 
   /trips/{id}/leave-pool:
     post:
@@ -1165,6 +1214,45 @@ components:
         pickupDisputeNote:
           type: string
           nullable: true
+
+    PickupDisputeResponse:
+      type: object
+      description: >
+        A disputed pickup as the admin deciding it sees it. Deliberately fuller than
+        TripPassengerResponse: somebody is settling an argument about money between two people, and
+        both phone numbers are here because that is how it gets settled. The driver's name and
+        vehicle come from the accepted bid, so the board costs no cross-service call.
+      properties:
+        tripId: { type: string, format: uuid }
+        tripStatus: { type: string }
+        riderId: { type: string, format: uuid }
+        riderPhone: { type: string, nullable: true }
+        driverId: { type: string, format: uuid }
+        driverName: { type: string, nullable: true }
+        driverPhone: { type: string, nullable: true }
+        vehicle: { type: string, nullable: true }
+        plate: { type: string, nullable: true }
+        lockedFare:
+          type: number
+          description: What the passenger is charged if the dispute fails
+        pickupSeq: { type: integer }
+        paymentStatus: { type: string, enum: [UNPAID, AWAITING, PAID] }
+        originLat: { type: number }
+        originLng: { type: number }
+        destLat: { type: number }
+        destLng: { type: number }
+        pickedUpAt: { type: string, format: date-time, nullable: true }
+        disputedAt: { type: string, format: date-time }
+        note: { type: string, nullable: true, description: What the passenger said }
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null while open — this is what makes a row a live piece of work
+        outcome:
+          type: string
+          nullable: true
+          description: 'How it ended, e.g. "UPHELD — the driver undid the pickup themselves"'
 
     PoolJoinRequest:
       type: object

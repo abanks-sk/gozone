@@ -85,6 +85,23 @@ public class TripPassenger {
     @Column(name = "pickup_dispute_note", columnDefinition = "text")
     private String pickupDisputeNote;
 
+    /**
+     * How the dispute ended, and when. Null while it is still open.
+     *
+     * <p>The objection is not deleted on resolution — an argument about money should leave a record
+     * of what was claimed and who was found to be right, and clearing the flag would erase both.
+     */
+    @Column(name = "pickup_dispute_resolved_at")
+    private OffsetDateTime pickupDisputeResolvedAt;
+
+    @Column(name = "pickup_dispute_outcome", columnDefinition = "text")
+    private String pickupDisputeOutcome;
+
+    /** Open = raised and not yet answered. What the admin board lists. */
+    public boolean hasOpenPickupDispute() {
+        return pickupDisputedAt != null && pickupDisputeResolvedAt == null;
+    }
+
     @Column(name = "rule_version", nullable = false, length = 20)
     private String ruleVersion = "v1";
 
@@ -114,6 +131,10 @@ public class TripPassenger {
     public void setPickupDisputedAt(OffsetDateTime pickupDisputedAt) { this.pickupDisputedAt = pickupDisputedAt; }
     public String getPickupDisputeNote() { return pickupDisputeNote; }
     public void setPickupDisputeNote(String pickupDisputeNote) { this.pickupDisputeNote = pickupDisputeNote; }
+    public OffsetDateTime getPickupDisputeResolvedAt() { return pickupDisputeResolvedAt; }
+    public void setPickupDisputeResolvedAt(OffsetDateTime at) { this.pickupDisputeResolvedAt = at; }
+    public String getPickupDisputeOutcome() { return pickupDisputeOutcome; }
+    public void setPickupDisputeOutcome(String outcome) { this.pickupDisputeOutcome = outcome; }
     public String getRuleVersion() { return ruleVersion; }
     public void setRuleVersion(String ruleVersion) { this.ruleVersion = ruleVersion; }
 

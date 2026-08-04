@@ -901,8 +901,12 @@ public class RideService {
         }
         // Raising it twice is not two disputes. Keep the first timestamp: it is the record of when
         // the objection was made, which is the fact that matters if this is ever adjudicated.
-        if (me.getPickupDisputedAt() == null) {
+        // A dispute that was already settled and is being raised again IS new, though — clear the
+        // resolution so it re-enters the queue rather than looking answered.
+        if (!me.hasOpenPickupDispute()) {
             me.setPickupDisputedAt(OffsetDateTime.now());
+            me.setPickupDisputeResolvedAt(null);
+            me.setPickupDisputeOutcome(null);
         }
         me.setPickupDisputeNote(trimToNull(note));
         passengerRepo.save(me);
@@ -913,17 +917,75 @@ public class RideService {
         return TripPassengerResponse.of(me, requestOf(me, trip), false);
     }
 
-    /** Admin: open pickup disputes, so a driver refusing to correct one is not the end of it. */
+    /** Admin: pickup disputes, so a driver refusing to correct one is not the end of it. */
     @Transactional(readOnly = true)
-    public List<TripPassengerResponse> listPickupDisputes() {
-        return passengerRepo.findByPickupDisputedAtIsNotNullOrderByPickupDisputedAtDesc().stream()
+    public List<PickupDisputeResponse> listPickupDisputes(boolean openOnly) {
+        return passengerRepo.findDisputes(openOnly).stream()
             .map(p -> {
                 Trip trip = p.getTrip();
                 RideRequest r = requestOf(p, trip);
-                return r == null ? null : TripPassengerResponse.of(p, r, true);
+                Bid winning = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
+                    trip.getRequest().getId(), Bid.BidStatus.ACCEPTED).orElse(null);
+                return PickupDisputeResponse.of(p, trip, r, winning);
             })
-            .filter(java.util.Objects::nonNull)
             .toList();
+    }
+
+    /**
+     * Admin settles a pickup dispute.
+     *
+     * <p>The backstop, and the only path that exists when the driver will not correct one
+     * themselves. Two outcomes, and they are not symmetric: upholding takes the passenger off the
+     * ride's books, refusing leaves them on it. So a refusal has to say why — the passenger reads
+     * it, and "your objection was rejected" with no reason is not an answer.
+     *
+     * <p>Either way the dispute is marked resolved rather than deleted. What was claimed and what
+     * was decided both stay on the row.
+     */
+    public PickupDisputeResponse resolvePickupDispute(UUID tripId, UUID riderId,
+                                                      boolean uphold, String note) {
+        Trip trip = tripRepo.findById(tripId)
+            .orElseThrow(() -> new IllegalStateException("Trip not found"));
+        TripPassenger p = passengerRepo
+            .findById(new TripPassenger.TripPassengerId(tripId, riderId))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "That passenger isn't on this trip."));
+        if (!p.hasOpenPickupDispute()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "There's no open dispute on that passenger.");
+        }
+        String reason = trimToNull(note);
+        if (!uphold && reason == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Say why the dispute is being refused — the passenger reads it.");
+        }
+
+        if (uphold) {
+            // Their word is taken: off the ride's books, and free to leave again.
+            p.setPickedUpAt(null);
+            p.setPickupDisputeOutcome("UPHELD" + (reason != null ? " — " + reason : ""));
+            notifyClient.send(riderId, "Your dispute was upheld",
+                "You're no longer marked as being in that car"
+                    + (reason != null ? ". " + reason : "."));
+            notifyClient.send(trip.getDriverId(), "A pickup was reversed",
+                "Support reviewed a passenger's dispute and removed them from your trip.");
+        } else {
+            p.setPickupDisputeOutcome("REJECTED — " + reason);
+            notifyClient.send(riderId, "Your dispute was reviewed",
+                "We've looked into it and you remain on this ride. " + reason);
+        }
+        p.setPickupDisputeResolvedAt(OffsetDateTime.now());
+        passengerRepo.save(p);
+
+        // Upholding one moves money away from a driver, so it belongs in the log at WARN with both
+        // parties named — this is the entry someone reads when a driver asks why they were docked.
+        log.warn("[POOL] admin resolved pickup dispute trip={} rider={} outcome={}",
+            tripId, riderId, p.getPickupDisputeOutcome());
+
+        RideRequest r = requestOf(p, trip);
+        Bid winning = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
+            trip.getRequest().getId(), Bid.BidStatus.ACCEPTED).orElse(null);
+        return PickupDisputeResponse.of(p, trip, r, winning);
     }
 
     /**
@@ -967,16 +1029,20 @@ public class RideService {
         // are asking for exactly this — so an open dispute lifts the clock. Without that, somebody
         // wrongly marked aboard who notices at minute six is still stuck, which is the whole
         // problem this was meant to solve.
-        boolean disputed = p.getPickupDisputedAt() != null;
+        boolean disputed = p.hasOpenPickupDispute();
         if (!disputed && p.getPickedUpAt().isBefore(OffsetDateTime.now().minusSeconds(pickupUndoSeconds))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Too late to undo that pickup — contact support.");
         }
 
         p.setPickedUpAt(null);
-        // The objection has been answered, so it stops being open. The note stays as the record of
-        // what was said.
-        p.setPickupDisputedAt(null);
+        // The objection has been answered, so it leaves the admin queue — but it is marked settled
+        // rather than deleted. The claim and the fact that the driver conceded it both stay on the
+        // row, which is the whole point of keeping a record of an argument about money.
+        if (disputed) {
+            p.setPickupDisputeResolvedAt(OffsetDateTime.now());
+            p.setPickupDisputeOutcome("UPHELD — the driver undid the pickup themselves");
+        }
         passengerRepo.save(p);
         if (disputed) {
             notifyClient.send(p.getId().getRiderId(), "Your driver corrected it",

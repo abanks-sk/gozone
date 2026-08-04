@@ -230,11 +230,27 @@ public class RideController {
             body != null ? body.get("note") : null));
     }
 
-    /** Admin: open pickup disputes — the backstop when a driver won't correct one. */
+    /** Admin: pickup disputes — the backstop when a driver won't correct one. */
     @GetMapping("/pickup-disputes")
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
-    public ResponseEntity<List<TripPassengerResponse>> pickupDisputes() {
-        return ResponseEntity.ok(rideService.listPickupDisputes());
+    public ResponseEntity<List<PickupDisputeResponse>> pickupDisputes(
+            @RequestParam(defaultValue = "true") boolean openOnly) {
+        return ResponseEntity.ok(rideService.listPickupDisputes(openOnly));
+    }
+
+    /**
+     * Admin settles a dispute: uphold it (the passenger comes off the ride) or refuse it (they
+     * stay on). A refusal must carry a reason — the passenger reads it.
+     */
+    @PatchMapping("/pickup-disputes/{tripId}/{riderId}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<PickupDisputeResponse> resolvePickupDispute(
+            @PathVariable UUID tripId,
+            @PathVariable UUID riderId,
+            @RequestBody Map<String, String> body) {
+        boolean uphold = "UPHELD".equalsIgnoreCase(body.getOrDefault("decision", ""));
+        return ResponseEntity.ok(
+            rideService.resolvePickupDispute(tripId, riderId, uphold, body.get("note")));
     }
 
     /**

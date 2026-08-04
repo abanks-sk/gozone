@@ -2,6 +2,8 @@ package com.gozone.ride.repository;
 
 import com.gozone.ride.model.TripPassenger;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -20,6 +22,18 @@ public interface TripPassengerRepository extends JpaRepository<TripPassenger, Tr
      */
     Optional<TripPassenger> findByRequestId(UUID requestId);
 
-    /** Open pickup disputes, newest first — the admin's view when a driver won't correct one. */
-    List<TripPassenger> findByPickupDisputedAtIsNotNullOrderByPickupDisputedAtDesc();
+    /**
+     * Pickup disputes for the admin board, newest first.
+     *
+     * <p>{@code openOnly} true is the live queue — raised and not yet answered. False returns
+     * settled ones too, which is how an admin checks what was decided rather than only what is
+     * outstanding.
+     */
+    @Query("""
+        SELECT p FROM TripPassenger p
+        WHERE p.pickupDisputedAt IS NOT NULL
+          AND (:openOnly = FALSE OR p.pickupDisputeResolvedAt IS NULL)
+        ORDER BY p.pickupDisputedAt DESC
+        """)
+    List<TripPassenger> findDisputes(@Param("openOnly") boolean openOnly);
 }

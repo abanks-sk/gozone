@@ -95,7 +95,9 @@ public record TripResponse(
             p != null ? p.getSoloFare() : null,
             p != null ? p.getPickupSeq() : null,
             p != null ? p.getPickedUpAt() != null : null,
-            p != null ? p.getPickupDisputedAt() != null : null
+            // Open, not "ever raised": a settled dispute must not leave the passenger permanently
+            // unable to object again if the driver marks them aboard a second time.
+            p != null ? p.hasOpenPickupDispute() : null
         );
     }
 }
