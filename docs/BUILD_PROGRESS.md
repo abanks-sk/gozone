@@ -53,7 +53,7 @@ Last updated: 2026-06-25
 **What's built (ride-service):**
 - Models: `RideRequest`, `Bid`, `Trip`, `TripPassenger` (composite PK + locked_fare/rule_version), `DriverLocation`, `RideRating`
 - Repositories: PostGIS native query `ST_DWithin` for nearby feed; `ON CONFLICT DO UPDATE` upsert for driver locations
-- `RideService`: createRequest, nearbyRequests, placeBid (ACCEPT→match/COUNTER→pending), updateTripStatus (MATCHED→ENROUTE→STARTED→COMPLETED), pushLocation (upsert + WebSocket broadcast), poolCandidates (corridor match), poolJoin (haversine fair-share, locked_fare immutable, rule_version v1), rateTrip, sos stub
+- `RideService`: createRequest, nearbyRequests, placeBid (ACCEPT→match/COUNTER→pending), updateTripStatus (MATCHED→ENROUTE→STARTED→COMPLETED), pushLocation (upsert + WebSocket broadcast), poolOffers/poolJoin/poolCandidates (corridor + detour + bearing match; joining/leaving re-prices every passenger from their own solo fare, capped at it, rule_version v1), rateTrip, sos stub
 - `RideController`: 9 endpoints (`/requests`, `/requests/nearby`, `/requests/{id}/bid`, `/trips/{id}/status`, `/trips/{id}/pool-candidates`, `/trips/{id}/pool-join`, `/locations`, `/trips/{id}/rate`, `/trips/{id}/sos`)
 - `WebSocketConfig`: STOMP over SockJS, `/topic/trip/{id}/location` for live ride tracking
 - DTOs: `CreateRideRequestDto`, `RideRequestResponse`, `BidRequestDto`, `BidResponse`, `TripStatusUpdateDto`, `TripResponse`, `LocationUpdateDto`, `RatingRequestDto`, `PoolJoinRequest`, `PoolJoinResponse`
@@ -180,4 +180,4 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/food/orders/{orderI
 | Queue WebSocket | BUILT — /topic/queue/{restaurantId} (M4) |
 | Ride→Wallet settlement | BUILT — sync REST POST /wallet/commission (M6) |
 | Food→Wallet settlement | BUILT — sync REST POST /wallet/settle/{orderId} (M6) |
-| Simplified pooling | BUILT — corridor match + haversine fair-share + locked_fare (M3) |
+| Simplified pooling | BUILT — corridor + detour + bearing match, reachable from both apps; per-passenger fares and payment. The M3 version was scaffolding no app ever called |

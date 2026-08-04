@@ -427,6 +427,167 @@ eq "trip in rider history" "$(GET /rides/trips/mine $RIDER | python -c "import s
 
 echo
 echo "=============================================="
+echo " 4b. RIDE SHARING — two passengers, one car, both pay less"
+echo "=============================================="
+# A shared ride is the only place a fare is not a property of the trip. Two people owe two
+# different amounts, each pays separately, and the driver is settled once for the sum — so this
+# section is as much about the money moving correctly as about the matching.
+RIDER2=$(login "+233201000007"); neq "second passenger login (+…007)" "$RIDER2" ""
+RID1_ID=$(GET /auth/me $RIDER  | jq_ "d['id']")
+RID2_ID=$(GET /auth/me $RIDER2 | jq_ "d['id']")
+
+eq "sharing refused on Luxe"   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER" -d '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.65,"destLng":-0.196,"proposedFare":40,"kind":"RIDE","rideType":"LUXE","shared":true}' $GW/rides/requests)" "400"
+eq "sharing refused on parcels" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER" -d '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.65,"destLng":-0.196,"proposedFare":15,"kind":"PARCEL","parcelSize":"SMALL","parcelDesc":"x","direction":"SEND","partyName":"A","partyPhone":"+233240000000","shared":true}' $GW/rides/requests)" "400"
+
+SR1=$(POST /rides/requests "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6500,"destLng":-0.1960,"proposedFare":30,"kind":"RIDE","rideType":"STANDARD","shared":true,"riderPhone":"+233201000001"}')
+SRID1=$(echo "$SR1" | jq_ "d['id']")
+eq "passenger 1 asks to share" "$(echo "$SR1" | jq_ "d['shared']")" "True"
+eq "driver feed labels it shared" "$(GET "/rides/requests/nearby?lat=5.6037&lng=-0.1870&radiusKm=50&vehicleClass=STANDARD&serviceMode=BOTH" $DRIVER | python -c "import sys,json;print(next((r['shared'] for r in json.load(sys.stdin) if r['id']=='$SRID1'),'missing'))")" "True"
+
+SB=$(POST "/rides/requests/$SRID1/bid" "$DRIVER" '{"type":"ACCEPT","amount":30,"driverName":"Kwame Driver","driverPhone":"+233201000002","vehicle":"Toyota Vitz (silver)","plate":"GR-2244-22","lat":5.6050,"lng":-0.1875}')
+STRIP=$(POST "/rides/requests/$SRID1/bids/$(echo "$SB" | jq_ "d['bidId']")/accept" "$RIDER" '{}')
+STID=$(echo "$STRIP" | jq_ "d['id']")
+eq "trip inherits sharing"  "$(echo "$STRIP" | jq_ "d['shared']")" "True"
+eqm "  starts at the solo fare" "$(echo "$STRIP" | jq_ "d['agreedFare']")" "30"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $DRIVER" -d '{"lat":5.6100,"lng":-0.1885}' $GW/rides/locations
+
+# Passenger 2: pickup on the road still to be driven, destination a few hundred metres from the
+# first passenger's, travelling the same way.
+SR2=$(POST /rides/requests "$RIDER2" '{"originLat":5.6250,"originLng":-0.1915,"destLat":5.6470,"destLng":-0.1975,"proposedFare":20,"kind":"RIDE","rideType":"STANDARD","shared":true,"riderPhone":"+233201000007"}')
+SRID2=$(echo "$SR2" | jq_ "d['id']")
+POFF=$(GET "/rides/requests/$SRID2/pool-offers" $RIDER2)
+eq  "passenger 2 is offered the ride"  "$(echo "$POFF" | python -c "import sys,json;print(any(o['tripId']=='$STID' for o in json.load(sys.stdin)))")" "True"
+eqm "  quoted 25% off (20 to 15)"      "$(echo "$POFF" | jq_ "[o['yourFare'] for o in d if o['tripId']=='$STID'][0]")" "15"
+eq  "  saving stated as a percentage"  "$(echo "$POFF" | jq_ "[o['savingPct'] for o in d if o['tripId']=='$STID'][0]")" "25"
+eqm "  passenger 1 shown dropping to"  "$(echo "$POFF" | jq_ "[o['newFare'] for o in d if o['tripId']=='$STID'][0]")" "22.50"
+eq  "  offer carries no phone numbers" "$(echo "$POFF" | grep -c 'Phone')" "0"
+eq  "driver's own candidate list agrees" "$(POST "/rides/trips/$STID/pool-candidates" "$DRIVER" '{}' | python -c "import sys,json;print(any(r['id']=='$SRID2' for r in json.load(sys.stdin)))")" "True"
+
+# The three gates, each proved by something that fails only it.
+SR_OPP=$(POST /rides/requests "$RIDER2" '{"originLat":5.6600,"originLng":-0.2000,"destLat":5.6480,"destLng":-0.1970,"proposedFare":18,"kind":"RIDE","rideType":"STANDARD","shared":true}')
+eq "same corridor, opposite direction: no offer" "$(GET "/rides/requests/$(echo "$SR_OPP" | jq_ "d['id']")/pool-offers" $RIDER2 | jq_ "len(d)")" "0"
+SR_FAR=$(POST /rides/requests "$RIDER2" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.5500,"destLng":-0.2600,"proposedFare":18,"kind":"RIDE","rideType":"STANDARD","shared":true}')
+eq "destination miles away: no offer" "$(GET "/rides/requests/$(echo "$SR_FAR" | jq_ "d['id']")/pool-offers" $RIDER2 | jq_ "len(d)")" "0"
+SR_SOLO=$(POST /rides/requests "$RIDER2" '{"originLat":5.6250,"originLng":-0.1915,"destLat":5.6470,"destLng":-0.1975,"proposedFare":20,"kind":"RIDE","rideType":"STANDARD"}')
+eq "didn't ask to share: no offer" "$(GET "/rides/requests/$(echo "$SR_SOLO" | jq_ "d['id']")/pool-offers" $RIDER2 | jq_ "len(d)")" "0"
+
+SJOIN=$(POST "/rides/trips/$STID/pool-join" "$RIDER2" "{\"requestId\":\"$SRID2\"}")
+eqm "passenger 2 joins at the quoted fare" "$(echo "$SJOIN" | jq_ "d['lockedFare']")" "15"
+eq  "  two aboard"                          "$(echo "$SJOIN" | jq_ "d['passengerCount']")" "2"
+eqm "passenger 1's fare FELL to 22.50"      "$(GET "/rides/requests/$SRID1/status" $RIDER  | jq_ "d['trip']['myFare']")" "22.50"
+eqm "passenger 2 sees their own 15.00"      "$(GET "/rides/requests/$SRID2/status" $RIDER2 | jq_ "d['trip']['myFare']")" "15"
+eq  "  and it is the same trip"             "$(GET "/rides/requests/$SRID2/status" $RIDER2 | jq_ "d['trip']['id']")" "$STID"
+eq  "  joiner gets the driver card too"     "$(GET "/rides/requests/$SRID2/status" $RIDER2 | jq_ "d['driver']['driverName']")" "Kwame Driver"
+# The whole economic argument: two discounted fares beat one full one.
+eqm "driver is now owed 37.50, not 30"      "$(GET "/rides/trips/$STID" $DRIVER | jq_ "d['agreedFare']")" "37.50"
+eq  "driver sees both pickups"              "$(GET "/rides/trips/$STID/passengers" $DRIVER | jq_ "len(d)")" "2"
+eq  "  with a number to ring"               "$(GET "/rides/trips/$STID/passengers" $DRIVER | jq_ "d[1]['riderPhone']")" "+233201000007"
+eq  "passengers can't harvest each other's numbers" "$(GET "/rides/trips/$STID/passengers" $RIDER2 | jq_ "str(d[0]['riderPhone'])")" "None"
+eq  "a stranger can't read the passenger list" "$(CODE "/rides/trips/$STID/passengers" $COURIER)" "403"
+eq  "joining twice refused" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER2" -d "{\"requestId\":\"$SRID2\"}" $GW/rides/trips/$STID/pool-join)" "409"
+
+echo "--- leaving is not cancelling ---"
+# Proved on a THROWAWAY trip so the main one survives to be paid for. A joiner leaving must not
+# end the ride for the person who booked it, and must not leave the driver carrying them for less
+# than the job they accepted — which is why the pricing rule is a ceiling and not a one-way ratchet.
+LR1=$(POST /rides/requests "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6500,"destLng":-0.1960,"proposedFare":30,"kind":"RIDE","rideType":"STANDARD","shared":true}')
+LRID1=$(echo "$LR1" | jq_ "d['id']")
+LB=$(POST "/rides/requests/$LRID1/bid" "$DRIVER" '{"type":"ACCEPT","amount":30,"driverName":"Kwame Driver","lat":5.6050,"lng":-0.1875}')
+LTID=$(POST "/rides/requests/$LRID1/bids/$(echo "$LB" | jq_ "d['bidId']")/accept" "$RIDER" '{}' | jq_ "d['id']")
+LR2=$(POST /rides/requests "$RIDER2" '{"originLat":5.6250,"originLng":-0.1915,"destLat":5.6470,"destLng":-0.1975,"proposedFare":20,"kind":"RIDE","rideType":"STANDARD","shared":true}')
+LRID2=$(echo "$LR2" | jq_ "d['id']")
+POST "/rides/trips/$LTID/pool-join" "$RIDER2" "{\"requestId\":\"$LRID2\"}" >/dev/null
+eqm "  (joined: booker down to 22.50)" "$(GET "/rides/requests/$LRID1/status" $RIDER | jq_ "d['trip']['myFare']")" "22.50"
+
+eq "the booker can't 'leave' their own ride" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RIDER" $GW/rides/trips/$LTID/leave-pool)" "400"
+eq "someone not aboard can't leave it"       "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $COURIER" $GW/rides/trips/$LTID/leave-pool)" "403"
+
+# The exit closes at the car door. Without this a passenger could be driven the whole way and then
+# "leave" instead of paying — the fare is only collected at the end, so leaving late is
+# indistinguishable from a free ride.
+eq "can't confirm a pickup before setting off" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "409"
+PATCH_ "/rides/trips/$LTID/status" "$DRIVER" '{"status":"ENROUTE"}' >/dev/null
+eq "a passenger can't confirm their own pickup" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RIDER2" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "403"
+eq "someone not on the trip can't be picked up" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/aaaaaaaa-0000-0000-0000-000000000005/picked-up)" "404"
+neq "driver confirms the joiner is in the car" "$(POST "/rides/trips/$LTID/passengers/$RID2_ID/picked-up" "$DRIVER" '{}' | jq_ "str(d['pickedUpAt'])")" "None"
+eq "  the joiner's app hides the leave option" "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickedUp']")" "True"
+eq "ABOARD: leaving is now refused"            "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RIDER2" $GW/rides/trips/$LTID/leave-pool)" "409"
+eq "  confirming twice is harmless"            "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "200"
+
+# Undoing a mis-tap. Confirming a pickup traps somebody who is not in the car — they cannot leave
+# and would be billed for a ride they never took — so the driver needs a way back.
+eq "a passenger can't undo their own pickup" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $RIDER2" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "403"
+eq "driver undoes the pickup"                "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "200"
+eq "  they are back on the kerb"             "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickedUp']")" "False"
+eq "  undoing again is refused"              "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "409"
+
+# The window is the whole reason this is safe: an open-ended undo would let a driver revoke
+# "aboard and owes the fare" at any point in the journey. Age the stamp rather than wait 5 minutes.
+POST "/rides/trips/$LTID/passengers/$RID2_ID/picked-up" "$DRIVER" '{}' >/dev/null
+docker exec gozone-postgres psql -U gozone -d ride_db -q -c \
+  "UPDATE trip_passengers SET picked_up_at = NOW() - INTERVAL '20 minutes' WHERE trip_id = '$LTID' AND rider_id = '$RID2_ID';" >/dev/null 2>&1
+eq "too late to undo an old pickup"          "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "409"
+
+# The passenger's side of boarding. Being marked aboard puts a fare on somebody by one person's
+# assertion, so the person it lands on has to be able to answer back.
+eq "someone not on the trip can't dispute" "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $COURIER" -d '{}' $GW/rides/trips/$LTID/dispute-pickup)" "403"
+DISP=$(POST "/rides/trips/$LTID/dispute-pickup" "$RIDER2" '{"note":"I am not in this car"}')
+eq "passenger disputes the pickup"         "$(echo "$DISP" | jq_ "d['pickupDisputeNote']")" "I am not in this car"
+# Load-bearing: a dispute must NOT un-board them, or you could ride the whole way, object at the
+# drop-off and walk away — the free-ride hole, entered from the passenger's side.
+neq "  it does NOT un-board them"          "$(echo "$DISP" | jq_ "str(d['pickedUpAt'])")" "None"
+eq "  so leaving is still refused"         "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RIDER2" $GW/rides/trips/$LTID/leave-pool)" "409"
+eq "  the app knows not to ask twice"      "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickupDisputed']")" "True"
+eq "  an admin can see it"                 "$(GET /rides/pickup-disputes $ADMIN | python -c "import sys,json;print(any(p['riderId']=='$RID2_ID' for p in json.load(sys.stdin)))")" "True"
+eq "  and only an admin can"               "$(CODE /rides/pickup-disputes $DRIVER)" "403"
+# The point of the whole exchange: an objection lifts the driver's deadline, so somebody wrongly
+# marked aboard who notices at minute six is not stuck with it.
+eq "a dispute lets the driver undo even now" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $DRIVER" $GW/rides/trips/$LTID/passengers/$RID2_ID/picked-up)" "200"
+eq "  the dispute is closed with it"       "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['trip']['myPickupDisputed']")" "False"
+eq "  and the dispute board is clear"      "$(GET /rides/pickup-disputes $ADMIN | python -c "import sys,json;print(any(p['riderId']=='$RID2_ID' for p in json.load(sys.stdin)))")" "False"
+eq "nothing to dispute when not aboard"    "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $RIDER2" -d '{}' $GW/rides/trips/$LTID/dispute-pickup)" "409"
+
+# Put them back on the kerb so the rest of the section can exercise the leave path itself.
+docker exec gozone-postgres psql -U gozone -d ride_db -q -c \
+  "UPDATE trip_passengers SET picked_up_at = NULL WHERE trip_id = '$LTID' AND rider_id = '$RID2_ID';" >/dev/null 2>&1
+eq "the joiner leaves"                       "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RIDER2" $GW/rides/trips/$LTID/leave-pool)" "204"
+eq "  their request is cancelled, not re-opened" "$(GET "/rides/requests/$LRID2/status" $RIDER2 | jq_ "d['request']['status']")" "CANCELLED"
+eq "  and they are off the ride"             "$(GET "/rides/trips/$LTID/passengers" $DRIVER | jq_ "len(d)")" "1"
+# The reason "downward only" had to go: leave it in and the driver is paid 22.50 for a job they
+# took at 30, because a stranger changed their mind.
+eqm "the booker is restored to the 30 they agreed" "$(GET "/rides/requests/$LRID1/status" $RIDER | jq_ "d['trip']['myFare']")" "30"
+eqm "  and the driver is not left short"           "$(GET "/rides/trips/$LTID" $DRIVER | jq_ "d['agreedFare']")" "30"
+# The whole point of leave-pool: the booker's journey is untouched. (ENROUTE, not MATCHED, because
+# the pickup-gate checks above put this trip on the road.)
+eq "  their ride carries on"                       "$(GET "/rides/requests/$LRID1/status" $RIDER | jq_ "d['trip']['status']")" "ENROUTE"
+eq "leaving twice refused"                   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RIDER2" $GW/rides/trips/$LTID/leave-pool)" "403"
+PATCH_ "/rides/trips/$LTID/status" "$DRIVER" '{"status":"CANCELLED"}' >/dev/null   # tidy the throwaway away
+
+PATCH_ "/rides/trips/$STID/status" "$DRIVER" '{"status":"ENROUTE"}'   >/dev/null
+PATCH_ "/rides/trips/$STID/status" "$DRIVER" '{"status":"STARTED"}'   >/dev/null
+# STARTED already means "the passenger who booked is in the car", so they are stamped there rather
+# than being asked to confirm the same thing twice. Joiners board later and get their own button.
+eq "starting the trip boards the booker automatically" "$(GET "/rides/requests/$SRID1/status" $RIDER | jq_ "d['trip']['myPickedUp']")" "True"
+eq "advance shared trip to COMPLETED" "$(PATCH_ "/rides/trips/$STID/status" "$DRIVER" '{"status":"COMPLETED"}' | jq_ "d['status']")" "COMPLETED"
+
+SBAL0=$(GET "/wallet/balance?ownerType=DRIVER" $DRIVER | jq_ "d['balance']")
+eq "passenger 1 pays cash"          "$(POST "/rides/trips/$STID/pay" "$RIDER" '{"method":"cash"}' | jq_ "d['paymentStatus']")" "AWAITING"
+eq "driver confirms passenger 1"    "$(POST "/rides/trips/$STID/confirm-cash" "$DRIVER" "{\"riderId\":\"$RID1_ID\"}" | jq_ "d['paymentStatus']")" "AWAITING"
+sleep 1
+# The driver is owed the whole fare and the wallet settles a trip exactly once, so half the money
+# in must not trigger a payout.
+eqm "not settled while passenger 2 still owes" "$(GET "/wallet/balance?ownerType=DRIVER" $DRIVER | jq_ "d['balance']")" "$SBAL0"
+eq "passenger 2 pays cash"          "$(POST "/rides/trips/$STID/pay" "$RIDER2" '{"method":"cash"}' | jq_ "d['paymentStatus']")" "AWAITING"
+eq "driver confirms passenger 2 -> trip PAID" "$(POST "/rides/trips/$STID/confirm-cash" "$DRIVER" "{\"riderId\":\"$RID2_ID\"}" | jq_ "d['paymentStatus']")" "PAID"
+sleep 1
+SBAL1=$(GET "/wallet/balance?ownerType=DRIVER" $DRIVER | jq_ "d['balance']")
+neq "driver settled once, on the full 37.50" "$SBAL1" "$SBAL0"
+echo "        (driver wallet $SBAL0 -> $SBAL1 on two shared fares totalling GH¢37.50)"
+eq "the joiner can rate the driver" "$(POST "/rides/trips/$STID/rate" "$RIDER2" "{\"rateeId\":\"$(GET /auth/me $DRIVER | jq_ "d['id']")\",\"score\":5}" | jq_ "d['status']")" "rated"
+eqm "joined ride in their history at THEIR fare" "$(GET /rides/trips/mine $RIDER2 | jq_ "[t['fare'] for t in d if t.get('tripId')=='$STID'][0]")" "15"
+
+echo
+echo "=============================================="
 echo " 5. PARCEL — vehicle-class routing"
 echo "=============================================="
 P1=$(POST /rides/requests "$RIDER" '{"originLat":5.6037,"originLng":-0.1870,"destLat":5.6300,"destLng":-0.1900,"proposedFare":15,"kind":"PARCEL","parcelSize":"SMALL","parcelDesc":"A4 documents","direction":"SEND","partyName":"Yaa Recipient","partyPhone":"+233241234567","riderPhone":"+233201000001"}')

@@ -1,8 +1,11 @@
 # Device tap-through checklist
 
 Everything here is **unverified by any automated test** and can only be cleared on a real device.
-The e2e suite (148/148) covers the backend; these are the phone-side behaviours it cannot reach —
+The e2e suite (289/289) covers the backend; these are the phone-side behaviours it cannot reach —
 React Native Web ignores synthetic clicks, so none of this has ever been seen running.
+
+**§14 (ride sharing) is the newest and least proven** — it is a whole feature whose UI has only
+ever been type-checked.
 
 Work top to bottom. **§1 first** — if the app red-screens on launch nothing else is testable.
 
@@ -348,6 +351,103 @@ iOS does not throw here, so **this must be checked on Android** — that is wher
 - [ ] `docker compose build auth-service && docker compose up -d auth-service`, then re-open a
       KYC record — **the images are still there.** They live on a named volume; anywhere else and
       a rebuild would destroy every driver's documents
+
+---
+
+## 14. Ride sharing — newest, and entirely unproven on a device
+
+The backend is covered by e2e §4b (matching, pricing, per-passenger payment, settlement). **None
+of the phone-side has ever been seen.** Needs **two customer accounts** signed in on two devices,
+or one phone plus a web export — plus the driver app.
+
+**Requesting**
+
+- [ ] Standard ride → a **Share this ride** row appears above the fare, switch off by default
+- [ ] Switch it on → the row turns blue and the fare caption changes to "less if someone shares"
+- [ ] Change class to **Luxe** or **Okada** → the row **disappears and the choice is cleared**. Come
+      back to Standard: it must be **off**, not remembered on. (A hidden-but-still-set toggle would
+      fail the request with a 400 about something you cannot see.)
+
+**Being offered a ride** — passenger 2, whose pickup is on the road passenger 1 is already
+travelling and whose destination is near theirs
+
+- [ ] Passenger 1 books shared, a driver accepts, driver advances to ENROUTE
+- [ ] Passenger 2 requests a **shared** ride along that route → while it says "Finding you a
+      driver", a **green "Going your way now"** card appears **above** any driver offers
+- [ ] The card shows the solo price **struck through**, the join price, "save 25%", and that the
+      other passenger's fare drops too
+- [ ] Tap **Join this ride** → straight to tracking, with the driver's card and live position
+
+**The money — this is the part worth being fussy about**
+
+- [ ] Passenger 1's screen now shows a **lower** fare than they booked, and a green "You're sharing
+      this ride" note. It must never go **up**
+- [ ] Each passenger's Trip-complete screen shows **their own** fare, not the sum. If either sees
+      the total, `myFare` is not being read somewhere — raise it
+- [ ] Pay on both. The driver's wallet must be credited **once**, for the total
+
+**Driver app**
+
+- [ ] The incoming request card for a shared ride says **"Shared ride"** in green, not
+      "STANDARD ride", with the line about the fare going up
+- [ ] After passenger 2 joins mid-trip, the trip screen (left open) picks it up **on its own**
+      within ~6s: title becomes "Shared trip", a green passenger card appears, and a **second
+      pickup pin** is on the map
+- [ ] On completion the payment panel is a **list of passengers** with a Confirm button each — not
+      one button for the trip
+
+**Boarding, and the exit closing**
+
+- [ ] Once the driver is **ENROUTE**, their trip screen shows **"They're in — confirm pickup"** on
+      the joined passenger, with the line about not being paid until they do
+- [ ] Before ENROUTE that button is absent (the server refuses it, so a visible button would fail)
+- [ ] Tap it → the row becomes a green tick and reads **"On board"**
+- [ ] **Passenger 2's "Leave this shared ride" link disappears** within a poll cycle. This is the
+      whole point: after boarding, leaving would be a free ride
+- [ ] Starting the trip should NOT ask the driver to confirm passenger 1 — that is what Start means,
+      and it is recorded automatically
+
+**Undoing a mis-tap** (confirming the wrong person traps them in a fare they don't owe)
+
+- [ ] Under a boarded passenger, an understated **"Not in my car — undo"** link
+- [ ] Tap it → a confirm that spells out the consequence (they can cancel again, you won't be paid)
+- [ ] Confirm → the row goes back to a numbered pickup, and **passenger 2's "Leave this shared ride"
+      link comes back**
+- [ ] The undo link is **gone once their fare is paid** — nothing left to undo
+- [ ] ~5 minutes after confirming, the link still shows but tapping it says **"Too late to undo that
+      pickup — contact support"**. That is intended: the app doesn't hide it on a timer, because a
+      phone with a wrong clock would hide an undo that would have worked. The server decides
+
+**Leaving a shared ride** (the joiner only, before boarding)
+
+- [ ] As passenger 2, on the tracking screen after joining and **before** the driver confirms the
+      pickup: a quiet **"Leave this shared ride"** link under Call/SOS. **Passenger 1 must NOT see
+      it** — for them the operation is cancelling, which would end the ride for everybody
+- [ ] Tap it → a confirm that says the other passenger carries on. Confirm → back to home
+- [ ] **Passenger 1's fare goes back up to what they originally booked** (30, not 22.50) and their
+      ride continues. This is intended: leaving them on the discount would pay the driver less than
+      the job they accepted. It must never go *above* what they booked at
+- [ ] The driver's trip screen drops the extra pickup within ~6s
+- [ ] Passenger 2's ride shows as **Cancelled** in Your rides — the request is not re-opened
+
+**Disputing a pickup** (the passenger's side — needs both devices)
+
+- [ ] When the driver confirms the pickup, **passenger 2 gets a push**: "You're marked as on board"
+- [ ] Their tracking screen now offers **"I'm not in this car"** where the leave link used to be
+- [ ] Tap it → a confirm that promises only what actually happens (we'll tell your driver) → an
+      amber note replaces the link
+- [ ] **They are still marked aboard.** This is intended and load-bearing: a dispute that un-boarded
+      on demand would let anyone ride the whole way and object at the drop-off
+- [ ] The **driver gets a push** and their trip screen shows a loud amber card, with the quiet
+      "undo" link now a full amber button
+- [ ] Driver taps it → passenger 2 is back on the kerb, the amber note clears, and their **"Leave
+      this shared ride" link returns**
+- [ ] **Works even after 5 minutes** — an open dispute lifts the driver's undo deadline. Confirm a
+      pickup, wait past the window, dispute, and the driver can still undo it
+
+**Won't work, don't raise:** the driver rates only the passenger who booked; the label says so.
+`GET /rides/pickup-disputes` exists for admins but **there is no admin-web page for it** — a
+dispute a driver refuses to correct is reachable via the API only.
 
 ---
 

@@ -220,12 +220,18 @@ General notes:
 - **Endpoints** (`controller/RideController.java`): `/quote` (server fare), `/requests` (create),
   `/requests/nearby` (driver feed — role-gated), `/requests/{id}/status`, `/requests/{id}/bid`,
   `/requests/{id}/bids` + `…/accept`, `/trips/{id}` + `/status` + `/pay` + `/confirm-cash`, `/trips/mine`,
-  pooling, `/locations`, `/trips/{id}/rate`, `/trips/{id}/sos`.
+  ride sharing (`/requests/{id}/pool-offers`, `/trips/{id}/pool-join`, `/trips/{id}/passengers`,
+  `/trips/{id}/pool-candidates`), `/locations`, `/trips/{id}/rate`, `/trips/{id}/sos`.
 - **Logic** (`service/RideService.java`): `quote()` = `(base + perKm×haversine) × type × surge`; `createRequest`
-  (carries **kind** RIDE/PARCEL, **rideType**, **parcelSize/desc**); `placeBid` (ACCEPT binds the **rider's**
-  proposed fare; blocks self-bidding); `nearbyRequests(lat,lng,r,class,mode)` filters by driver class/mode;
-  `settleIfPaid` (only pays out when **COMPLETED && PAID**). `service/WalletClient.java` calls wallet with the
-  internal key.
+  (carries **kind** RIDE/PARCEL, **rideType**, **shared**, **parcelSize/desc**); `placeBid` (ACCEPT binds the
+  **rider's** proposed fare; blocks self-bidding); `nearbyRequests(lat,lng,r,class,mode)` filters by driver
+  class/mode; `poolFit()` is the shared-ride matcher (destination corridor + detour from the road still to be
+  driven + bearing agreement) and `repriceTrip()` re-prices every passenger when the car fills or empties, capped at their booking price; `leavePool()` lets a joiner get out without cancelling the ride;
+  `rollUpPayment` → `settleIfPaid` (only pays out when **COMPLETED && every passenger PAID**).
+  `service/WalletClient.java` calls wallet with the internal key.
+- ⚠️ **A fare belongs to a passenger, not a trip.** `trips.agreed_fare` is the sum of all shares (the
+  driver's earnings); `trip_passengers.locked_fare` is what one person owes. Anything quoting a price to
+  a passenger reads `myFare` on `TripResponse`.
 - **Models:** `RideRequest` (geo `origin`/`dest` as `geography`), `Bid`, `Trip`, `TripPassenger`,
   `DriverLocation`, `RideRating`.
 - **Config knobs** (`application.yml`): `app.pricing.*` (base, per-km, min-fare, surge, peak-surge),

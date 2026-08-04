@@ -444,7 +444,8 @@ Owns rides **and parcels** — they share one request table.
 **Endpoints** (`/rides/...`): `quote`, `requests`, `requests/nearby`, `requests/{id}/status`,
 `requests/{id}/bid`, `requests/{id}/bids`, `requests/{id}/bids/{bidId}/accept`, `bids/{id}`,
 `trips/mine`, `trips/{id}`, `trips/{id}/status`, `trips/{id}/pay`, `trips/{id}/confirm-cash`,
-`trips/{id}/rate`, `trips/{id}/sos`, `trips/{id}/pool-candidates`, `trips/{id}/pool-join`,
+`trips/{id}/rate`, `trips/{id}/sos`, `requests/{id}/pool-offers`, `trips/{id}/pool-join`,
+`trips/{id}/leave-pool`, `trips/{id}/passengers`, `trips/{id}/passengers/{riderId}/picked-up` (POST/DELETE), `trips/{id}/dispute-pickup`, `pickup-disputes`, `trips/{id}/pool-candidates`,
 `locations`, `sos`, `sos/{id}/handle`, and the Google Maps proxy under `maps/`.
 
 **Key logic**:
@@ -456,6 +457,21 @@ Owns rides **and parcels** — they share one request table.
   than searching forever.
 - **Maps proxy** — holds the billable Google server key so it never reaches a client. Reverse
   geocoding prefers Places "nearby" (real POI names) and filters out plus-codes.
+- **Ride sharing** — a passenger ticks *Share this ride* when requesting (Standard only; the
+  backend answers 400 on anything else). While they wait for driver bids the app also polls
+  `requests/{id}/pool-offers`, which returns shared rides **already on the road** that pass all
+  three corridor gates, each priced. Tapping one calls `trips/{id}/pool-join`, which re-runs every
+  check — the offer list is a poll of a moving world — and then re-prices **every** passenger from
+  their own solo fare at the new occupancy. The trip's `agreed_fare` becomes the sum, so the driver
+  earns more for carrying two people at a discount than one at full price. A joining rider's
+  pending driver bids are rejected so those drivers stop waiting.
+  Tunable via `app.pooling.*` (see `application.yml`); all of it is env-overridable.
+- **A fare belongs to a passenger, not a trip** — the direct consequence of the above, and the
+  part most likely to catch you out. `trips.agreed_fare` is the whole car's money;
+  `trip_passengers.locked_fare` is what one person owes. Payment, cash confirmation and history
+  are all per passenger, and the driver's wallet is settled **once**, only when every passenger
+  has paid. Anything that shows a passenger a price must read `myFare` on `TripResponse`, never
+  `agreedFare`.
 - **Pricing** — see [section 13](#13-money-pricing-fees-commission-settlement).
 
 ### 7.4 food-service (port 8083) → `food_db`
@@ -509,10 +525,10 @@ reference id so a retry can never double-credit.
 
 | Table              | Contents                                                                                                                                                 |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ride_requests`    | rider, origin/dest `geography(POINT)`, seats, proposed fare, status, kind (RIDE\|PARCEL), ride_type, parcel_size, parcel_desc, direction (SEND\|RECEIVE), party_name, party_phone, scheduled_at, rider_phone |
+| `ride_requests`    | rider, origin/dest `geography(POINT)`, seats, proposed fare, status, kind (RIDE\|PARCEL), ride_type, **shared**, parcel_size, parcel_desc, direction (SEND\|RECEIVE), party_name, party_phone, scheduled_at, rider_phone |
 | `bids`             | request, driver, amount, type (ACCEPT\|COUNTER), status, driver name/phone/vehicle/plate/position                                                        |
-| `trips`            | request, driver, agreed fare, status, timestamps, payment status/method                                                                                  |
-| `trip_passengers`  | locked fare and pickup order per passenger (pooling)                                                                                                     |
+| `trips`            | request, driver, agreed fare (**the sum of every passenger's share**), status, timestamps, payment status/method, **shared**                              |
+| `trip_passengers`  | **one row per person, and where the money lives on a shared ride**: the request they boarded with, solo fare, locked (discounted) fare, pickup order, **picked_up_at** (the only thing separating a passenger at the kerb from one in the car — it closes their exit), their own payment status/method, rule_version |
 | `driver_locations` | latest position per driver (`geography`, upserted)                                                                                                       |
 | `ride_ratings`     | two-way ratings                                                                                                                                          |
 | `sos_incidents`    | trip, user, position, NEW / HANDLED                                                                                                                      |
@@ -1009,7 +1025,7 @@ explain _why_ each one was made is more valuable than pretending they do not exi
 
 | Simplification                 | What was built instead                                                                                            | Why                                                                                                                                                             |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Pooling**                    | Corridor + bearing match with a haversine fair-share split, a flat distance threshold, and a `rule_version` stamp | True en-route pooling needs route geometry, detour tolerance and ETA caps — a system in its own right. An existing passenger's locked fare is never recomputed. |
+| **Ride sharing (pooling)**     | Three gates on flat-projection geometry — destination within a corridor radius, pickup within a detour limit of the road *still to be driven*, and a direction of travel that agrees with the car's — then an occupancy discount off each passenger's own solo fare, stamped with a `rule_version` | True en-route pooling needs route geometry, detour tolerance and ETA caps — a system in its own right. All three gates are needed: distance alone seats somebody heading to the same suburb from the opposite side of the city, and a dual carriageway puts both directions within metres of each other. **Departure from the original playbook rule:** a locked fare *is* recomputed as the car fills and empties, capped at what each passenger agreed when they booked — a **ceiling, not a ratchet**. "Downward only" reads kinder and is worse: when a joiner leaves it would strand the remaining passenger's discount and pay the driver less than the job they accepted, so a stranger's change of mind would come out of the driver's pocket. Each passenger pays the same fraction of their own quote, so two at 75% hands the driver 150% of one fare: the discount comes out of the extra passenger, not the driver. |
 | **Parcels share the ride service** | One `ride_requests` table with a `kind`, plus parcel-only columns for size, contents and the handover contact | A courier carrying a box is the same primitive as a driver carrying a person, so parcels inherit matching, bidding, live tracking, payments, SOS and ratings rather than duplicating them — and one service, not two, competes for the same driver pool. The cost is a few nullable columns and `kind` guards where the two genuinely differ (pooling seats people, so parcels are excluded at both ends). Splitting this out becomes right only when parcels grow a lifecycle rides don't share — multi-leg routing, warehouse custody, proof of delivery, insurance — at which point the shared trip state machine stops fitting. |
 | **Cross-service transactions** | Synchronous REST from ride/food to wallet, made idempotent by reference id                                        | The production answer is a transactional outbox or saga. Documented as the next step; building it would not change what the demo shows.                         |
 | **OTP / SMS**                  | Real provider integration that logs the code when no key is set                                                   | Lets the system be demonstrated without spending on SMS, while proving the real path works.                                                                     |

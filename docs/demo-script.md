@@ -200,15 +200,35 @@ curl -X POST "http://localhost:8080/food/restaurants/bbbbbbbb-0000-0000-0000-000
   -H "Authorization: Bearer $OWNER_TOKEN"
 ```
 
-## Step 8 — Pooling
+## Step 8 — Ride sharing
+
+Both passengers must have asked to share (`"shared": true`, Standard rides only — anything else
+is refused with a 400). The first one's ride must already be on the road.
 
 ```bash
-# Second rider joins an en-route trip
+# The second rider is OFFERED rides going their way, already priced.
+# Empty unless the corridor, detour and bearing gates all pass.
+curl "http://localhost:8080/rides/requests/$REQ2_ID/pool-offers" \
+  -H "Authorization: Bearer $RIDER2_TOKEN"
+# [{"tripId":"...","yourFare":15.00,"yourSoloFare":20.00,
+#   "currentFare":30.00,"newFare":22.50,"savingPct":25,"detourKm":0.039, ...}]
+
+# They take it.
 curl -X POST "http://localhost:8080/rides/trips/$TRIP_ID/pool-join" \
   -H "Authorization: Bearer $RIDER2_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"requestId\": \"<second-request-id>\"}"
-# Returns: {"tripId":"...","lockedFare":12.60,"ruleVersion":"v1"}
+  -d "{\"requestId\": \"$REQ2_ID\"}"
+# {"tripId":"...","lockedFare":15.00,"soloFare":20.00,"passengerCount":2,"ruleVersion":"v1"}
+```
+
+**The point to make out loud:** passenger 1 booked at 30 and now pays **22.50**; passenger 2 pays
+**15** instead of 20; and the driver's fare goes from 30 to **37.50**. Everybody is better off —
+the discount comes out of the extra passenger, not the driver.
+
+```bash
+# The driver's two pickups and two fares to collect
+curl "http://localhost:8080/rides/trips/$TRIP_ID/passengers" -H "Authorization: Bearer $DRIVER_TOKEN"
+# Each passenger pays their OWN share; the driver is settled once, when both have.
 ```
 
 ## Step 9 — SOS stub

@@ -16,9 +16,15 @@ A complete context dump so a new session can continue seamlessly.
 
 ## 0. WHERE THE PROJECT STANDS (read this first)
 
-**Everything raised in the user's device tap-through is now built.** All 17 issues across
+**Everything raised in the user's device tap-through is now built**, and so is **ride sharing**
+(the P0 pooling feature that had been missed — see the last `###` entry). All 17 issues across
 sections A, B and C of `docs/ISSUES_FROM_TESTING.md` are implemented and that file is the triage
-record. `scripts/e2e.sh` is **148/148** green against the running stack.
+record. `scripts/e2e.sh` is **289/289** green against the running stack.
+
+⚠️ **The newest thing to know:** on a shared ride a fare belongs to a **passenger**, not a trip.
+`trips.agreed_fare` is now the sum of everyone's share (what the driver earns);
+`trip_passengers.locked_fare` is what one person owes. Anything quoting a price to a passenger
+must read `myFare` on `TripResponse`.
 
 **The one thing left is device verification.** Most of the recent work is phone-side and has
 never been run on a handset — the harness can drive the backend but not a camera, a keyboard, or
@@ -35,6 +41,7 @@ broken behaviour was so a real fix can be told from a coincidence. §11 (pull-do
 | Section C batch (C2/C3/C4/C6/C7) | Global keyboard avoidance, vendors admitted before approval, vendor map picker, storefront editing, one-tap cards |
 | C5 — pull-down map | Ride home map goes full-screen behind a draggable sheet |
 | C1 — driver KYC unmocked | Real driver/licence/vehicle photos on a served volume, privately served |
+| Ride sharing (last entry in this file) | Corridor pooling, per-passenger fares, shared-ride UI in both apps |
 
 ### Things that will bite you if you don't know them
 
@@ -2258,3 +2265,158 @@ seeded rows must capture the original and restore it — §7b now does, and it i
 **Rebuild:** `docker compose build auth-service food-service gateway && docker compose up -d auth-service food-service gateway`.
 
 **Every item from the second device tap-through is now built.** What remains is device verification.
+
+### Ride sharing — the feature both of us had forgotten (REBUILD ride-service, e2e 218 → 255)
+The playbook lists en-route pooling as **P0**, and it had never been built. What existed was
+scaffolding from the M-era: a `trip_passengers` table, a `poolCandidates` that returned every open
+request near a destination regardless of direction, and a `poolJoin` priced at
+`agreedFare × 0.7 ÷ occupancy` — a formula with no relationship to what the joiner's own trip was
+worth. **None of it was reachable from any app**, and `poolCandidates` was the only one either
+app's API client even mentioned.
+
+- **Who is offered what, and by whom.** The rider pulls, the driver does not push. A passenger
+  ticks *Share this ride* when requesting (Standard only — Luxe is sold on having the car to
+  yourself, an okada has one seat, and the backend answers **400** rather than quietly clearing the
+  flag). While they wait for driver bids the app also polls **`GET /rides/requests/{id}/pool-offers`**
+  and shows joinable rides *above* the bids, because a car already moving beats one that still has
+  to reach you. Tapping calls `pool-join`. `poolCandidates` was kept and rewired through the same
+  matcher — a driver-facing list that could contradict the rider's is worse than none.
+- **Three gates, and all three are load-bearing.** Destination within a corridor radius; pickup
+  within a detour limit of **the road still to be driven** (car → pickup → dest before the first
+  passenger is aboard, car → dest after — measuring against the original whole route would offer
+  the driver a detour to somewhere they passed ten minutes ago); and a **bearing** that agrees with
+  the car's. Distance alone seats somebody heading to the same suburb from the opposite side of the
+  city, and a dual carriageway puts both directions within metres — the e2e proves each gate with a
+  case that fails only it. Geometry is a flat local projection: at city scale the error is
+  centimetres and cross-track great-circle maths is far harder to read.
+- ⚠️ **A fare stopped being a property of the trip.** This is the change to know about. Two people
+  in one car owe two different amounts, so `trips.agreed_fare` is now the **sum** (what the driver
+  earns, what commission comes off) and `trip_passengers.locked_fare` is what one person owes.
+  Paying, confirming cash and ride history are all per passenger; the wallet settles **once**, only
+  when everyone has paid — half the money in must not trigger a payout, and `settleRide` is
+  idempotent per trip so it could only ever fire at one amount. **Anything showing a passenger a
+  price must read `myFare` on `TripResponse`, never `agreedFare`.**
+- ⚠️ **Deliberate departure from CLAUDE.md.** The playbook says a locked fare is never recomputed.
+  The user asked for both passengers' prices to fall on a join, so it is recomputed — always from
+  each passenger's own `solo_fare` (never from the already-discounted number, or a third passenger
+  would compound to nearly free), never for somebody who has already paid, and **capped at the fare
+  they agreed when they booked**. The cap is the guarantee, and it is a **ceiling, not a ratchet** —
+  see the leave-pool entry below for why "downward only" had to go.
+- **The economics are the reason a driver would agree.** Everyone pays the same fraction of their
+  own quote — two at 75% hands the driver **150%** of a single fare. Verified live: 30 + 20 solo
+  became 22.50 + 15, and the driver was settled on **37.50** instead of 30. The discount comes out
+  of the extra passenger, not the driver's pocket.
+- **A joiner's request never gets a trip of its own** (the trip belongs to whoever booked it), so
+  `trip_passengers.request_id` is the only way back. Without it a joiner polling their own request
+  sees MATCHED with no ride attached — which the tracking screen reads as "still searching". The
+  driver card comes from the accepted bid on the *trip's* request, not the caller's; a joiner never
+  had a bid. Their pending driver bids are **rejected** on join, or those drivers hold an offer
+  open for somebody already in another car.
+- **Driver app**: the feed card says **"Shared ride"** in its own colour with a line explaining the
+  fare can go up, and the trip screen grows a passenger card, map pins for the extra pickups, and
+  **per-passenger** cash confirmation (`confirm-cash` now takes an optional `riderId`; omitted, it
+  clears everyone awaiting, which is exactly the old single-passenger behaviour).
+- auth of the passenger list: the driver gets phone numbers, a passenger reading the same endpoint
+  does not — sharing a car with somebody is not consent to hand them your number.
+
+**Rebuild:** `docker compose build ride-service && docker compose up -d ride-service` (Flyway
+**V9** auto-applies). No `npm install`. Both apps type-check clean. e2e **255/255** with a new
+§4b; the section leaves one COMPLETED shared trip, which is terminal and does not clutter the feed.
+
+**Known gaps, none of them hidden in the UI:**
+- **The driver rates only the passenger who booked.** The label says so on a shared trip rather
+  than claiming "your passenger"; a rating per passenger is not built.
+- **Not device-verified.** The corridor matching and both apps' shared-ride UI have only been
+  exercised through the API and a type-check — the toggle, the green join card, the extra pickup
+  pins and the per-passenger confirm buttons have never been seen on a handset.
+
+### leave-pool, and why it changed the pricing rule (REBUILD ride-service, e2e 255 → 265)
+A joiner had no way out: only the booking passenger or the driver can cancel a trip, which is
+right — a joiner must not end a journey somebody else is halfway through — but it left the person
+who joined trapped in a car they had changed their mind about. New
+**`POST /rides/trips/{id}/leave-pool`**, and a quiet "Leave this shared ride" link on the
+customer live screen, shown only when `myPickupSeq > 1` (new on `TripResponse`, so the app can tell
+"cancel my ride" from "get out of someone else's").
+
+⚠️ **This forced the pricing invariant to change, and it is worth understanding why.** The rule was
+"a locked fare is only ever recomputed downward". Apply that when a joiner leaves and the arithmetic
+is ugly: passenger 1 booked at 30, dropped to 22.50 when somebody joined, and stays at 22.50 after
+they leave — so **the driver is paid 22.50 for a job they accepted at 30, because a stranger changed
+their mind.** The discount would come out of the driver's pocket.
+
+So the guarantee is now a **ceiling, not a ratchet**: the fare tracks occupancy in *both*
+directions, capped at what that passenger agreed at booking. `repriceTrip` got simpler for it —
+`min(soloFare × factor, soloFare)` — and the invariant it expresses is the one that actually
+matters: **you are never charged more than you agreed.** A discount unwinding back to the price you
+already accepted is not a surprise; a fare above it would be. e2e §4b proves the restore on a
+throwaway trip, and asserts the driver ends up back at 30 rather than 22.50.
+
+Other details:
+- The leaver's request is **CANCELLED, not re-opened.** Re-opening looks right and dies quietly: an
+  immediate request expires on `created_at`, so one that has sat in a car for ten minutes is already
+  past its TTL and the next sweep kills it. `created_at` is `updatable = false`, so there is no
+  honest way to reset the clock. They request a new ride.
+- Blocked once the leaver has **paid** — refunds are not built, and dropping the seat while keeping
+  the money would be worse than refusing.
+- The driver is notified (they are heading for a kerb where nobody is now standing) and so is the
+  remaining passenger (their fare just moved through no act of their own).
+
+### Per-passenger boarding, and undoing a mis-tap (REBUILD ride-service, e2e 265 → 278)
+`leave-pool` shipped with a hole and it was flagged rather than hidden: nothing could tell a
+passenger waiting at the kerb from one already sitting in the car, so somebody could be driven the
+whole way and then "leave" instead of paying. The fare is only collected at the end, so leaving
+late was indistinguishable from a free ride. ride **V10** adds `trip_passengers.picked_up_at`.
+
+- **`POST /rides/trips/{id}/passengers/{riderId}/picked-up`** (driver only). `leave-pool` now
+  answers **409** once it is set. The driver's incentive is aligned, which is why it lives on their
+  screen: until they tap it the passenger can walk away owing nothing, and the button says exactly
+  that underneath it.
+- **The passenger who booked is stamped automatically at STARTED** — that transition already means
+  "they are in the car", and asking the driver to confirm the same fact twice would be the kind of
+  ceremony people learn to tap through without reading. **A joiner cannot be covered by it**: they
+  board at their own kerb, minutes later, on a trip that is *already* STARTED. That is the whole
+  reason a trip-level status cannot answer this and a per-passenger column can.
+- **Only while ENROUTE or STARTED** (409 otherwise), so a driver cannot mark somebody aboard the
+  moment they match and strand them before setting off. Idempotent — a double tap is not an error,
+  and re-stamping would move a timestamp that is now the record of when someone's exit closed.
+- `TripResponse.myPickedUp` drives the customer app: the "Leave this shared ride" link simply is
+  not there once they are aboard.
+- **V10 backfills anyone on a STARTED or COMPLETED trip.** Backfilling only ever *blocks* leaving,
+  which is the safe direction to be wrong in — the alternative would let somebody walk away from a
+  ride they had already taken.
+- **Undo** — `DELETE /rides/trips/{id}/passengers/{riderId}/picked-up`, the same resource the POST
+  creates. Confirming a pickup traps somebody who is not actually in the car: they cannot leave and
+  would be billed for a ride they never took, so a mis-tap needed a way back.
+  ⚠️ **Time-boxed** (`app.pooling.pickup-undo-seconds`, default 300). This is the load-bearing part
+  — an open-ended undo would turn "aboard and owes the fare" into something a driver could revoke
+  at any point in the journey, handing back the exact protection the confirmation exists to
+  provide. Refused once the passenger has paid or the trip has finished; both are refund questions
+  and refunds are not built. Logged on its own line: it is the one action that re-opens somebody's
+  exit after it closed, so a disputed fare starts there.
+  In the driver app it is an understated "Not in my car — undo" under a boarded passenger, behind a
+  confirm that spells out the consequence. The **server owns the window** and the app does not
+  mirror it — a phone with a wrong clock would otherwise hide an undo that would have worked.
+
+### The passenger's side of boarding (REBUILD ride-service, e2e 278 → 289)
+Boarding was entirely one-sided: the driver asserted it, the driver retracted it, and the person it
+put a fare on was told neither. ride **V11** adds `trip_passengers.pickup_disputed_at` +
+`pickup_dispute_note`.
+
+- **They are told.** Confirming a pickup now notifies the passenger. Being told is the precondition
+  for objecting — an unannounced charge is one nobody can contest.
+- **They can object** — `POST /rides/trips/{id}/dispute-pickup`, surfaced as "I'm not in this car"
+  on the tracking screen.
+- ⚠️ **A dispute does NOT un-board them, and that is the whole design.** Letting it would re-open
+  the free-ride hole from the passenger's side: ride the whole way, object at the drop-off, walk
+  away. e2e asserts leaving is *still* refused with a dispute open. What it does instead is put the
+  objection on the record and tell the driver, who fixes it in one tap.
+- **An open dispute lifts the driver's undo deadline.** The window exists to stop a driver revoking
+  "aboard and owes the fare" late and unilaterally; a passenger who has asked for exactly that makes
+  it neither. Without this, somebody wrongly marked aboard who notices at minute six is still
+  stuck — which was the entire problem. Undoing clears the dispute and notifies them.
+- **`GET /rides/pickup-disputes`** (ADMIN/SUPER_ADMIN) is the backstop when a driver won't correct
+  one. ⚠️ **The endpoint exists; there is no admin-web page for it yet** — the data is reachable,
+  the screen is not built.
+- Driver app: a disputed passenger gets a loud amber card and the quiet "undo" link becomes a real
+  button. Both outcomes are spelled out, including that carrying on is legitimate if the passenger
+  really is in the car.

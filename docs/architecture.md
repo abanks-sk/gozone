@@ -55,10 +55,62 @@ a **Saga** for the two-phase commit. Not built here — documented as the correc
 
 ### Simplified pooling (stated explicitly)
 Real en-route pooling requires route geometry, detour tolerance, and ETA caps — out of
-scope. Built instead: match on same destination corridor + bearing (computed from
-haversine), compute the joining rider's fair-share from distance × occupancy, reject
-candidates beyond `app.pooling.max-distance-km`, stamp every quote with `rule_version`.
-Existing passengers' `locked_fare` is never recomputed after they join.
+scope. Built instead: three gates on flat-projection geometry, all of which must pass —
+destination within `app.pooling.max-distance-km` of where the car is already going, pickup
+within `max-detour-km` of the road **still to be driven** (car → pickup → dest before the
+first passenger is aboard, car → dest after), and a bearing within `max-bearing-deg` of the
+car's. Distance alone would seat somebody heading to the same suburb from the opposite side
+of the city, and a dual carriageway puts both directions within metres of each other.
+
+The rider pulls (`/rides/requests/{id}/pool-offers`) rather than the driver pushing: only a
+passenger who chose to share can be seated, and only they can accept the price. Every quote
+is stamped with `rule_version`.
+
+**Fares are per passenger, not per trip.** `trips.agreed_fare` is the sum of everyone's
+share — what the driver earns and what commission comes off — while
+`trip_passengers.locked_fare` is what one person owes. Payment, cash confirmation and ride
+history are all per passenger; the wallet settles once, when everyone has paid, because
+`settleRide` is idempotent per trip and could only ever fire at a single amount.
+
+A locked fare **is** recomputed as the car fills and empties — a deliberate departure from
+the original "never recomputed" rule — always from that passenger's own `solo_fare` rather
+than the already-discounted number, so discounts cannot compound.
+
+The guarantee is a **ceiling, not a ratchet**: the fare follows occupancy in both directions
+but can never climb past what the passenger agreed at booking. "Downward only" reads kinder
+and is worse — when a joiner leaves (`/trips/{id}/leave-pool`) it would strand the remaining
+passenger's discount and leave the driver carrying them for less than the job they accepted,
+so a stranger's change of mind would come out of the driver's pocket. A discount unwinding
+back to the accepted price is not a surprise; being charged more than you accepted would be.
+
+Each passenger pays the same fraction of their own quote, so two at 75% hands the driver
+150% of a single fare: the discount comes out of the extra passenger, not the driver.
+
+**Leaving is not cancelling.** A shared ride belongs to whoever booked it; only they may
+cancel it, and a joiner leaving must not end a journey the other passenger is halfway
+through. The two are separate operations because they have different victims. The leaver's
+request is CANCELLED rather than re-opened — an immediate request expires on `created_at`,
+so one that has sat in a car for ten minutes is already past its TTL and would be swept away
+moments after appearing to work.
+
+**The exit closes at the car door.** `trip_passengers.picked_up_at` is the only thing that
+distinguishes a passenger waiting at the kerb from one already sitting in the car, and
+without it somebody could be driven the whole way and then leave rather than pay — the fare
+is collected at the end, so leaving late is indistinguishable from a free ride. The
+passenger who booked is stamped when the trip goes STARTED, which is what that transition
+already means; a joiner boards minutes later on a trip that is *already* STARTED, which is
+precisely why a trip-level status cannot speak for them. The driver confirms them
+explicitly, and it is their own protection: before it the passenger owes nothing, after it
+the fare is owed. Restricted to ENROUTE/STARTED so nobody can be marked aboard a car that
+has not moved, and reversible for a short window (`app.pooling.pickup-undo-seconds`)
+so a mis-tap does not trap somebody in a fare they do not owe. The window is the
+point: an open-ended undo would let a driver revoke "aboard and owes the fare" at
+any moment in the journey, which is the protection itself. The passenger is told when it happens and can
+object (`/trips/{id}/dispute-pickup`). A dispute deliberately does **not** un-board them —
+that would be the free-ride hole entered from the other side — but it is recorded, the
+driver is told, and while it is open the driver may undo at any time rather than only
+inside the window. `GET /rides/pickup-disputes` is the admin backstop; the endpoint exists,
+the admin-web page for it does not.
 
 ### Delivery tracking = the ride primitive reused
 A courier is a driver carrying a parcel. `/food/deliveries/{id}/track` reuses the same

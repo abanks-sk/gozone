@@ -23,8 +23,8 @@
 | FR-13 | Trip state machine: MATCHED→ENROUTE→STARTED→COMPLETED | ✅ | Validated transitions |
 | FR-14 | Live driver location tracking via WebSocket/STOMP | ✅ | /topic/trip/{id}/location, 4s stale indicator |
 | FR-15 | Long-poll fallback on WebSocket disconnect | ⚡ | Client shows stale indicator; polling not built |
-| FR-16 | Simplified en-route pooling (corridor + haversine fair-share) | ✅ | rule_version=v1, locked_fare immutable |
-| FR-17 | Pool join: fair-share quote = fare × 0.7 / occupancy | ✅ | |
+| FR-16 | Simplified en-route pooling (corridor + haversine fair-share) | ✅ | Reachable from both apps. Three gates: destination corridor radius, pickup detour from the road still to be driven, and bearing agreement. `rule_version=v1`. **Locked fare is no longer immutable** — it tracks occupancy from each passenger's own solo fare, capped at it (a ceiling, not a ratchet, so a joiner leaving does not leave the driver short) |
+| FR-17 | Pool join: fair-share quote | ✅ | Each passenger pays their own solo fare × an occupancy discount (25% per extra passenger, floored). Two at 75% pays the driver 150% of one fare, so the discount comes out of the extra passenger rather than the driver. Payment, cash confirmation and history are per passenger; the wallet settles once, when everyone has paid |
 | FR-18 | Two-way ratings (rider rates driver, driver rates rider) | ✅ | 1–5 score + comment |
 | FR-19 | SOS button (toast + log) | ⚡ | Logs [SOS-STUB] to server; no real alerting |
 | FR-20 | Trip share (log only) | 🚫 | CUT per de-scope ladder |
