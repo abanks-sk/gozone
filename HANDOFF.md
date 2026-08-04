@@ -16,7 +16,18 @@ A complete context dump so a new session can continue seamlessly.
 
 ## 0. WHERE THE PROJECT STANDS (read this first)
 
-**Everything raised in the user's device tap-through is now built**, and so is **ride sharing**
+🔴 **START HERE (2026-08-04): there is a live, deadline-bound issue list at
+`docs/ISSUES_FROM_TESTING_2.md`.** The user ran a second device pass and reported ~25 new issues —
+including a **payment that can be skipped entirely**, ratings showing a hardcoded 4.9, and a driver
+who exited a trip before confirming cash and can no longer settle it. Their raw notes are at the
+bottom of `docs/TAP_THROUGH.md`; the triaged, ordered version is the ISSUES file. **The deadline is
+hours away and the user cannot test most of this themselves** (no dev build, limited devices) — a
+blank checkbox in `TAP_THROUGH.md` means untested, not passing.
+
+⚠️ **Do not run `scripts/e2e.sh` while the user is testing on a device.** It places real food
+orders and deliveries, and is the likely cause of the "phantom orders" they reported.
+
+**Everything raised in the user's FIRST device tap-through is built**, and so is **ride sharing**
 (the P0 pooling feature that had been missed — see the last `###` entry). All 17 issues across
 sections A, B and C of `docs/ISSUES_FROM_TESTING.md` are implemented and that file is the triage
 record. `scripts/e2e.sh` is **311/311** green against the running stack.
