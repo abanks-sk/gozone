@@ -13,7 +13,8 @@ interface PickupDispute {
   plate: string | null;
   lockedFare: number;
   pickupSeq: number;
-  paymentStatus: 'UNPAID' | 'AWAITING' | 'PAID';
+  /** LEFT = they raised this and then left the ride, so there is no seat (or fare) any more. */
+  paymentStatus: 'UNPAID' | 'AWAITING' | 'PAID' | 'LEFT';
   originLat: number;
   originLng: number;
   destLat: number;
@@ -154,6 +155,13 @@ export default function Disputes() {
                       {d.paymentStatus === 'PAID' && (
                         <span className="badge" style={{ background: 'var(--surface-alt)', color: 'var(--text-muted)' }}>
                           already paid
+                        </span>
+                      )}
+                      {/* The seat is gone — they raised this and then left the ride. The dispute
+                          outlives the seat on purpose, so say why the row looks thinner. */}
+                      {d.paymentStatus === 'LEFT' && (
+                        <span className="badge" style={{ background: 'var(--surface-alt)', color: 'var(--text-muted)' }}>
+                          left the ride
                         </span>
                       )}
                     </div>

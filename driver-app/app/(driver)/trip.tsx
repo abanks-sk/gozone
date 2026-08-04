@@ -288,6 +288,27 @@ export default function DriverTripScreen() {
   }
 
   /**
+   * Rate one passenger on a shared trip.
+   *
+   * <p>Kept separate from {@link rate} rather than generalised over it: a solo trip has one
+   * passenger and one score, and collapsing the two would make the ordinary case carry a map of
+   * per-rider state it never uses. Each score is submitted on its own, so rating the first person
+   * is not lost if the second call fails.
+   */
+  const [paxScores, setPaxScores] = useState<Record<string, number>>({});
+  const [paxRated, setPaxRated] = useState<Record<string, boolean>>({});
+  async function ratePassenger(riderId: string) {
+    const score = paxScores[riderId];
+    if (!trip || !score || paxRated[riderId]) return;
+    try {
+      await rideApi.rateTrip(trip.id, riderId, score);
+      setPaxRated((m) => ({ ...m, [riderId]: true }));
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.message ?? 'Could not submit rating');
+    }
+  }
+
+  /**
    * Leave the trip screen.
    *
    * Dropping `activeTrip` is what ends the job, so it must not happen while the fare is still
@@ -677,22 +698,50 @@ export default function DriverTripScreen() {
               </Row>
             )}
 
-            {/* Rate the passenger */}
-            {/* One rating, and on a shared trip it is explicitly for the person who booked —
-                rating everybody would need a rating per passenger, which is not built. Saying
-                "your passenger" on a trip that carried two would credit or blame the wrong one. */}
-            <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 20 }}>
-              {rated ? 'Thanks for rating!' : isParcel ? 'Rate the customer'
-                : sharing ? 'Rate the passenger who booked' : 'Rate your passenger'}
-            </Text>
-            <Row style={{ gap: 10, marginTop: 10 }}>
-              <StarRating value={rating} onChange={setRating} disabled={rated} />
-            </Row>
-            {!rated && rating > 0 && (
-              <TouchableOpacity onPress={rate} activeOpacity={0.85}
-                style={{ marginTop: 12, alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 11, borderRadius: 999, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary }}>
-                <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14 }}>Submit rating</Text>
-              </TouchableOpacity>
+            {/* Rate the passengers. A shared trip carried more than one person and the driver has
+                an opinion about each — rating only whoever booked credits or blames the wrong one
+                as often as not. Each score submits on its own, so rating the first is not lost if
+                the second fails. */}
+            {sharing ? (
+              <View style={{ alignSelf: 'stretch', marginTop: 20 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, textAlign: 'center' }}>
+                  {passengers.every((p) => paxRated[p.riderId]) ? 'Thanks for rating!' : 'Rate your passengers'}
+                </Text>
+                {passengers.map((p) => (
+                  <View key={p.riderId} style={{ marginTop: 14, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 6 }}>
+                      Passenger {p.pickupSeq} · GH₵ {p.lockedFare}
+                    </Text>
+                    <Row style={{ gap: 10 }}>
+                      <StarRating
+                        value={paxScores[p.riderId] ?? 0}
+                        onChange={(v: number) => setPaxScores((m) => ({ ...m, [p.riderId]: v }))}
+                        disabled={!!paxRated[p.riderId]} />
+                    </Row>
+                    {!paxRated[p.riderId] && (paxScores[p.riderId] ?? 0) > 0 && (
+                      <TouchableOpacity onPress={() => ratePassenger(p.riderId)} activeOpacity={0.85}
+                        style={{ marginTop: 10, paddingHorizontal: 22, paddingVertical: 9, borderRadius: 999, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary }}>
+                        <Text style={{ color: c.primary, fontWeight: '800', fontSize: 13.5 }}>Submit</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: c.text, marginTop: 20 }}>
+                  {rated ? 'Thanks for rating!' : isParcel ? 'Rate the customer' : 'Rate your passenger'}
+                </Text>
+                <Row style={{ gap: 10, marginTop: 10 }}>
+                  <StarRating value={rating} onChange={setRating} disabled={rated} />
+                </Row>
+                {!rated && rating > 0 && (
+                  <TouchableOpacity onPress={rate} activeOpacity={0.85}
+                    style={{ marginTop: 12, alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 11, borderRadius: 999, backgroundColor: c.primarySoft, borderWidth: 1, borderColor: c.primary }}>
+                    <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14 }}>Submit rating</Text>
+                  </TouchableOpacity>
+                )}
+              </>
             )}
 
             <TouchableOpacity onPress={finish} activeOpacity={0.9}
