@@ -39,6 +39,9 @@ export interface MenuItem {
 export interface Order {
   id: string;
   customerId: string;
+  /** Who ordered — stamped at checkout so a vendor packs for a person, not a UUID. */
+  customerName: string | null;
+  customerPhone: string | null;
   restaurantId: string;
   restaurantName: string;
   mode: 'DELIVERY' | 'PICKUP' | 'WALKIN';

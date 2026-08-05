@@ -774,6 +774,23 @@ public class AuthService {
         return out;
     }
 
+    /**
+     * Name and phone for one user, for another service to stamp onto a job.
+     *
+     * <p>Answers with nulls rather than 404ing on an unknown id: the callers use this to decorate
+     * an order or a ride that has already been created, and failing the whole thing because a name
+     * could not be resolved would trade a cosmetic gap for a broken checkout.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> userIdentity(UUID userId) {
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("id", userId);
+        User u = userRepo.findById(userId).orElse(null);
+        out.put("name", u == null ? null : u.getName());
+        out.put("phone", u == null ? null : u.getPhone());
+        return out;
+    }
+
     /** Trim and store the vehicle, leaving anything blank as null rather than an empty string. */
     private void applyVehicle(User user, String make, String model, String colour, String plate) {
         user.setVehicleMake(blankToNull(make));
@@ -1096,6 +1113,90 @@ public class AuthService {
         otpRepo.save(otp);
         // Sent via the configured SMS provider; otherwise SmsService logs the code.
         smsService.sendOtp(phone, code, otpExpiryMinutes);
+    }
+
+    // ── Forgotten password ──────────────────────────────────────────────────────
+
+    /**
+     * Start a password reset: email a code to the address on file.
+     *
+     * <p><b>Always answers 200</b>, whether or not that email has an account. Saying "no account
+     * with that email" turns this endpoint into a way to test whether somebody is a GoZone user,
+     * which is exactly the thing a stranger should not be able to find out by typing an address
+     * into a login screen. The person who owns the mailbox learns the answer; nobody else does.
+     *
+     * <p>Also silent for an account with no password — Google and phone-OTP accounts have nothing
+     * to reset, and telling the caller which kind of account it is leaks the same thing again.
+     */
+    public void forgotPassword(String emailRaw, String appRaw) {
+        if (emailRaw == null || emailRaw.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter your email address.");
+        }
+        String email = normalizeEmail(emailRaw);
+        User.App app = parseApp(appRaw);
+        // Without a named app, take the account that actually has a password to reset — the same
+        // email can be a passenger here and a vendor there, and only one of them may use one.
+        User user = app != null
+            ? userRepo.findByEmailAndApp(email, app).orElse(null)
+            : userRepo.findByEmailOrderByCreatedAtAsc(email).stream()
+                .filter(u -> u.getPasswordHash() != null)
+                .findFirst().orElse(null);
+
+        if (user == null || user.getPasswordHash() == null) {
+            log.info("[RESET] no resettable account for {} — answering 200 regardless", email);
+            return;
+        }
+        issueEmailOtp(email, user.getApp());
+        log.info("[RESET] reset code issued for user {}", user.getId());
+    }
+
+    /**
+     * Finish a reset: check the emailed code, set the new password, end every other session.
+     *
+     * <p>Revoking the refresh tokens is the part that matters. Somebody resetting a password is
+     * often doing it because a session is not theirs any more, and leaving the old refresh tokens
+     * alive would let whoever had one carry on for another week.
+     */
+    public void resetPassword(String emailRaw, String code, String newPassword, String appRaw) {
+        if (newPassword == null || newPassword.length() < 6) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Choose a password of at least 6 characters.");
+        }
+        String email = normalizeEmail(emailRaw);
+        User.App asked = parseApp(appRaw);
+
+        OtpCode otp = (asked != null
+                ? otpRepo.findTopByEmailAndAppAndConsumedAtIsNullOrderByExpiresAtDesc(email, asked)
+                : otpRepo.findTopByEmailAndConsumedAtIsNullOrderByExpiresAtDesc(email))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Request a reset code first."));
+
+        if (!otp.isValid()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "That code has expired — request a new one.");
+        }
+        if (!otp.getCode().equals(code)) {
+            // Same brute-force cap as sign-in: five wrong guesses burns the code.
+            otp.setAttempts(otp.getAttempts() + 1);
+            if (otp.getAttempts() >= 5) {
+                otp.setConsumedAt(OffsetDateTime.now());
+                otpRepo.save(otp);
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Too many incorrect attempts — request a new code.");
+            }
+            otpRepo.save(otp);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "That code isn't right.");
+        }
+
+        User user = userRepo.findByEmailAndApp(email, otp.getApp())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account not found."));
+
+        otp.setConsumedAt(OffsetDateTime.now());
+        otpRepo.save(otp);
+
+        user.setPasswordHash(encoder.encode(newPassword));
+        userRepo.save(user);
+        refreshRepo.revokeAllForUser(user.getId());
+        log.info("[RESET] password reset for user {} — all sessions revoked", user.getId());
     }
 
     private void issueEmailOtp(String email, User.App app) {

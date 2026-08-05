@@ -88,9 +88,38 @@ export default function DriverFeedScreen() {
 
   useEffect(() => { walletApi.getBalance('DRIVER').then((b) => setBalance(b.balance)).catch(() => {}); }, []);
 
+  /**
+   * Cash this driver collected but never confirmed, read from the server rather than the store.
+   *
+   * <p>The active-trip banner below only fires while `activeTrip` is held in memory, and that is
+   * wiped on logout and on every fresh OTP verify — which is exactly how a driver lost a trip
+   * with an unconfirmed cash fare on it, leaving the customer waiting forever. The server never
+   * forgot; the phone did. Polled rather than fetched once because a cash payment can land while
+   * this screen is open.
+   */
+  const [cashOwed, setCashOwed] = useState<{ count: number; amount: number }>({ count: 0, amount: 0 });
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      try {
+        const mine = await rideApi.myTrips();
+        if (!active) return;
+        const owed = mine.filter((t) => t.cashToConfirm > 0);
+        setCashOwed({
+          count: owed.length,
+          amount: owed.reduce((s, t) => s + Number(t.cashAmount ?? 0), 0),
+        });
+      } catch {}
+    };
+    tick();
+    const poll = setInterval(tick, 15000);
+    return () => { active = false; clearInterval(poll); };
+  }, []);
+
   // Every driver in the app showed 4.9, including one who had never carried anybody. This is the
-  // real average, and it stays "New" until enough passengers have rated them to mean something.
-  const [rating, setRating] = useState<{ average: number | null; count: number } | null>(null);
+  // real average, and it reads 0 until somebody actually rates them — the user's call, over the
+  // "New" badge that used to sit here: a score you have earned should be the score you are shown.
+  const [rating, setRating] = useState<{ average: number; count: number } | null>(null);
   useEffect(() => { rideApi.rating().then(setRating).catch(() => {}); }, []);
 
   // Resolve the driver's real position (once) + reverse-geocode a readable name.
@@ -271,7 +300,7 @@ export default function DriverFeedScreen() {
             <Sep c={c} />
             <Stat label="Trips today" value={String(acceptedToday)} c={c} />
             <Sep c={c} />
-            <Stat label="Rating" value={rating?.average != null ? rating.average.toFixed(1) : 'New'} c={c} />
+            <Stat label="Rating" value={(rating?.average ?? 0).toFixed(1)} c={c} />
           </Row>
         </View>
 
@@ -291,6 +320,24 @@ export default function DriverFeedScreen() {
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={c.primary} />
+          </TouchableOpacity>
+        )}
+
+        {/* ── Cash left unconfirmed on a trip that is no longer in the store ──
+            The active-trip banner above cannot cover this: it needs `activeTrip`, and losing that
+            is precisely how the money went missing. Hidden while a trip is in hand so the driver
+            is not looking at two banners about payment at once. */}
+        {!activeTrip && cashOwed.count > 0 && (
+          <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/trips' as any)}
+            style={{ marginHorizontal: 16, marginTop: 18, borderRadius: 18, backgroundColor: `${c.warning}1A`, borderWidth: 1, borderColor: c.warning, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Ionicons name="cash-outline" size={26} color={c.warning} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: c.text }}>Cash to confirm</Text>
+              <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 1 }}>
+                GH₵ {cashOwed.amount.toFixed(2)} on {cashOwed.count} trip{cashOwed.count > 1 ? 's' : ''} — your passenger is still waiting
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={c.warning} />
           </TouchableOpacity>
         )}
 

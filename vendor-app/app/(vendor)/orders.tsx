@@ -226,6 +226,14 @@ function VendorOrdersScreenBoard() {
                 <Ionicons name={o.mode === 'DELIVERY' ? 'bicycle' : o.mode === 'PICKUP' ? 'bag-handle' : 'walk'} size={14} color={c.textMuted} />
                 <Text style={{ fontSize: 13, color: c.textMuted }}>{o.mode} · GH₵ {o.total.toFixed(2)}</Text>
               </Row>
+              {/* Who it's for. A pickup or walk-in order is handed over by calling a name across a
+                  counter, and "#3d39c7b4" is not one. */}
+              {!!o.customerName && (
+                <Row style={{ gap: 8, marginTop: 4 }}>
+                  <Ionicons name="person" size={14} color={c.textMuted} />
+                  <Text style={{ fontSize: 13, color: c.text, fontWeight: '600' }}>{o.customerName}</Text>
+                </Row>
+              )}
               <View style={{ marginTop: 10 }}>
                 {o.items.slice(0, 4).map((it, i) => (
                   <Text key={i} style={{ fontSize: 13.5, color: c.text, lineHeight: 21 }}>{it.qty} × {it.name}</Text>

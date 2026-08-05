@@ -61,13 +61,15 @@ export default function SearchScreen() {
   const results = [...local];
   online.forEach((o) => { if (!results.some((m) => m.label === o.label && m.sub === o.sub)) results.push(o); });
 
-  // The map picker already filled the field — close this list too so the user lands on the next
-  // step instead of having to tap the new "Recent" row. Same rule as pick(): a destination moves
-  // them on, a pickup leaves them here.
+  // Back from the map picker with the field filled.
+  //
+  // Only a destination in the request flow moves the user on; everything else stays on this
+  // screen. Popping used to drop them on the home map after setting a pickup — so the trip they
+  // were halfway through composing lost its other half, and they had to reopen search to finish.
+  // The field they just set is visible in the bar above, so staying here is not a dead end.
   useFocusEffect(useCallback(() => {
     if (!consumePicked()) return;
     if (toRequest && field === 'dest') router.replace('/(rider)/request' as any);
-    else router.back();
   }, [toRequest, field]));
 
   function activate(f: Field) {
@@ -81,10 +83,10 @@ export default function SearchScreen() {
     if (field === 'origin') setOrigin(p);
     else setDest(p);
     addRecent(p);
-    // Changing the pickup is not an answer to "where to?", so that keeps you here to finish the
-    // job. Setting the destination is, and it moves you on.
+    // Changing the pickup is not an answer to "where to?", so it keeps you here to finish the
+    // job — which is what the code did the opposite of, popping the screen and landing you back
+    // on the map. Setting the destination in the request flow is an answer, and moves you on.
     if (toRequest && field === 'dest') router.replace('/(rider)/request' as any);
-    else router.back();
   }
 
   async function useCurrentLocation() {

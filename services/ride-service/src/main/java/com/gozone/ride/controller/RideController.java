@@ -65,6 +65,18 @@ public class RideController {
         return ResponseEntity.ok(rideService.myRides(riderId));
     }
 
+    /**
+     * A driver's or courier's own job history.
+     *
+     * <p>Not gated on STATUS_ACTIVE: a driver whose account has been suspended still has to be
+     * able to see — and settle — the cash from work they already did.
+     */
+    @GetMapping("/driver/trips")
+    @PreAuthorize("hasAnyRole('DRIVER','COURIER')")
+    public ResponseEntity<List<DriverTripItem>> driverTrips(@AuthenticationPrincipal String driverId) {
+        return ResponseEntity.ok(rideService.driverTrips(driverId));
+    }
+
     @PostMapping("/requests/{id}/bid")
     @PreAuthorize("hasAnyRole('DRIVER','COURIER') and hasAuthority('STATUS_ACTIVE')")
     public ResponseEntity<BidResponse> placeBid(
@@ -331,6 +343,21 @@ public class RideController {
         Double lat = body != null ? body.get("lat") : null;
         Double lng = body != null ? body.get("lng") : null;
         return ResponseEntity.ok(rideService.sos(id, userId, lat, lng));
+    }
+
+    /**
+     * The reporter's app keeps their position current while the alert is open.
+     *
+     * <p>Owner-only and NEW-only — see {@code updateSosLocation}. This is what makes the incident
+     * board's pin live rather than a snapshot of where somebody was when they pressed the button.
+     */
+    @PostMapping("/sos/{id}/location")
+    public ResponseEntity<SosIncidentResponse> updateSosLocation(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal String userId,
+            @RequestBody Map<String, Double> body) {
+        return ResponseEntity.ok(
+            rideService.updateSosLocation(id, userId, body.get("lat"), body.get("lng")));
     }
 
     @GetMapping("/sos")

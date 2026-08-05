@@ -231,6 +231,25 @@ paths:
                 items:
                   $ref: '#/components/schemas/RideHistoryItem'
 
+  /driver/trips:
+    get:
+      tags: [trips]
+      summary: Driver's or courier's own job history, newest first
+      description: >
+        The counterpart to /trips/mine. Deliberately NOT gated on STATUS_ACTIVE — a suspended
+        driver must still be able to see and settle cash from work already done. `cashToConfirm`
+        counts passengers whose cash handover the driver has not yet acknowledged.
+      operationId: driverTrips
+      responses:
+        '200':
+          description: Job history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DriverTripItem'
+
   /requests/{id}/bids:
     get:
       tags: [requests]
@@ -1020,6 +1039,35 @@ components:
         destLat: { type: number }
         destLng: { type: number }
         scheduledAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        # This passenger's own settlement, not the trip's — on a shared ride two people pay
+        # separately. Null when the request never became a trip. An UNPAID COMPLETED entry is
+        # what lets the app route someone back into paying a fare they walked away from.
+        paymentStatus:
+          type: string
+          enum: [UNPAID, AWAITING, PAID]
+          nullable: true
+        paymentMethod: { type: string, nullable: true }
+
+    DriverTripItem:
+      type: object
+      properties:
+        tripId: { type: string, format: uuid }
+        requestId: { type: string, format: uuid }
+        status: { type: string }
+        # The whole fare the driver earns — on a shared trip, the sum of every passenger's share.
+        fare: { type: number }
+        kind: { type: string, enum: [RIDE, PARCEL] }
+        paymentStatus: { type: string, enum: [UNPAID, AWAITING, PAID] }
+        paymentMethod: { type: string, nullable: true }
+        # Passengers whose cash handover the driver has not acknowledged, and what they owe.
+        cashToConfirm: { type: integer }
+        cashAmount: { type: number }
+        originLat: { type: number }
+        originLng: { type: number }
+        destLat: { type: number }
+        destLng: { type: number }
+        completedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
 
     BidOffer:

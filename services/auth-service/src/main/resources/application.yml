@@ -1,5 +1,8 @@
 server:
-  port: 8081
+  # Railway (and most PaaS) inject PORT and route only to that port; a hardcoded
+  # 8081 would leave the service unreachable in production while working locally.
+  # The default keeps docker-compose and local runs exactly as they were.
+  port: ${PORT:8081}
   servlet:
     context-path: /auth
   error:
@@ -31,22 +34,6 @@ spring:
       # check with a readable message, rather than by the container with an opaque 500.
       max-file-size: 8MB
       max-request-size: 10MB
-  # Gmail SMTP for email verification codes. Blank username = not configured, and the
-  # code is logged instead of emailed (so the demo still works offline).
-  mail:
-    host: ${MAIL_HOST:smtp.gmail.com}
-    port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_APP_PASSWORD:}
-    properties:
-      mail:
-        smtp:
-          auth: true
-          starttls:
-            enable: true
-          connectiontimeout: 5000
-          timeout: 5000
-          writetimeout: 5000
 
 management:
   endpoints:
@@ -57,12 +44,6 @@ management:
   endpoint:
     health:
       show-details: always
-  health:
-    # Adding spring-boot-starter-mail registers a MailHealthIndicator that opens an SMTP
-    # connection on every health check. A mail problem must never mark auth unhealthy
-    # (verification codes fall back to logging), so keep it out of the health aggregate.
-    mail:
-      enabled: false
 
 app:
   jwt:
@@ -87,25 +68,50 @@ app:
     password: ${SUPERADMIN_PASSWORD:}
   mail:
     from-name: ${MAIL_FROM_NAME:GoZone}
+    # Brevo's HTTP API. SMTP was dropped because PaaS hosts block outbound mail ports — it
+    # worked locally and would have gone quiet on deploy with no error. Blank key or sender =
+    # the code is logged instead of emailed.
+    brevo:
+      api-key: ${BREVO_API_KEY:}
+      # Must be an address/domain verified in Brevo, or sends are rejected.
+      sender: ${BREVO_SENDER_EMAIL:}
+      base-url: ${BREVO_BASE_URL:https://api.brevo.com}
   google:
     # Comma-separated OAuth client IDs (web,android,ios) that may sign in.
     # Blank = audience check skipped (dev only — set these before any real use).
     client-ids: ${GOOGLE_CLIENT_IDS:}
   sms:
-    # "africastalking" or "twilio". Unconfigured = the OTP is logged (demo default).
-    provider: ${SMS_PROVIDER:africastalking}
-    at:
-      username: ${AT_USERNAME:}     # "sandbox" for the free Africa's Talking sandbox
-      api-key: ${AT_API_KEY:}
-      sender-id: ${AT_SENDER_ID:}
-    twilio:
-      account-sid: ${TWILIO_ACCOUNT_SID:}
-      auth-token: ${TWILIO_AUTH_TOKEN:}
-      from: ${TWILIO_FROM:}
+    # Providers are tried in order: Arkesel → Termii → Brevo. Each is skipped when its key is
+    # blank, and the next is only tried when the previous one actually FAILS — so nothing is
+    # ever sent twice. Blank all three and the OTP is logged, which is also the fallback when
+    # every provider fails.
+    arkesel:
+      api-key: ${ARKESEL_API_KEY:}
+      sender: ${ARKESEL_SENDER:GoZone}     # alphanumeric, max 11 chars, must be approved
+      base-url: ${ARKESEL_BASE_URL:https://sms.arkesel.com}
+    # Termii is a secondary provider. Africa's Talking and Twilio were removed rather than left
+    # switchable — nobody holds credentials for them, and an unused branch still has to be read.
+    # Unconfigured = the OTP is logged (which is also the state while the sender ID is pending).
+    termii:
+      api-key: ${TERMII_API_KEY:}
+      # Must be a sender ID Termii has APPROVED. Until it is, sends are rejected and the app
+      # falls back to the logged code — see SmsService.logCodes.
+      sender-id: ${TERMII_SENDER_ID:GoZone}
+      # "generic" is the ordinary route; "dnd" reaches do-not-disturb numbers.
+      channel: ${TERMII_CHANNEL:generic}
+      base-url: ${TERMII_BASE_URL:https://api.ng.termii.com}
+    # Fallback, tried only when Termii actually fails. Uses the same BREVO_API_KEY as email —
+    # one Brevo account, several endpoints. Brevo SMS is credit-based: no credits = refused send.
+    brevo:
+      sender: ${BREVO_SMS_SENDER:GoZone}   # alphanumeric, max 11 chars
   otp:
     expiry-minutes: 5
-    # Dev only: also log the code after a successful SMS/email send so a demo can
-    # continue if the handset/simulator isn't reachable. Set false in production.
+    # Also write the code to the log, whether or not the SMS/email send succeeded.
+    #
+    # ⚠️ Anyone who can read the logs can sign in as anyone. This stays TRUE deliberately while
+    # the Termii sender ID is awaiting approval (days), because without it there is no way to
+    # sign in at all on a hosted stack where the logs are the only channel that works.
+    # Flip to false the moment Termii is approved.
     log-codes: ${OTP_LOG_CODES:true}
   uploads:
     # KYC documents. Must point at a mounted volume — see docker-compose.yml. Written into the

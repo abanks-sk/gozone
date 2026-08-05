@@ -48,7 +48,7 @@ export default function ProfileScreen() {
 
   // Was a hardcoded "Acceptance 95%" — a number nothing measured. Acceptance is not tracked
   // anywhere, so the slot now carries the rating, which is.
-  const [rating, setRating] = useState<{ average: number | null; count: number } | null>(null);
+  const [rating, setRating] = useState<{ average: number; count: number } | null>(null);
   useEffect(() => { rideApi.rating().then(setRating).catch(() => {}); }, []);
 
   const accountLabel =
@@ -108,7 +108,7 @@ export default function ProfileScreen() {
         <URow style={{ justifyContent: 'space-around' }}>
           <Stat label="Trips today" value={String(trips)} c={c} />
           <View style={{ width: 1, height: 28, backgroundColor: c.border }} />
-          <Stat label="Rating" value={rating?.average != null ? rating.average.toFixed(1) : 'New'} c={c} />
+          <Stat label="Rating" value={(rating?.average ?? 0).toFixed(1)} c={c} />
           <View style={{ width: 1, height: 28, backgroundColor: c.border }} />
           <Stat label="Status" value={accountLabel} tone={accountTone} c={c} />
         </URow>
@@ -169,6 +169,8 @@ export default function ProfileScreen() {
       {/* Account */}
       <Text style={sectionLabel(c)}>Account</Text>
       <Card>
+        <Row icon="time-outline" label="Your trips" onPress={() => router.push('/trips' as any)} c={c} />
+        <Divider />
         <Row icon="car-outline" label="Vehicle" hint={vehicleSummary(vehicle)} onPress={() => router.push('/vehicle' as any)} c={c} />
         <Divider />
         <Row icon="document-text-outline" label="Documents" hint={docLabel} onPress={() => router.push('/documents' as any)} c={c} />

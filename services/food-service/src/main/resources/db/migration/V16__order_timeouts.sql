@@ -1,0 +1,14 @@
+-- Why an order ended, and when its courier search started.
+--
+-- Two timeouts the product needs and had no way to express:
+--
+--  * A vendor who never confirms. The order sat on the customer's screen as "placed" forever and
+--    on the vendor's board as live work nobody was doing. Cancelling it is only half an answer —
+--    a cancellation with no reason reads as the app losing the order, so the reason is stored and
+--    shown ("the vendor was busy").
+--
+--  * A delivery nobody picks up. The customer should be offered the choice of collecting it
+--    themselves or cancelling, rather than waiting on a courier who is not coming. The clock
+--    starts when the delivery is created, which is what `assigned_at` already records, so no new
+--    column is needed for that — only the reason, shared with the case above.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason VARCHAR(200);

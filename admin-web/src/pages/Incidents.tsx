@@ -5,10 +5,33 @@ interface SosIncident {
   id: string;
   tripId: string | null;
   userId: string;
+  /** Where the reporter is, refreshed by their app while the alert is open. */
   lat: number | null;
   lng: number | null;
+  /** How current that position is — a stale pin must not be presented as a live one. */
+  locationAt: string | null;
   status: 'NEW' | 'HANDLED';
   createdAt: string;
+  reporterName: string | null;
+  reporterPhone: string | null;
+  driverId: string | null;
+  driverName: string | null;
+  driverPhone: string | null;
+  vehicle: string | null;
+  plate: string | null;
+  /** The vehicle's own last ping. On a trip that has gone wrong this diverges from the reporter's. */
+  driverLat: number | null;
+  driverLng: number | null;
+  tripStatus: string | null;
+}
+
+/** "just now" / "4 min ago" — an SOS pin is only as useful as its age. */
+function ago(iso: string | null): string | null {
+  if (!iso) return null;
+  const secs = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (secs < 45) return 'just now';
+  if (secs < 3600) return `${Math.round(secs / 60)} min ago`;
+  return `${Math.round(secs / 3600)} h ago`;
 }
 
 export default function Incidents() {
@@ -78,13 +101,38 @@ export default function Incidents() {
                     color: i.status === 'NEW' ? 'var(--danger)' : 'var(--success)',
                   }}>{i.status}</span>
                 </div>
-                <div className="muted" style={{ fontSize: 13.5, marginTop: 6 }}>
-                  User <strong style={{ color: 'var(--text)' }}>{i.userId.slice(0, 8)}…</strong>
-                  {i.tripId && <> &nbsp;·&nbsp; Trip <strong style={{ color: 'var(--text)' }}>{i.tripId.slice(0, 8)}…</strong></>}
-                  {i.lat != null && i.lng != null && (
-                    <> &nbsp;·&nbsp; <a href={`https://maps.google.com/?q=${i.lat},${i.lng}`} target="_blank" rel="noreferrer"
-                      style={{ color: 'var(--primary)', fontWeight: 600 }}>View location</a></>
+                {/* These alerts are settled by ringing people, so the names and numbers are the
+                    point — a truncated UUID is not something a safety team can act on. */}
+                <div className="muted" style={{ fontSize: 13.5, marginTop: 6, lineHeight: 1.7 }}>
+                  <div>
+                    Passenger{' '}
+                    <strong style={{ color: 'var(--text)' }}>
+                      {i.reporterName || `${i.userId.slice(0, 8)}…`}
+                    </strong>
+                    {i.reporterPhone && <> &nbsp;·&nbsp; <a href={`tel:${i.reporterPhone}`} style={{ color: 'var(--primary)', fontWeight: 600 }}>{i.reporterPhone}</a></>}
+                  </div>
+                  {(i.driverName || i.driverId) && (
+                    <div>
+                      Driver{' '}
+                      <strong style={{ color: 'var(--text)' }}>
+                        {i.driverName || `${i.driverId!.slice(0, 8)}…`}
+                      </strong>
+                      {i.driverPhone && <> &nbsp;·&nbsp; <a href={`tel:${i.driverPhone}`} style={{ color: 'var(--primary)', fontWeight: 600 }}>{i.driverPhone}</a></>}
+                      {(i.vehicle || i.plate) && <> &nbsp;·&nbsp; {[i.vehicle, i.plate].filter(Boolean).join(' · ')}</>}
+                    </div>
                   )}
+                  <div>
+                    {i.tripStatus && <>Trip <strong style={{ color: 'var(--text)' }}>{i.tripStatus}</strong></>}
+                    {i.lat != null && i.lng != null && (
+                      <> &nbsp;·&nbsp; <a href={`https://maps.google.com/?q=${i.lat},${i.lng}`} target="_blank" rel="noreferrer"
+                        style={{ color: 'var(--primary)', fontWeight: 600 }}>Passenger location</a>
+                        {ago(i.locationAt) && <span style={{ opacity: 0.75 }}> ({ago(i.locationAt)})</span>}</>
+                    )}
+                    {i.driverLat != null && i.driverLng != null && (
+                      <> &nbsp;·&nbsp; <a href={`https://maps.google.com/?q=${i.driverLat},${i.driverLng}`} target="_blank" rel="noreferrer"
+                        style={{ color: 'var(--primary)', fontWeight: 600 }}>Vehicle location</a></>
+                    )}
+                  </div>
                 </div>
               </div>
               {i.status === 'NEW' && (

@@ -9,6 +9,14 @@ public record DeliveryResponse(
     UUID id,
     UUID orderId,
     String vendorName,
+    /**
+     * Who the courier is handing this to, and how to reach them at the door.
+     *
+     * <p>A courier arriving with a bag had an address and no name — nothing to check a person
+     * against, and no way to ring when the pin is thirty metres out. Null on pre-V15 orders.
+     */
+    String customerName,
+    String customerPhone,
     String dropoffAddr,
     /**
      * The two ends of the job as coordinates, not just names.
@@ -36,6 +44,8 @@ public record DeliveryResponse(
             d.getId(),
             o.getId(),
             o.getRestaurant().getName(),
+            o.getCustomerName(),
+            o.getCustomerPhone(),
             o.getDeliveryAddr(),
             o.getRestaurant().getLat(),
             o.getRestaurant().getLng(),

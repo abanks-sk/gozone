@@ -481,7 +481,16 @@ export function StarRating({
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (e) => { onChangeRef.current(starAt(e.nativeEvent.pageX)); },
+      // Both of these are load-bearing, and their absence is why a rating "locked" on the first
+      // star touched. Every rating screen sits inside a ScrollView, and termination requests
+      // default to granted — so the scroll view took the responder back on the first move, the
+      // grant's value stood, and no amount of dragging changed it. Refusing termination keeps the
+      // gesture, and blocking the native responder stops the scroll view reacting underneath.
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
+      // Re-measure as the gesture starts: onLayout can fire while a bottom sheet is still
+      // animating in, and a stale origin maps every touch to the wrong star.
+      onPanResponderGrant: (e) => { measure(); onChangeRef.current(starAt(e.nativeEvent.pageX)); },
       onPanResponderMove: (e) => { onChangeRef.current(starAt(e.nativeEvent.pageX)); },
     }),
   ).current;

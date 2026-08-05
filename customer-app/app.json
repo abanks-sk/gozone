@@ -20,7 +20,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#2563EB"
-      }
+      },
+      "usesCleartextTraffic": true
     },
     "web": {
       "bundler": "metro",
@@ -28,8 +29,15 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-web-browser"
     ],
-    "scheme": "gozone"
+    "scheme": "gozone",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e096c201-5171-4cc3-8698-d9a08375cd20"
+      }
+    }
   }
 }

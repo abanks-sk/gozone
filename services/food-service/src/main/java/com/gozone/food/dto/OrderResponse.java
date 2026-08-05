@@ -11,6 +11,9 @@ import java.util.UUID;
 public record OrderResponse(
     UUID id,
     UUID customerId,
+    /** Who ordered. The vendor packs for a person, not for a UUID. Null on pre-V15 orders. */
+    String customerName,
+    String customerPhone,
     UUID restaurantId,
     String restaurantName,
     String mode,
@@ -31,12 +34,25 @@ public record OrderResponse(
     OffsetDateTime createdAt,
     String paymentStatus,
     String paymentMethod,
+    /** Why it was cancelled, when a timeout did it. Null for a plain manual cancellation. */
+    String cancelReason,
+    /**
+     * No courier has taken this delivery and the search has run long enough that the customer
+     * should be offered a way out — collect it themselves, or cancel. Deliberately a fact the
+     * client acts on rather than something a sweep decides: the food may already be cooked, and
+     * that choice is the customer's.
+     */
+    boolean awaitingCourier,
     List<ItemLine> items
 ) {
     public record ItemLine(UUID menuItemId, String name, short qty, BigDecimal unitPrice, List<Addon> addons) {}
     public record Addon(String label, BigDecimal price) {}
 
     public static OrderResponse from(Order o) {
+        return from(o, false);
+    }
+
+    public static OrderResponse from(Order o, boolean awaitingCourier) {
         List<ItemLine> lines = o.getItems().stream()
             .map(i -> new ItemLine(
                 i.getMenuItem().getId(),
@@ -48,6 +64,8 @@ public record OrderResponse(
         return new OrderResponse(
             o.getId(),
             o.getCustomerId(),
+            o.getCustomerName(),
+            o.getCustomerPhone(),
             o.getRestaurant().getId(),
             o.getRestaurant().getName(),
             o.getMode().name(),
@@ -66,6 +84,8 @@ public record OrderResponse(
             o.getCreatedAt(),
             o.getPaymentStatus().name(),
             o.getPaymentMethod(),
+            o.getCancelReason(),
+            awaitingCourier,
             lines
         );
     }

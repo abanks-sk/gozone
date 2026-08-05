@@ -83,6 +83,12 @@ public class RideRequest {
     @Column(name = "rider_phone", columnDefinition = "text")
     private String riderPhone;
 
+    // The rider's name, shared with the matched driver on the same terms as the phone: a courier
+    // handing over a parcel has to know who they are looking for, and a driver's passenger card
+    // had no one in it. Kept out of the open feed for the same reason the number is.
+    @Column(name = "rider_name", length = 120)
+    private String riderName;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -125,5 +131,7 @@ public class RideRequest {
     public void setPartyPhone(String partyPhone) { this.partyPhone = partyPhone; }
     public String getRiderPhone() { return riderPhone; }
     public void setRiderPhone(String riderPhone) { this.riderPhone = riderPhone; }
+    public String getRiderName() { return riderName; }
+    public void setRiderName(String riderName) { this.riderName = riderName; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 }

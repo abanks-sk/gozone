@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api, { refreshSession } from '../api/client';
+import api, { refreshSession, setSessionExpiredHandler } from '../api/client';
 import { storage } from '../lib/storage';
 import { clearUserData } from '../lib/session';
 
@@ -34,6 +34,17 @@ interface AuthState {
   verifyEmailOtp: (email: string, code: string) => Promise<void>;
   /** Log in with a verified email + password. */
   loginEmailPassword: (email: string, password: string) => Promise<void>;
+  /**
+   * Exchange a Google ID token for a GoZone session.
+   *
+   * The server verifies the token with Google and checks it was issued for one of our client IDs.
+   * Resolves with whether a phone still needs adding — Google proves an email, never a number.
+   */
+  googleSignIn: (idToken: string) => Promise<{ needsPhone: boolean }>;
+  /** Ask for a reset code. Resolves the same way whether or not the email has an account. */
+  forgotPassword: (email: string) => Promise<void>;
+  /** Set a new password with the emailed code. Every existing session is revoked server-side. */
+  resetPassword: (email: string, code: string, password: string) => Promise<void>;
   /** Settings: step 1 — attach an email + password, emails a verification code. */
   startAddEmail: (email: string, password: string) => Promise<void>;
   /** Settings: step 2 — confirm the emailed code. */
@@ -90,6 +101,20 @@ export const useAuthStore = create<AuthState>((set) => ({
   loginEmailPassword: async (email, password) => {
     const { data } = await api.post('/auth/login-email-password', { email, password, app: APP });
     await applySession(set, data);
+  },
+
+  googleSignIn: async (idToken) => {
+    const { data } = await api.post('/auth/google', { idToken, role: 'RESTAURANT_OWNER', app: APP });
+    await applySession(set, data);
+    return { needsPhone: !!data.needsPhone };
+  },
+
+  forgotPassword: async (email) => {
+    await api.post('/auth/forgot-password', { email, app: APP });
+  },
+
+  resetPassword: async (email, code, password) => {
+    await api.post('/auth/reset-password', { email, code, password, app: APP });
   },
 
   startAddEmail: async (email, password) => {
@@ -234,3 +259,18 @@ async function applySession(set: (partial: Partial<AuthState>) => void, data: an
     isAuthenticated: true,
   });
 }
+
+/**
+ * End the session in the UI the moment the API layer decides it is unrecoverable.
+ *
+ * <p>Registered once, at module load, so it is in place before any screen fires a request. The
+ * local stores are wiped through the same path as a manual logout — a dead session must not leave
+ * the next person looking at the last one's data.
+ */
+setSessionExpiredHandler(() => {
+  clearUserData().catch(() => {});
+  useAuthStore.setState({
+    userId: null, role: null, name: null, status: null,
+    accessToken: null, isAuthenticated: false,
+  });
+});

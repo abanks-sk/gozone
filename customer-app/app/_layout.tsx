@@ -14,6 +14,7 @@ import { useRecents } from '../src/store/recentsStore';
 import { useSavedPlaces } from '../src/store/savedPlacesStore';
 import { useFavourites } from '../src/store/favouritesStore';
 import '../src/lib/webAlert'; // patches Alert.alert on web (no-op on native)
+import { hydrateApiBase } from '../src/lib/host';
 
 export default function RootLayout() {
   const hydrate = useAuthStore((s) => s.hydrate);
@@ -30,8 +31,13 @@ export default function RootLayout() {
   // been read there is no user id to look them up under, and loading them unkeyed would show a
   // signed-in user an empty history on every cold start.
   useEffect(() => {
-    hydratePayment(); hydrateProfile(); hydrateSaved(); hydrateFavs();
-    hydrate().then(() => hydrateRecents(useAuthStore.getState().userId));
+    // The backend address first. Everything below can fire a request, and the auth hydrate
+    // may immediately try a token refresh — both need to know where the server is. In a
+    // standalone build that address only exists in storage, so this must resolve first.
+    hydrateApiBase().then(() => {
+      hydratePayment(); hydrateProfile(); hydrateSaved(); hydrateFavs();
+      hydrate().then(() => hydrateRecents(useAuthStore.getState().userId));
+    });
   }, []);
 
   // Push: show notifications that arrive while the app is open, and make sure a device that is
@@ -82,6 +88,7 @@ function ThemedStack() {
         >
           <Stack.Screen name="index" />
           <Stack.Screen name="welcome" />
+          <Stack.Screen name="server" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="account" />
           <Stack.Screen name="add-email" />
@@ -96,6 +103,7 @@ function ThemedStack() {
           <Stack.Screen name="map-picker" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="auth/register" />
           <Stack.Screen name="auth/verify-otp" />
+          <Stack.Screen name="auth/forgot-password" />
           <Stack.Screen name="(rider)" />
           <Stack.Screen name="(shop)" />
           <Stack.Screen name="(parcel)" />

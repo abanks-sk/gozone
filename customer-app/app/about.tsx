@@ -40,7 +40,7 @@ export default function AboutScreen() {
         <Card>
           <LinkRow icon="globe-outline" label="Website" onPress={() => Linking.openURL('https://gozone.app')} c={c} />
           <Divider />
-          <LinkRow icon="mail-outline" label="Contact us" hint="help@gozone.app" onPress={() => Linking.openURL('mailto:help@gozone.app')} c={c} />
+          <LinkRow icon="mail-outline" label="Contact us" hint="abankwa.ok@gmail.com" onPress={() => Linking.openURL('mailto:abankwa.ok@gmail.com')} c={c} />
           <Divider />
           <LinkRow icon="document-text-outline" label="Terms of Service" onPress={() => router.push('/terms' as any)} c={c} />
           <Divider />

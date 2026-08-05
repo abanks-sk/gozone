@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Linking, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { deliveryApi, Delivery } from '../../src/api/food';
@@ -180,6 +180,21 @@ export default function DriverDeliveriesScreen() {
               <Ionicons name="location" size={14} color={c.danger} />
               <Text style={{ fontSize: 13.5, color: c.textMuted, flex: 1 }}>{active.dropoffAddr ?? 'Customer address'}</Text>
             </Row>
+            {/* Who is receiving this. An address gets you to the building; a name is how you know
+                you are handing a stranger's dinner to the right person, and the number is how you
+                find them when the pin is thirty metres out. */}
+            {!!active.customerName && (
+              <Row style={{ gap: 8, marginTop: 6 }}>
+                <Ionicons name="person" size={14} color={c.textMuted} />
+                <Text style={{ fontSize: 13.5, color: c.text, flex: 1, fontWeight: '600' }}>{active.customerName}</Text>
+                {!!active.customerPhone && (
+                  <TouchableOpacity activeOpacity={0.85}
+                    onPress={() => Linking.openURL(`tel:${active.customerPhone}`).catch(() => {})}>
+                    <Ionicons name="call" size={18} color={c.primary} />
+                  </TouchableOpacity>
+                )}
+              </Row>
+            )}
 
             {/* Live delivery map — the real pickup, drop-off, current leg and your position.
                 Needs the vendor pin at minimum; without it there is no map worth drawing. */}

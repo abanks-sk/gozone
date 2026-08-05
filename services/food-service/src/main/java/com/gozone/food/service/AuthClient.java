@@ -10,8 +10,8 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * Reads okada delivery-rider availability from auth-service (which owns User data).
- * Used to reject delivery orders up-front when no rider can fulfil them.
+ * Reads user data from auth-service, which owns it — okada rider availability, and who a
+ * customer actually is so their name can go on an order.
  */
 @Service
 public class AuthClient {
@@ -46,6 +46,33 @@ public class AuthClient {
         } catch (Exception e) {
             log.warn("[AUTH-CLIENT] delivery-rider availability check failed, allowing order: {}", e.getMessage());
             return true; // fail open
+        }
+    }
+
+    /** A customer's name and phone, or nulls if they can't be resolved. */
+    public record Identity(String name, String phone) {}
+
+    /**
+     * Who this user is, for stamping onto an order.
+     *
+     * <p>Fails soft, and that is the point: this is called on the checkout path, and an order that
+     * refuses to be placed because a name lookup timed out would trade a real sale for a cosmetic
+     * label. The vendor falls back to showing the order number, exactly as before.
+     */
+    public Identity identity(java.util.UUID userId) {
+        try {
+            Map<?, ?> res = webClient.get()
+                .uri("/auth/internal/users/{id}", userId)
+                .header("X-Internal-Key", internalKey)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(3))
+                .block();
+            if (res == null) return new Identity(null, null);
+            return new Identity((String) res.get("name"), (String) res.get("phone"));
+        } catch (Exception e) {
+            log.warn("[AUTH-CLIENT] identity lookup failed for {}: {}", userId, e.getMessage());
+            return new Identity(null, null);
         }
     }
 }

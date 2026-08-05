@@ -19,6 +19,29 @@ public class Order {
     @Column(name = "customer_id", nullable = false)
     private UUID customerId;
 
+    /**
+     * Who ordered, in words — stamped at checkout, not joined at read time.
+     *
+     * <p>A vendor packing a bag and a courier at the door both need a name to call out, and names
+     * live in auth_db which this service must not read. Nullable because the lookup fails soft: an
+     * order is worth more than a label.
+     */
+    @Column(name = "customer_name", length = 120)
+    private String customerName;
+
+    @Column(name = "customer_phone", length = 20)
+    private String customerPhone;
+
+    /**
+     * Why this order was cancelled, in words the customer reads.
+     *
+     * <p>A cancellation with no reason is indistinguishable from the app losing the order. Set by
+     * the timeout sweeps ("the vendor was busy", "no courier was available"); null for orders the
+     * customer or vendor cancelled by hand, which they already have context for.
+     */
+    @Column(name = "cancel_reason", length = 200)
+    private String cancelReason;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "restaurant_id", nullable = false)
     private Vendor restaurant;
@@ -101,6 +124,12 @@ public class Order {
     public UUID getId() { return id; }
     public UUID getCustomerId() { return customerId; }
     public void setCustomerId(UUID customerId) { this.customerId = customerId; }
+    public String getCustomerName() { return customerName; }
+    public void setCustomerName(String customerName) { this.customerName = customerName; }
+    public String getCustomerPhone() { return customerPhone; }
+    public void setCustomerPhone(String customerPhone) { this.customerPhone = customerPhone; }
+    public String getCancelReason() { return cancelReason; }
+    public void setCancelReason(String cancelReason) { this.cancelReason = cancelReason; }
     public Vendor getRestaurant() { return restaurant; }
     public void setRestaurant(Vendor restaurant) { this.restaurant = restaurant; }
     public Mode getMode() { return mode; }

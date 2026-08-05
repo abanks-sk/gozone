@@ -98,7 +98,12 @@ public class WalletClient {
         return fallback;
     }
 
-    public void settleRide(UUID tripId, UUID driverId, BigDecimal agreedFare) {
+    /**
+     * @param cashCollected what the driver was handed in notes. The wallet debits it back off
+     *                      them, because everything else here is credited as if GoZone had been
+     *                      paid — without it a cash ride pays the driver twice.
+     */
+    public void settleRide(UUID tripId, UUID driverId, BigDecimal agreedFare, BigDecimal cashCollected) {
         try {
             webClient.post()
                 .uri("/wallet/commission")
@@ -107,7 +112,8 @@ public class WalletClient {
                 .bodyValue(Map.of(
                     "tripId", tripId.toString(),
                     "driverId", driverId.toString(),
-                    "agreedFare", agreedFare
+                    "agreedFare", agreedFare,
+                    "cashCollected", cashCollected == null ? BigDecimal.ZERO : cashCollected
                 ))
                 .retrieve()
                 .bodyToMono(String.class)

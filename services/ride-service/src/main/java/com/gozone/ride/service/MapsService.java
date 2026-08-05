@@ -33,7 +33,7 @@ public class MapsService {
     private final RestTemplate rest = new RestTemplate();
 
     /** Sent to Nominatim, whose policy requires an app-identifying User-Agent. */
-    @Value("${app.maps.osm-user-agent:GoZone/1.0 (support@gozone.app)}")
+    @Value("${app.maps.osm-user-agent:GoZone/1.0 (abankwa.ok@gmail.com)}")
     private String osmUserAgent;
 
     public boolean enabled() {

@@ -24,8 +24,13 @@ export default function OrdersScreen() {
   async function load() { try { setOrders(await shopApi.myOrders()); } catch {} }
   useEffect(() => { load(); }, []);
 
-  const active = orders.filter((o) => ACTIVE.includes(o.status));
-  const past = orders.filter((o) => !ACTIVE.includes(o.status));
+  // A completed order that was never paid for. Same reasoning as Your rides: an unpaid total
+  // that looks identical to a settled one is one nobody goes back to, and the vendor and courier
+  // are the ones out of pocket. Tapping it opens the order, where the payment panel still lives.
+  const isUnpaid = (o: Order) => o.status === 'COMPLETED' && o.paymentStatus === 'UNPAID';
+  const unpaid = orders.filter(isUnpaid);
+  const active = orders.filter((o) => ACTIVE.includes(o.status) && !isUnpaid(o));
+  const past = orders.filter((o) => !ACTIVE.includes(o.status) && !isUnpaid(o));
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -41,9 +46,15 @@ export default function OrdersScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
         {orders.length === 0 && <Empty message="No orders yet" />}
 
+        {unpaid.length > 0 && (
+          <>
+            <Text style={[section(c), { color: c.danger }]}>To pay</Text>
+            {unpaid.map((o) => <OrderCard key={o.id} o={o} c={c} unpaid onPress={() => router.push({ pathname: '/(shop)/order', params: { orderId: o.id } })} />)}
+          </>
+        )}
         {active.length > 0 && (
           <>
-            <Text style={section(c)}>Active</Text>
+            <Text style={[section(c), { marginTop: unpaid.length ? 22 : 0 }]}>Active</Text>
             {active.map((o) => <OrderCard key={o.id} o={o} c={c} onPress={() => router.push({ pathname: '/(shop)/order', params: { orderId: o.id } })} />)}
           </>
         )}
@@ -58,21 +69,23 @@ export default function OrdersScreen() {
   );
 }
 
-function OrderCard({ o, c, onPress }: any) {
+function OrderCard({ o, c, unpaid, onPress }: any) {
   const meta = restaurantMeta(o.restaurantName);
   const cancelled = o.status === 'CANCELLED';
   const done = o.status === 'COMPLETED';
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.85}
-      style={{ flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: c.surface, borderRadius: 18, borderWidth: 1, borderColor: c.border, padding: 12, marginBottom: 12 }}>
+      style={{ flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: c.surface, borderRadius: 18, borderWidth: 1, borderColor: unpaid ? c.danger : c.border, padding: 12, marginBottom: 12 }}>
       <View style={{ width: 50, height: 50, borderRadius: 14, backgroundColor: meta.logoColor, alignItems: 'center', justifyContent: 'center' }}>
         <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800' }}>{o.restaurantName?.[0]}</Text>
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 15, fontWeight: '700', color: c.text }}>{o.restaurantName}</Text>
-        <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 2 }}>{o.items.length} item{o.items.length > 1 ? 's' : ''} · GH₵ {o.total.toFixed(2)}</Text>
+        <Text style={{ fontSize: 12.5, color: unpaid ? c.danger : c.textMuted, marginTop: 2 }}>
+          {unpaid ? `Tap to pay GH₵ ${o.total.toFixed(2)}` : `${o.items.length} item${o.items.length > 1 ? 's' : ''} · GH₵ ${o.total.toFixed(2)}`}
+        </Text>
       </View>
-      <Badge label={STATUS_LABEL[o.status] ?? o.status} color={cancelled ? c.danger : done ? c.textMuted : c.primary} />
+      <Badge label={unpaid ? 'Unpaid' : STATUS_LABEL[o.status] ?? o.status} color={unpaid ? c.danger : cancelled ? c.danger : done ? c.textMuted : c.primary} />
     </TouchableOpacity>
   );
 }

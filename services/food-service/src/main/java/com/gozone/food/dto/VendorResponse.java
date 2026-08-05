@@ -24,13 +24,25 @@ public record VendorResponse(
     /** Why it was refused. Null unless rejected. */
     String approvalNote,
     /** The owner, so an admin listing businesses can tie one to the account that made it. */
-    UUID ownerId
+    UUID ownerId,
+    /**
+     * How far this shop is from the customer who asked, in km.
+     *
+     * <p>Null when the browse had no location to measure from. The app used to print a distance
+     * out of its own bundled metadata — the same number for everybody, wherever they were.
+     */
+    Double distanceKm
 ) {
     public static VendorResponse from(Vendor v) {
+        return from(v, null);
+    }
+
+    public static VendorResponse from(Vendor v, Double distanceKm) {
         return new VendorResponse(
             v.getId(), v.getName(), v.getLat(), v.getLng(),
             v.getStatus().name(), v.getPrepMinutes(), v.getVendorType().name(),
             v.getDescription(), v.getImageUrl(), v.getLogoUrl(), v.getAddress(),
-            v.getApprovalStatus().name(), v.getApprovalNote(), v.getOwnerId());
+            v.getApprovalStatus().name(), v.getApprovalNote(), v.getOwnerId(),
+            distanceKm == null ? null : Math.round(distanceKm * 10.0) / 10.0);
     }
 }

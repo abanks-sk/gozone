@@ -260,9 +260,19 @@ public class WalletService {
 
     /**
      * Settle a completed ride: credit driver net-of-commission, debit commission to platform.
-     * Payments always succeed (mock ledger).
+     *
+     * <p><b>Cash rides.</b> {@code cashCollected} is what the driver was physically handed. Without
+     * it the driver was credited the net fare <em>and</em> kept the whole fare — paid twice for one
+     * trip, with GoZone's commission never coming back. The food side has always debited this
+     * ({@link #settleOrder}); rides simply never passed it, because {@code settleRide} was written
+     * before cash was a payment method and nobody revisited it.
+     *
+     * <p>The debit is what creates a driver's debt, and it nets against their balance rather than
+     * standing beside it: a driver with money in the wallet has the commission taken straight out
+     * and sees nothing, and only one whose balance cannot absorb it goes negative and gets the
+     * "You owe GoZone" banner. That is the same single-balance model Bolt and DoorDash use.
      */
-    public void settleRide(UUID tripId, UUID driverId, BigDecimal agreedFare) {
+    public void settleRide(UUID tripId, UUID driverId, BigDecimal agreedFare, BigDecimal cashCollected) {
         // Idempotent: a trip is only ever settled once (guards double-settlement/replay).
         if (tripId != null && ledgerRepo.existsByRefIdAndType(tripId, "FARE_CREDIT")) {
             log.info("[WALLET] ride already settled tripId={} — skipping", tripId);
@@ -283,8 +293,16 @@ public class WalletService {
         Wallet platformWallet = ensureWallet(PLATFORM_WALLET, "PLATFORM");
         credit(platformWallet, commission, "COMMISSION_DEBIT", tripId, "TRIP");
 
-        log.info("[WALLET] ride settled tripId={} fare={} commission={} driverNet={}",
-            tripId, agreedFare, commission, driverNet);
+        // Cash: the driver is holding the passenger's money. Everything above was credited as if
+        // GoZone had been paid, so the driver now owes GoZone what is in their pocket. Net effect
+        // on a fully-cash trip is exactly the commission — which is the right answer.
+        if (cashCollected != null && cashCollected.signum() > 0) {
+            debit(driverWallet, cashCollected, "CASH_COLLECTED", tripId, "TRIP");
+            log.info("[WALLET] driver {} owes {} cash from trip {}", driverId, cashCollected, tripId);
+        }
+
+        log.info("[WALLET] ride settled tripId={} fare={} commission={} driverNet={} cash={}",
+            tripId, agreedFare, commission, driverNet, cashCollected);
     }
 
     /**

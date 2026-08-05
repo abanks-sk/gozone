@@ -68,8 +68,28 @@ ${mode === 'picker' ? `<div id="dot"></div><div id="pin"><svg width="34" height=
   window.flyTo=function(lat,lng,z){ map.setView([lat,lng], z||map.getZoom()); };
 
   var routeLine=null;
-  window.setRoute=function(coords){ if(routeLine){map.removeLayer(routeLine);} routeLine=L.polyline(coords.map(function(p){return [p.lat,p.lng];}),{color:CFG.primary,weight:5,opacity:.8}).addTo(map); };
-  if(CFG.route && CFG.route.length){ window.setRoute(CFG.route); try{ map.fitBounds(routeLine.getBounds(),{padding:[60,60]}); }catch(e){} }
+  var fitted=false;
+  // animate:false is load-bearing, not a style choice. An animated fit only lands when the
+  // zoom animation completes, and that needs requestAnimationFrame to be running — which it
+  // is not while a WebView is off-screen, mid-sheet-animation, or otherwise throttled. The
+  // fit was computed correctly every time and then silently never applied, leaving the map
+  // at its default zoom with the route off-screen. This is the opening view, not a
+  // transition anyone watches, so there is nothing to lose by setting it outright.
+  function fitRoute(){ if(!routeLine) return; try{ map.fitBounds(routeLine.getBounds(),{padding:[60,60],animate:false}); }catch(e){} }
+  window.setRoute=function(coords){
+    if(routeLine){map.removeLayer(routeLine);}
+    routeLine=L.polyline(coords.map(function(p){return [p.lat,p.lng];}),{color:CFG.primary,weight:5,opacity:.8}).addTo(map);
+    if(!fitted && coords.length>2){ fitRoute(); fitted=true; }
+  };
+  if(CFG.route && CFG.route.length){ window.setRoute(CFG.route); fitRoute(); }
+
+  // Leaflet caches the container size at creation, which in a WebView is often still 0x0 — so the
+  // fit above is computed against nothing and swallowed by the catch, leaving the map at its
+  // default zoom with the route off-screen. Re-measure once layout has settled.
+  function remeasure(){ map.invalidateSize(); fitRoute(); }
+  setTimeout(remeasure, 120);
+  setTimeout(remeasure, 600);
+  window.addEventListener('resize', function(){ map.invalidateSize(); });
 
   if(CFG.mode==='picker'){ map.on('moveend',function(){ var c=map.getCenter(); post({type:'center',lat:c.lat,lng:c.lng}); }); }
 
@@ -96,17 +116,44 @@ export function GoogleMap({ style, center, zoom = 14, mode = 'view', markers = [
     try {
       const m = JSON.parse(raw);
       if (m.type === 'center' && onCenterChange) onCenterChange({ lat: m.lat, lng: m.lng });
-      if (m.type === 'ready' && onReady) onReady();
+      if (m.type === 'ready') {
+        readyRef.current = true;
+        const queued = pendingRef.current;
+        pendingRef.current = [];
+        queued.forEach((q) => deliver(q.msg, q.js));
+        if (onReady) onReady();
+      }
     } catch {}
   }
 
   // Send a command to the map (works on web iframe + native WebView).
-  function send(msg: any, js: string) {
+  /**
+   * Commands sent before the map finished booting, kept until it can run them.
+   *
+   * <p>`injectJavaScript` on an unloaded WebView and `postMessage` to an unloaded iframe are both
+   * silently dropped, so any update that beat the map's load was lost for good — the route being
+   * the visible casualty, since directions resolve faster than Leaflet boots.
+   */
+  const readyRef = useRef(false);
+  const pendingRef = useRef<{ msg: any; js: string }[]>([]);
+
+  function deliver(msg: any, js: string) {
     if (Platform.OS === 'web') {
       iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), '*');
     } else {
       webRef.current?.injectJavaScript(js);
     }
+  }
+
+  function send(msg: any, js: string) {
+    if (!readyRef.current) {
+      // Only the newest of each kind matters — a queue of stale driver positions would replay a
+      // journey the moment the map loaded.
+      pendingRef.current = pendingRef.current.filter((q) => q.msg?.type !== msg?.type);
+      pendingRef.current.push({ msg, js });
+      return;
+    }
+    deliver(msg, js);
   }
 
   // Swap the marker shape when the vehicle becomes known (after an offer is accepted).

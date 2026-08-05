@@ -14,6 +14,13 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
     List<Trip> findByDriverIdAndStatus(UUID driverId, Trip.Status status);
 
     /**
+     * Every job this driver has taken. Unordered on purpose — {@link Trip} has no created_at, and
+     * ordering on a nullable completed_at in SQL means arguing with NULLS FIRST/LAST across the
+     * two dialects this runs under. A driver's list is small enough to sort in the service.
+     */
+    List<Trip> findByDriverId(UUID driverId);
+
+    /**
      * Shared rides currently on the road whose destination is near a given point — the cheap first
      * pass of pool matching, done in PostGIS so the expensive corridor geometry only ever runs
      * over a handful of candidates.

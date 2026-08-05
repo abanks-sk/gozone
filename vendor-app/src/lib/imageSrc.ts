@@ -16,5 +16,9 @@ export function imageSrc(url?: string | null): string | undefined {
   const u = url.trim();
   if (!u) return undefined;
   if (/^https?:\/\//i.test(u) || u.startsWith('data:')) return u;
+  // Only a relative upload path is joinable to the gateway. Anything else — most usefully a
+  // `file:///C:/...` left by a picker that never uploaded — would otherwise be concatenated
+  // onto the host and render as a permanently broken image. Undefined lets the caller fall back.
+  if (!u.startsWith('/')) return undefined;
   return `${apiBaseUrl()}${u}`;
 }

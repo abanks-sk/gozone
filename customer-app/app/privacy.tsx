@@ -13,7 +13,7 @@ export default function PrivacyScreen() {
         { heading: 'Sharing', body: 'We share only what is needed to complete your request — for example, your pickup and drop-off with the assigned driver or courier. We do not sell your personal data.' },
         { heading: 'Data on your device', body: 'Some details (your profile, saved places, favourites and cards) are stored locally on your device for this demo and are cleared when you log out.' },
         { heading: 'Your choices', body: 'You can edit your profile, manage saved places and payment methods, and log out at any time. To request deletion of your account data, contact us.' },
-        { heading: 'Contact', body: 'For privacy questions or requests, email privacy@gozone.app.' },
+        { heading: 'Contact', body: 'For privacy questions or requests, email abankwa.ok@gmail.com.' },
       ]}
     />
   );

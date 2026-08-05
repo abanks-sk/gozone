@@ -41,6 +41,9 @@ export interface Delivery {
   id: string;
   orderId: string;
   vendorName: string;
+  /** Who to hand it to, and how to reach them at the door. */
+  customerName: string | null;
+  customerPhone: string | null;
   dropoffAddr?: string;
   /** Collection point. */
   vendorLat?: number | null;

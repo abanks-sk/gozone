@@ -149,6 +149,32 @@ export default function ParcelLiveScreen() {
   const viaPaystack = isPaystack(payMethod);
   const fareShown = trip?.agreedFare ?? p.fare;
 
+  /** Settled as far as the sender is concerned — cash is the courier's move now. */
+  const settled = paid || awaitingCash;
+  /** A delivered parcel whose fare was never paid. */
+  const owes = completed && !settled;
+
+  function leave() { router.replace('/(parcel)' as any); }
+
+  /**
+   * Same hole as the ride screen: "Done" and the back chevron both left a delivered parcel
+   * unpaid, and the courier was never credited. Not blocked — naming the amount and saying
+   * where to settle it is the fix, not trapping someone on the screen.
+   */
+  function payLater() {
+    Alert.alert(
+      `GH₵ ${fareShown} still to pay`,
+      'Your courier hasn’t been paid for this delivery yet. You can settle it any time from Your rides — it stays there until you do.',
+      [
+        { text: 'Pay now', style: 'cancel' },
+        { text: 'Leave unpaid', style: 'destructive', onPress: leave },
+      ],
+    );
+  }
+
+  /** Every way off this screen, so none of them skips an unpaid fare. */
+  function exit() { owes ? payLater() : leave(); }
+
   // Poll request → courier offers → matched run.
   useEffect(() => {
     if (!requestId || completed || cancelled || noCouriers) return;
@@ -292,8 +318,8 @@ export default function ParcelLiveScreen() {
       <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers}
         driver={courierLoc} vehicleKind={vehicleKind} userLocation={myLoc} route={shownRoute} />
 
-      {/* Back */}
-      <TouchableOpacity onPress={() => router.replace('/(parcel)' as any)} activeOpacity={0.85}
+      {/* Back — routed through exit() so it cannot bypass an unpaid fare either. */}
+      <TouchableOpacity onPress={exit} activeOpacity={0.85}
         style={{ position: 'absolute', top: insets.top + 8, left: 16, width: 40, height: 40, borderRadius: 20, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}>
         <Ionicons name="chevron-back" size={24} color={c.text} />
       </TouchableOpacity>
@@ -511,9 +537,13 @@ export default function ParcelLiveScreen() {
                 <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14 }}>Submit rating</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={() => router.replace('/(parcel)' as any)} activeOpacity={0.9}
-              style={{ marginTop: 16, backgroundColor: paid ? c.primary : c.surfaceAlt, borderRadius: 999, paddingVertical: 14, alignItems: 'center' }}>
-              <Text style={{ color: paid ? '#fff' : c.text, fontWeight: '800', fontSize: 15 }}>{paid ? 'Send another parcel' : 'Done'}</Text>
+            {/* A finished parcel ends with "Done" — the sender came here to complete a delivery,
+                not to be sold the next one. An owed fare says so instead. */}
+            <TouchableOpacity onPress={exit} activeOpacity={0.9}
+              style={{ marginTop: 16, backgroundColor: settled ? c.primary : 'transparent', borderWidth: settled ? 0 : 1, borderColor: c.border, borderRadius: 999, paddingVertical: 14, alignItems: 'center' }}>
+              <Text style={{ color: settled ? '#fff' : c.textMuted, fontWeight: '800', fontSize: 15 }}>
+                {settled ? 'Done' : 'I’ll pay later'}
+              </Text>
             </TouchableOpacity>
           </>
         )}
@@ -524,7 +554,7 @@ export default function ParcelLiveScreen() {
             <Text style={{ fontSize: 19, fontWeight: '800', color: c.text, marginTop: 10 }}>Courier run cancelled</Text>
             <TouchableOpacity onPress={() => router.replace('/(parcel)' as any)} activeOpacity={0.9}
               style={{ marginTop: 16, backgroundColor: c.primary, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 44 }}>
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Back to parcels</Text>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Done</Text>
             </TouchableOpacity>
           </View>
         )}

@@ -9,6 +9,7 @@ import { useShopCart } from '../../src/store/shopCart';
 import { useShopFilter, activeFilterCount } from '../../src/store/shopFilter';
 import { useFavourites } from '../../src/store/favouritesStore';
 import { restaurantMeta, distanceKm } from '../../src/data/shopCatalog';
+import { imageSrc } from '../../src/lib/imageSrc';
 import { getCurrentLocation } from '../../src/lib/location';
 import { reverseGeocode } from '../../src/lib/geocode';
 import { Row } from '../../src/components/ui';
@@ -76,10 +77,25 @@ export default function RestaurantsScreen() {
   const cat = filter.category; // cuisine category now lives in the Filter page
 
   async function load() {
-    try { setList(await shopApi.listRestaurants()); } catch {}
+    // Anchored on wherever the customer is shopping from, so the list is shops they can
+    // actually order from. Without it the server has to return every vendor on the platform.
+    const near = deliveryPlace?.lat != null && deliveryPlace?.lng != null
+      ? { lat: deliveryPlace.lat, lng: deliveryPlace.lng }
+      : undefined;
+    try { setList(await shopApi.listRestaurants(near)); } catch {}
     try { setPromos(await shopApi.listPromos()); } catch {}
   }
-  useEffect(() => { load(); }, []);
+  // Re-runs when the delivery location changes — moving the pin should move the shop list.
+  useEffect(() => { load(); }, [deliveryPlace?.lat, deliveryPlace?.lng]);
+
+  /**
+   * How far a shop is, preferring the server's answer.
+   *
+   * The local helper measures from a constant in `shopCatalog` — a fixed point in Accra — so
+   * every distance on this screen was the same wherever the customer actually was.
+   */
+  const kmFor = (r: { lat: number; lng: number; distanceKm?: number | null }) =>
+    r.distanceKm ?? distanceKm(r.lat, r.lng);
 
   // Promo tap → go to exactly what the promo covers: the item, the category
   // within that vendor's menu, or the vendor itself. A promo with no vendor is a
@@ -117,11 +133,11 @@ export default function RestaurantsScreen() {
   let shown = list
     .filter((r) => r.name.toLowerCase().includes(q.toLowerCase()))
     .filter((r) => vType === 'ALL' || r.vendorType === vType)
-    .filter((r) => !showCuisines || cat === 'All' || restaurantMeta(r.name).categories.includes(cat));
+    .filter((r) => !showCuisines || cat === 'All' || restaurantMeta(r.name, r.vendorType).categories.includes(cat));
   if (filter.openNow) shown = shown.filter((r) => r.status === 'OPEN');
-  if (filter.freeDelivery) shown = shown.filter((r) => restaurantMeta(r.name).deliveryFee <= 3);
+  if (filter.freeDelivery) shown = shown.filter((r) => restaurantMeta(r.name, r.vendorType).deliveryFee <= 3);
   if (filter.favouritesOnly) shown = shown.filter((r) => favIds.includes(r.id));
-  if (filter.sort === 'nearest') shown = [...shown].sort((a, b) => distanceKm(a.lat, a.lng) - distanceKm(b.lat, b.lng));
+  if (filter.sort === 'nearest') shown = [...shown].sort((a, b) => kmFor(a) - kmFor(b));
   if (filter.sort === 'rating') shown = [...shown].sort((a, b) => ratingFor(b.name) - ratingFor(a.name));
   if (filter.sort === 'fastest') shown = [...shown].sort((a, b) => a.prepMinutes - b.prepMinutes);
 
@@ -204,13 +220,17 @@ export default function RestaurantsScreen() {
             </Text>
           ) : (
             shown.map((r) => {
-              const meta = restaurantMeta(r.name);
+              const meta = restaurantMeta(r.name, r.vendorType);
               return (
                 <TouchableOpacity key={r.id} activeOpacity={0.9}
                   onPress={() => router.push({ pathname: '/(shop)/menu', params: { restaurantId: r.id, name: r.name, lat: String(r.lat), lng: String(r.lng), vendorType: r.vendorType } })}
                   style={{ marginBottom: 22 }}>
                   <View>
-                    <Image source={{ uri: meta.banner }} style={{ width: '100%', height: 170, borderRadius: 18, backgroundColor: c.surfaceAlt }} />
+                    {/* The shop's own picture wins. This used to render `meta.banner` only —
+                        bundled metadata keyed by name — so a vendor who uploaded a storefront
+                        never saw it here, and every vendor not in that list (which, after the
+                        Kumasi rename, was all of them) drew the same generic food photo. */}
+                    <Image source={{ uri: imageSrc(r.imageUrl) || meta.banner }} style={{ width: '100%', height: 170, borderRadius: 18, backgroundColor: c.surfaceAlt }} />
                     {meta.promo ? (
                       <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: c.danger, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 }}>
                         <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{meta.promo}</Text>
@@ -236,7 +256,7 @@ export default function RestaurantsScreen() {
                   <Row style={{ gap: 5, marginTop: 4 }}>
                     <Text style={{ fontSize: 13.5, color: c.text, fontWeight: '700' }}>{ratingFor(r.name).toFixed(1)}</Text>
                     <Ionicons name="star" size={13} color={c.text} />
-                    <Text style={{ fontSize: 13.5, color: c.textMuted }}>({countFor(r.name)}) · {distanceKm(r.lat, r.lng).toFixed(1)} km</Text>
+                    <Text style={{ fontSize: 13.5, color: c.textMuted }}>({countFor(r.name)}) · {kmFor(r).toFixed(1)} km</Text>
                   </Row>
                 </TouchableOpacity>
               );

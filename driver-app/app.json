@@ -20,7 +20,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#2563EB"
-      }
+      },
+      "usesCleartextTraffic": true
     },
     "web": {
       "bundler": "metro",
@@ -37,6 +38,12 @@
         }
       ]
     ],
-    "scheme": "gozonedriver"
+    "scheme": "gozonedriver",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "59ed282b-b1bd-4cc4-bc18-456db7461e6b"
+      }
+    }
   }
 }

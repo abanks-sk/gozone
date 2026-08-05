@@ -46,6 +46,7 @@ public class RideService {
     private final SimpMessagingTemplate messaging;
     private final WalletClient walletClient;
     private final NotifyClient notifyClient;
+    private final AuthClient authClient;
 
     // ── Ride sharing (pooling) config ───────────────────────────────────────────
     /** How near the joiner's destination must be to where the car is already going. */
@@ -98,7 +99,8 @@ public class RideService {
                        SosIncidentRepository sosRepo,
                        SimpMessagingTemplate messaging,
                        WalletClient walletClient,
-                       NotifyClient notifyClient) {
+                       NotifyClient notifyClient,
+                       AuthClient authClient) {
         this.requestRepo  = requestRepo;
         this.bidRepo      = bidRepo;
         this.tripRepo     = tripRepo;
@@ -110,6 +112,7 @@ public class RideService {
         this.messaging    = messaging;
         this.walletClient = walletClient;
         this.notifyClient = notifyClient;
+        this.authClient   = authClient;
     }
 
     /** Rider creates a ride request. */
@@ -129,7 +132,12 @@ public class RideService {
         req.setDirection(parseEnum(RideRequest.Direction.class, dto.getDirection(), null));
         req.setPartyName(trimToNull(dto.getPartyName()));
         req.setPartyPhone(trimToNull(dto.getPartyPhone()));
-        req.setRiderPhone(dto.getRiderPhone());
+        // Identity from auth-service rather than from the client. The app used to send its own
+        // idea of the rider's phone; the driver reads these to find a person, so they should be
+        // what the account actually says. Falls back to the client's value if the lookup fails.
+        AuthClient.Identity who = authClient.identity(UUID.fromString(riderId));
+        req.setRiderName(who.name());
+        req.setRiderPhone(who.phone() != null ? who.phone() : dto.getRiderPhone());
 
         // A parcel needs someone at the other end — a ride doesn't. Without this the courier
         // arrives with nobody to hand it to and no number to ring.
@@ -239,11 +247,54 @@ public class RideService {
                 // money and putting it in one person's history reads as what they were charged.
                 BigDecimal fare = seat != null ? seat.getLockedFare()
                     : trip != null ? trip.getAgreedFare() : r.getProposedFare();
+                // This passenger's own settlement, for the same reason the fare is theirs: on a
+                // shared ride the trip is paid by two people independently, so a trip-level status
+                // would tell one of them they had paid because the other had.
+                String payStatus = seat != null ? seat.getPaymentStatus().name()
+                    : trip != null ? trip.getPaymentStatus().name() : null;
+                String payMethod = seat != null ? seat.getPaymentMethod()
+                    : trip != null ? trip.getPaymentMethod() : null;
                 return new RideHistoryItem(
                     r.getId(), trip != null ? trip.getId() : null, status, fare,
                     r.getOrigin().getY(), r.getOrigin().getX(), r.getDest().getY(), r.getDest().getX(),
-                    r.getScheduledAt(), r.getCreatedAt());
+                    r.getScheduledAt(), r.getCreatedAt(), payStatus, payMethod);
             })
+            .toList();
+    }
+
+    /**
+     * A driver's or courier's own job history, newest first.
+     *
+     * <p>The counterpart to {@link #myRides}, and the fix for a trip that escaped the driver app's
+     * store before its cash was confirmed: the server always knew about it, the phone was simply
+     * the only thing holding a pointer to it.
+     */
+    public List<DriverTripItem> driverTrips(String driverId) {
+        return tripRepo.findByDriverId(UUID.fromString(driverId)).stream()
+            .map(t -> {
+                RideRequest r = t.getRequest();
+                // A seat sits at AWAITING only when that passenger chose cash, so this counts
+                // exactly the handovers the driver still has to acknowledge — and on a shared
+                // ride it is per person, because two passengers pay separately.
+                List<TripPassenger> awaiting = passengerRepo.findByIdTripId(t.getId()).stream()
+                    .filter(p -> p.getPaymentStatus() == Trip.PaymentStatus.AWAITING)
+                    .toList();
+                BigDecimal cashDue = awaiting.stream()
+                    .map(TripPassenger::getLockedFare)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+                return new DriverTripItem(
+                    t.getId(), r.getId(), t.getStatus().name(), t.getAgreedFare(),
+                    r.getKind().name(),
+                    t.getPaymentStatus().name(), t.getPaymentMethod(),
+                    awaiting.size(), cashDue,
+                    r.getOrigin().getY(), r.getOrigin().getX(),
+                    r.getDest().getY(), r.getDest().getX(),
+                    t.getCompletedAt(), r.getCreatedAt());
+            })
+            // Newest first, by when the job actually happened.
+            .sorted(java.util.Comparator.comparing(
+                (DriverTripItem i) -> i.completedAt() != null ? i.completedAt() : i.createdAt())
+                .reversed())
             .toList();
     }
 
@@ -1402,20 +1453,19 @@ public class RideService {
     }
 
     /**
-     * How many ratings before an average is worth showing.
+     * Someone's rating, rounded to one decimal. Never null — an unrated user is 0.
      *
-     * <p>Below this the client is told there is no average yet and shows "New driver". A single
-     * rough night would otherwise put a brand-new driver on 1.0 and finish them, which is a worse
-     * lie than the hardcoded 4.9 this replaces — that one at least was not actively unfair.
+     * <p>This used to withhold the average until three people had rated, on the reasoning that one
+     * rough night should not put a new driver on 1.0. The user overruled it: a driver rated 4 once
+     * was still being shown as 4.9, and "we have your score but won't show it" is indistinguishable
+     * from the hardcoded literal it replaced. One rating of 4 now reads 4.0, and somebody nobody has
+     * rated reads 0 — honestly new, rather than flattered or hidden.
      */
-    private static final int MIN_RATINGS_TO_AVERAGE = 3;
-
-    /** Someone's rating, rounded to one decimal — null until enough people have rated them. */
     @Transactional(readOnly = true)
     public RatingSummary ratingFor(UUID userId) {
         long count = ratingRepo.countByRateeId(userId);
-        Double avg = count >= MIN_RATINGS_TO_AVERAGE ? ratingRepo.avgScoreForRatee(userId) : null;
-        Double rounded = avg == null ? null : Math.round(avg * 10.0) / 10.0;
+        Double avg = count > 0 ? ratingRepo.avgScoreForRatee(userId) : null;
+        double rounded = avg == null ? 0.0 : Math.round(avg * 10.0) / 10.0;
         return new RatingSummary(userId, rounded, count);
     }
 
@@ -1429,16 +1479,84 @@ public class RideService {
         incident.setUserId(UUID.fromString(userId));
         incident.setLat(lat);
         incident.setLng(lng);
+        incident.setLocationAt(OffsetDateTime.now());
         sosRepo.save(incident);
         log.warn("[SOS] incident {} trip={} user={} at {},{}", incident.getId(), tripId, userId, lat, lng);
-        return SosIncidentResponse.from(incident);
+        return describeSos(incident);
     }
 
     /** Admin: all SOS incidents, newest first. */
     @Transactional(readOnly = true)
     public List<SosIncidentResponse> listSosIncidents() {
         return sosRepo.findAllByOrderByCreatedAtDesc().stream()
-            .map(SosIncidentResponse::from).toList();
+            .map(this::describeSos).toList();
+    }
+
+    /**
+     * Fill in everyone an SOS involves.
+     *
+     * <p>A board of UUIDs and a coordinate is not something a safety team can act on — they settle
+     * these by ringing people, the same conclusion the KYC and pickup-dispute boards each reached.
+     * Nothing here needs a cross-service call: the passenger's name and number are stamped on
+     * their request at booking, and the driver's come off the offer they were matched on.
+     */
+    private SosIncidentResponse describeSos(SosIncident i) {
+        if (i.getTripId() == null) return SosIncidentResponse.from(i);
+        Trip trip = tripRepo.findById(i.getTripId()).orElse(null);
+        if (trip == null) return SosIncidentResponse.from(i);
+
+        RideRequest req = trip.getRequest();
+        Bid winning = bidRepo.findTopByRequestIdAndStatusOrderByCreatedAtDesc(
+            req.getId(), Bid.BidStatus.ACCEPTED).orElse(null);
+
+        // The reporter is usually the booking passenger, but on a shared ride it can be a joiner —
+        // so read the name off whichever request is actually theirs.
+        RideRequest theirs = req;
+        if (!req.getRiderId().equals(i.getUserId())) {
+            TripPassenger seat = passengerRepo
+                .findById(new TripPassenger.TripPassengerId(trip.getId(), i.getUserId()))
+                .orElse(null);
+            if (seat != null && seat.getRequestId() != null) {
+                theirs = requestRepo.findById(seat.getRequestId()).orElse(req);
+            }
+        }
+
+        double[] car = carPosition(trip);
+        return SosIncidentResponse.enriched(i,
+            theirs.getRiderName(), theirs.getRiderPhone(),
+            trip.getDriverId(),
+            winning != null ? winning.getDriverName() : null,
+            winning != null ? winning.getDriverPhone() : null,
+            winning != null ? winning.getVehicle() : null,
+            winning != null ? winning.getPlate() : null,
+            car[0], car[1],
+            trip.getStatus().name(),
+            req.getOrigin().getY(), req.getOrigin().getX(),
+            req.getDest().getY(), req.getDest().getX());
+    }
+
+    /**
+     * The reporter's app refreshes where they are while the alert is open.
+     *
+     * <p>Only the person who raised it, and only while it is still NEW: once an admin has marked
+     * it handled, a position arriving from a phone in someone's pocket would reopen a question
+     * that has been closed. A frozen pin from the moment the button was pressed is the one place
+     * a moving vehicle is certainly no longer.
+     */
+    public SosIncidentResponse updateSosLocation(UUID id, String userId, Double lat, Double lng) {
+        SosIncident i = sosRepo.findById(id)
+            .orElseThrow(() -> new IllegalStateException("Incident not found"));
+        if (!i.getUserId().equals(UUID.fromString(userId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your alert");
+        }
+        if (i.getStatus() != SosIncident.Status.NEW) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This alert has been handled.");
+        }
+        i.setLat(lat);
+        i.setLng(lng);
+        i.setLocationAt(OffsetDateTime.now());
+        sosRepo.save(i);
+        return describeSos(i);
     }
 
     /** Admin: mark an incident handled. */
@@ -1464,8 +1582,23 @@ public class RideService {
     private void settleIfPaid(Trip trip) {
         if (trip.getStatus() == Trip.Status.COMPLETED
                 && trip.getPaymentStatus() == Trip.PaymentStatus.PAID) {
-            walletClient.settleRide(trip.getId(), trip.getDriverId(), trip.getAgreedFare());
+            walletClient.settleRide(trip.getId(), trip.getDriverId(), trip.getAgreedFare(),
+                cashCollectedOn(trip));
         }
+    }
+
+    /**
+     * How much of this trip's fare the driver was physically handed.
+     *
+     * <p>Summed per passenger, not taken from the trip: on a shared ride one person can pay by
+     * wallet and the next in cash, and the driver only owes GoZone for the notes in their pocket.
+     * Passing the trip total there would invent a debt for money that went through Paystack.
+     */
+    private BigDecimal cashCollectedOn(Trip trip) {
+        return passengerRepo.findByIdTripId(trip.getId()).stream()
+            .filter(p -> "cash".equalsIgnoreCase(p.getPaymentMethod()))
+            .map(TripPassenger::getLockedFare)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private void validateTransition(Trip.Status current, Trip.Status next) {

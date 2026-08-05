@@ -146,6 +146,13 @@ export interface RideHistoryItem {
   destLng: number;
   scheduledAt: string | null;
   createdAt: string;
+  /**
+   * This passenger's own settlement — on a shared ride two people pay separately, so the trip's
+   * status would tell one of them they had paid because the other had. Null until there is a trip.
+   * A COMPLETED entry that is still UNPAID is the way back into the payment step.
+   */
+  paymentStatus: 'UNPAID' | 'AWAITING' | 'PAID' | null;
+  paymentMethod: string | null;
 }
 
 export interface Quote {
@@ -217,15 +224,26 @@ export const rideApi = {
     api.post(`/rides/trips/${tripId}/rate`, { rateeId, score, comment }),
 
   /**
-   * Someone's rating. `average` is null until enough people have rated them — the app shows
-   * "New" rather than a number computed from one or two scores.
+   * Someone's rating. `average` is the real mean of every score they have been given, and is
+   * **0 when nobody has rated them** — never null. `count` is how many ratings that is, so a
+   * screen can distinguish "unrated" from "rated badly" if it needs to.
    */
   rating: (userId?: string) =>
-    api.get<{ userId: string; average: number | null; count: number }>(
+    api.get<{ userId: string; average: number; count: number }>(
       userId ? `/rides/ratings/${userId}` : '/rides/ratings/me').then((r) => r.data),
 
+  /** Raise an alert. Returns the incident so the app can keep its location current. */
   sos: (tripId: string, coords?: { lat: number; lng: number }) =>
-    api.post(`/rides/trips/${tripId}/sos`, coords ?? {}),
+    api.post<{ id: string }>(`/rides/trips/${tripId}/sos`, coords ?? {}).then(r => r.data),
+
+  /**
+   * Refresh where the reporter is while their alert is open.
+   *
+   * <p>Without this the safety team is looking at wherever the person was when they pressed the
+   * button — in a moving vehicle, the one place they are certainly no longer.
+   */
+  sosLocation: (incidentId: string, coords: { lat: number; lng: number }) =>
+    api.post(`/rides/sos/${incidentId}/location`, coords),
 
   // ── Ride sharing ──────────────────────────────────────────────────────────
   /**

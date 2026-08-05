@@ -1,13 +1,57 @@
-import { Alert, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { BrandScreen, Logo, PillButton } from '../src/components/brand';
 import { brand } from '../src/theme/tokens';
+import { useAuthStore } from '../src/store/authStore';
+import { roleHome } from '../src/lib/routes';
+import { clearUserData } from '../src/lib/session';
+import { googleAvailable, googleUnavailableReason, useGoogleIdToken } from '../src/lib/googleAuth';
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const googleSignIn = useAuthStore((s) => s.googleSignIn);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const { idToken, failed, promptAsync } = useGoogleIdToken();
+  const [busy, setBusy] = useState(false);
 
-  const soon = (method: string) =>
-    Alert.alert(`${method} sign-in`, 'This lands in the next build. Use phone for now.');
+  /**
+   * Google returns its token through a redirect, so the exchange runs in an effect — by the time
+   * the token exists the tap that started it is long over.
+   */
+  useEffect(() => {
+    if (!idToken) return;
+    let active = true;
+    (async () => {
+      setBusy(true);
+      try {
+        // Same clean slate the OTP path uses: whoever signed in last must not leave their data
+        // behind for the next account on this device.
+        await clearUserData();
+        const { needsPhone } = await googleSignIn(idToken);
+        await fetchMe();
+        if (!active) return;
+        // Google proves an email, never a number — and this account has to be reachable.
+        if (needsPhone) router.replace('/add-phone' as any);
+        else router.replace(roleHome(useAuthStore.getState().role) as any);
+      } catch (e: any) {
+        Alert.alert('Google sign-in failed', e?.response?.data?.message ?? 'Please try again.');
+      } finally {
+        if (active) setBusy(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [idToken]);
+
+  useEffect(() => {
+    if (failed) Alert.alert('Google sign-in failed', 'The sign-in was cancelled or refused.');
+  }, [failed]);
+
+  function onGoogle() {
+    // Says why, rather than opening a browser that dead-ends on a Google error page.
+    if (!googleAvailable) return Alert.alert('Google sign-in', googleUnavailableReason());
+    promptAsync();
+  }
 
   return (
     <BrandScreen>
@@ -43,15 +87,23 @@ export default function WelcomeScreen() {
         </View>
 
         <PillButton
-          label="Continue with Google"
+          label={busy ? 'Signing in…' : 'Continue with Google'}
           icon="logo-google"
           variant="outline"
-          onPress={() => soon('Google')}
+          disabled={busy}
+          onPress={onGoogle}
         />
 
         <Text style={{ fontSize: 11, color: brand.textMuted, textAlign: 'center', marginTop: 22, marginBottom: 8, lineHeight: 16 }}>
           By continuing you agree to our Terms and Privacy Policy.
         </Text>
+
+        {/* Deliberately before the login wall: an installed build with the wrong backend address
+            cannot sign in, so a setting hidden inside the account screens would be unreachable
+            precisely when it is needed. */}
+        <TouchableOpacity onPress={() => router.push('/server' as any)} activeOpacity={0.7} style={{ marginTop: 2, paddingVertical: 6 }}>
+          <Text style={{ fontSize: 11, color: brand.textMuted, textAlign: 'center' }}>Server address</Text>
+        </TouchableOpacity>
       </View>
     </BrandScreen>
   );

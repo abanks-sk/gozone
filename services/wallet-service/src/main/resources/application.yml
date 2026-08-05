@@ -1,5 +1,8 @@
 server:
-  port: 8084
+  # Railway (and most PaaS) inject PORT and route only to that port; a hardcoded
+  # 8084 would leave the service unreachable in production while working locally.
+  # The default keeps docker-compose and local runs exactly as they were.
+  port: ${PORT:8084}
   servlet:
     context-path: /wallet
   error:

@@ -201,6 +201,15 @@ export default function AuthEntryScreen() {
             label={isSignup ? 'Create account' : isEmail ? 'Sign in' : 'Send code'}
             onPress={handleSubmit} loading={loading} style={{ marginTop: 6 }} />
 
+          {/* Only on the email+password path: a phone login has no password to forget. */}
+          {isEmail && (
+            <TouchableOpacity onPress={() => router.push('/auth/forgot-password' as any)} style={{ marginTop: 14 }}>
+              <Text style={{ fontSize: 13.5, color: brand.text, fontWeight: '700', textAlign: 'center' }}>
+                Forgot your password?
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity onPress={() => router.replace(`/auth/register?mode=${isSignup ? 'login' : 'signup'}&ch=${channel}` as any)} style={{ marginTop: 16 }}>
             <Text style={{ fontSize: 13, color: brand.textMuted, textAlign: 'center' }}>
               {isSignup ? 'Already have an account? Log in' : 'New here? Create an account'}

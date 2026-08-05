@@ -20,7 +20,11 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#2563EB"
-      }
+      },
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -35,8 +39,15 @@
           "photosPermission": "GoZone Vendor needs your photos so you can add a shop logo, a menu banner and pictures of what you sell.",
           "cameraPermission": "GoZone Vendor needs the camera so you can photograph your shop and the items you sell."
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
-    "scheme": "gozonevendor"
+    "scheme": "gozonevendor",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d273b002-25ca-4e94-8a29-e641c1b1893a"
+      }
+    }
   }
 }

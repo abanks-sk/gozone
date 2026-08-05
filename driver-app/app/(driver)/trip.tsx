@@ -64,6 +64,19 @@ export default function DriverTripScreen() {
   const [loading, setLoading] = useState(false);
   const [rating, setRating] = useState(0);
   const [rated, setRated] = useState(false);
+  /**
+   * The passenger's own rating. Null while it is still being fetched (the card shows "—" rather
+   * than a number nobody stands behind); 0 once we know nobody has rated them.
+   */
+  const [paxRating, setPaxRating] = useState<number | null>(null);
+  useEffect(() => {
+    if (!req?.riderId) { setPaxRating(null); return; }
+    let active = true;
+    rideApi.rating(req.riderId)
+      .then((r) => { if (active) setPaxRating(r.average ?? 0); })
+      .catch(() => { if (active) setPaxRating(null); });
+    return () => { active = false; };
+  }, [req?.riderId]);
   const [pay, setPay] = useState<{ status?: string; method?: string | null }>({});
   const [arrived, setArrived] = useState(false);
   const [arriving, setArriving] = useState(false);
@@ -351,6 +364,9 @@ export default function DriverTripScreen() {
   // Everyone who boarded after the person who booked. These are the pickups the driver did not
   // agree to when they took the job, so they get their own treatment rather than a count.
   const extras = passengers.filter((p) => p.pickupSeq > 1);
+  // Whoever booked the job — the customer, and on a parcel the sender. Their name is driver-only
+  // (see TripPassengerResponse), which is why it comes from here rather than the open feed.
+  const customerName = passengers.find((p) => p.pickupSeq === 1)?.riderName ?? null;
   const sharing = sharedTrip && passengers.length > 1;
   const STEP = stepsFor(isParcel);
   const ACTION = actionFor(isParcel);
@@ -418,17 +434,28 @@ export default function DriverTripScreen() {
               <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' }}>
                 {isParcel
                   ? <Ionicons name="cube" size={22} color="#fff" />
-                  : <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800' }}>P</Text>}
+                  : <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800' }}>
+                      {(customerName?.trim()?.[0] ?? 'P').toUpperCase()}
+                    </Text>}
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: c.text }}>
-                  {isParcel ? `${req?.parcelSize ?? 'MEDIUM'} parcel` : 'Passenger'}
+                  {/* A name, not the word "Passenger" — you cannot check you have the right
+                      person against a placeholder. Falls back when the lookup found nothing. */}
+                  {isParcel ? `${req?.parcelSize ?? 'MEDIUM'} parcel` : (customerName || 'Passenger')}
                 </Text>
                 {isParcel ? (
                   <>
                     <Text style={{ fontSize: 13, color: c.textMuted, marginTop: 2 }} numberOfLines={2}>
                       {req?.parcelDesc || 'Parcel delivery'}
                     </Text>
+                    {/* The sender. The recipient was already shown; the person who handed it over
+                        was not, so there was no way to check back if anything went wrong. */}
+                    {!!customerName && (
+                      <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 3 }}>
+                        From {customerName}
+                      </Text>
+                    )}
                     {!!handover.name && (
                       <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 3 }}>
                         {handover.direction === 'RECEIVE'
@@ -439,8 +466,12 @@ export default function DriverTripScreen() {
                   </>
                 ) : (
                   <Row style={{ gap: 5, marginTop: 2 }}>
-                    <Ionicons name="star" size={13} color={c.warning} />
-                    <Text style={{ fontSize: 13, color: c.textMuted }}>4.8 · {req?.seats ?? 1} seat{(req?.seats ?? 1) > 1 ? 's' : ''}</Text>
+                    {/* Was a hardcoded 4.8 on every passenger who ever rode. This is theirs —
+                        0 when nobody has rated them, which is the honest answer for a new rider. */}
+                    <Ionicons name="star" size={13} color={paxRating != null && paxRating > 0 ? c.warning : c.textMuted} />
+                    <Text style={{ fontSize: 13, color: c.textMuted }}>
+                      {paxRating == null ? '—' : paxRating.toFixed(1)} · {req?.seats ?? 1} seat{(req?.seats ?? 1) > 1 ? 's' : ''}
+                    </Text>
                   </Row>
                 )}
               </View>
@@ -747,7 +778,7 @@ export default function DriverTripScreen() {
             <TouchableOpacity onPress={finish} activeOpacity={0.9}
               style={{ marginTop: 22, backgroundColor: pay.status === 'PAID' ? c.primary : c.surfaceAlt, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 40 }}>
               <Text style={{ color: pay.status === 'PAID' ? '#fff' : c.text, fontWeight: '800', fontSize: 15 }}>
-                {pay.status === 'PAID' ? 'Back to Home' : 'Take more requests'}
+                {pay.status === 'PAID' ? 'Done' : 'Take more requests'}
               </Text>
             </TouchableOpacity>
             {pay.status !== 'PAID' && (

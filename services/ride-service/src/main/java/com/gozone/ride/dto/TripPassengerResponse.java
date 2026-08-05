@@ -30,6 +30,12 @@ public record TripPassengerResponse(
     /** Null unless the reader is the driver. */
     String riderPhone,
     /**
+     * Who this passenger is. Driver-only, on exactly the same terms as the phone — a name is how
+     * you identify somebody at a kerb, and it is not something to hand to the stranger sharing
+     * their back seat.
+     */
+    String riderName,
+    /**
      * When the driver confirmed they were in the car. Null while they are still a pickup to make —
      * and while they can still walk away.
      */
@@ -49,6 +55,7 @@ public record TripPassengerResponse(
             req.getDest().getY(),
             req.getDest().getX(),
             includePhone ? req.getRiderPhone() : null,
+            includePhone ? req.getRiderName() : null,
             p.getPickedUpAt()
         );
     }

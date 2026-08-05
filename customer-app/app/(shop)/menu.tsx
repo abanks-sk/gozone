@@ -46,7 +46,7 @@ export default function MenuScreen() {
       .catch(() => {});
   }, [restaurantId]);
 
-  const meta = restaurantMeta(name);
+  const meta = restaurantMeta(name, vendorType);
   // The vendor's own photo wins; the bundled imagery is the fallback, so seeded shops that have
   // never uploaded anything look exactly as they did.
   const banner = imageSrc(store?.imageUrl) || meta.banner;
@@ -57,7 +57,7 @@ export default function MenuScreen() {
 
   const grouped = useMemo(() => {
     const g: Record<string, MenuItem[]> = {};
-    menu.forEach((it) => { const cat = it.category || itemMeta(it.name).category; (g[cat] ||= []).push(it); });
+    menu.forEach((it) => { const cat = it.category || itemMeta(it.name, vendorType).category; (g[cat] ||= []).push(it); });
     return g;
   }, [menu]);
   const cats = Object.keys(grouped);
@@ -92,7 +92,7 @@ export default function MenuScreen() {
   const searchResults = useMemo(() => {
     const t = query.trim().toLowerCase();
     if (!t) return menu;
-    return menu.filter((it) => it.name.toLowerCase().includes(t) || (it.description || itemMeta(it.name).description).toLowerCase().includes(t));
+    return menu.filter((it) => it.name.toLowerCase().includes(t) || (it.description || itemMeta(it.name, vendorType).description).toLowerCase().includes(t));
   }, [query, menu]);
 
   function closeSearch() { setSearching(false); setQuery(''); }
@@ -193,7 +193,7 @@ export default function MenuScreen() {
               <View key={cat} onLayout={(e) => { sectionY.current[cat] = e.nativeEvent.layout.y; }}>
                 <Text style={{ fontSize: 17, fontWeight: '800', color: c.text, marginTop: 18, marginBottom: 6 }}>{cat}</Text>
                 {grouped[cat].map((item) => {
-                  const im = itemMeta(item.name);
+                  const im = itemMeta(item.name, vendorType);
                   // A photo of the actual dish, if the vendor has added one.
                   const photo = imageSrc(item.imageUrl) || im.image;
                   return (
@@ -256,7 +256,7 @@ export default function MenuScreen() {
               <Empty message={`No items match “${query.trim()}”`} />
             ) : (
               searchResults.map((item) => {
-                const im = itemMeta(item.name);
+                const im = itemMeta(item.name, vendorType);
                 const photo = imageSrc(item.imageUrl) || im.image;
                 return (
                   <TouchableOpacity key={item.id} activeOpacity={0.85} onPress={() => openFromSearch(item)}

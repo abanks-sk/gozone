@@ -35,6 +35,8 @@ export interface Restaurant {
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
   /** Why it was refused. Null unless rejected. */
   approvalNote?: string | null;
+  /** Distance from the point the browse was anchored at. Null when it had no location. */
+  distanceKm?: number | null;
 }
 
 export interface AddonOption { id: string; label: string; price: number }
@@ -56,10 +58,20 @@ export interface MenuItem {
 export interface Order {
   id: string;
   customerId: string;
+  /** Who ordered — stamped at checkout so a vendor packs for a person, not a UUID. */
+  customerName: string | null;
+  customerPhone: string | null;
   restaurantId: string;
   restaurantName: string;
   mode: 'DELIVERY' | 'PICKUP' | 'WALKIN';
   status: string;
+  /** Why a timeout ended this order. Null when someone cancelled it by hand. */
+  cancelReason?: string | null;
+  /**
+   * No courier has taken the delivery and the search has run long enough to offer a way out.
+   * The server reports the fact; choosing pickup or cancelling is the customer's call.
+   */
+  awaitingCourier?: boolean;
   total: number;
   deliveryFee: number;
   serviceFee: number;
@@ -123,8 +135,15 @@ export function promoTerms(p: Promo): string | null {
 }
 
 export const shopApi = {
-  listRestaurants: () =>
-    api.get<Restaurant[]>('/food/restaurants').then(r => r.data),
+  /**
+   * Shops near a point. Always pass the customer's location — without it the server returns
+   * every vendor on the platform, which is how a customer in Kumasi got a list of Accra
+   * restaurants they could not order from.
+   */
+  listRestaurants: (near?: { lat: number; lng: number; radiusKm?: number }) =>
+    api.get<Restaurant[]>('/food/restaurants', {
+      params: near ? { lat: near.lat, lng: near.lng, radiusKm: near.radiusKm } : undefined,
+    }).then(r => r.data),
 
   listPromos: () =>
     api.get<Promo[]>('/food/promos').then(r => r.data),
@@ -155,6 +174,14 @@ export const shopApi = {
 
   payOrder: (orderId: string, method: string, reference?: string) =>
     api.post<Order>(`/food/orders/${orderId}/pay`, { method, reference }).then(r => r.data),
+
+  /** Call off your own order. 409 once a courier has collected it. */
+  cancelOrder: (orderId: string) =>
+    api.post<Order>(`/food/orders/${orderId}/cancel`).then(r => r.data),
+
+  /** Give up on a courier and collect the order yourself. 409 once a courier has taken it. */
+  switchToPickup: (orderId: string) =>
+    api.post<Order>(`/food/orders/${orderId}/switch-to-pickup`).then(r => r.data),
 
   myOrders: () =>
     api.get<Order[]>('/food/orders/mine').then(r => r.data),

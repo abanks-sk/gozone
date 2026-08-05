@@ -30,6 +30,17 @@ public class SosIncident {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
+    /**
+     * When {@link #lat}/{@link #lng} were last refreshed by the reporter's app.
+     *
+     * <p>The coordinates used to be whatever was true when the button was pressed. In a moving
+     * vehicle that is the one place the person is certainly no longer, so the app keeps them
+     * current while the alert is open — and this timestamp is what lets the board say "2 minutes
+     * ago" rather than presenting a stale pin as a live one.
+     */
+    @Column(name = "location_at")
+    private OffsetDateTime locationAt;
+
     public enum Status { NEW, HANDLED }
 
     public UUID getId() { return id; }
@@ -44,4 +55,6 @@ public class SosIncident {
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getLocationAt() { return locationAt; }
+    public void setLocationAt(OffsetDateTime locationAt) { this.locationAt = locationAt; }
 }

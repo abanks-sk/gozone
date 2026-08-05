@@ -1,5 +1,8 @@
 server:
-  port: 8082
+  # Railway (and most PaaS) inject PORT and route only to that port; a hardcoded
+  # 8082 would leave the service unreachable in production while working locally.
+  # The default keeps docker-compose and local runs exactly as they were.
+  port: ${PORT:8082}
   servlet:
     context-path: /rides
   error:
@@ -53,6 +56,8 @@ app:
   services:
     wallet-url: ${WALLET_SERVICE_URL:http://localhost:8084}
     notify-url: ${NOTIFY_URL:http://localhost:8084/wallet/notify}
+    # Host root — auth-service's /auth context path is part of the request path, not this.
+    auth-url: ${AUTH_SERVICE_URL:http://localhost:8081}
   pooling:
     # How near the joiner's destination has to be to where the car is already heading.
     max-distance-km: ${POOL_MAX_DEST_GAP_KM:3.0}

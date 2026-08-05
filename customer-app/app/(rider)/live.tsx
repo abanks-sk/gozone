@@ -390,15 +390,43 @@ export default function LiveRideScreen() {
     );
   }
 
+  /** The open alert, if any — drives the location refresh below. */
+  const [sosId, setSosId] = useState<string | null>(null);
+
   async function sos() {
     if (!trip) return;
     try {
-      await rideApi.sos(trip.id, driverLoc ?? { lat: origin.lat, lng: origin.lng });
+      // The passenger's own position, not the car's. This used to send `driverLoc`, which is
+      // wrong in exactly the case that matters most: not being in the vehicle is a common reason
+      // to press this, and reporting the car's location would send help to the wrong place.
+      const where = myLoc ?? driverLoc ?? { lat: origin.lat, lng: origin.lng };
+      const incident = await rideApi.sos(trip.id, where);
+      setSosId(incident?.id ?? null);
       Alert.alert('SOS sent', 'Your alert has reached the GoZone safety team. They are reviewing it now and will contact you or the authorities as needed.');
     } catch {
       Alert.alert('SOS', 'Could not send the alert — please call emergency services directly if you are in danger.');
     }
   }
+
+  /**
+   * Keep the safety team's pin on the passenger, not on where they pressed the button.
+   *
+   * <p>Runs only while an alert is open. Stops on its own once the server says the alert has been
+   * handled (409), so a resolved incident is not reopened by a phone in somebody's pocket.
+   */
+  useEffect(() => {
+    if (!sosId) return;
+    let active = true;
+    const push = async () => {
+      const where = myLoc ?? driverLoc;
+      if (!where) return;
+      try { await rideApi.sosLocation(sosId, where); }
+      catch (e: any) { if (active && e?.response?.status === 409) setSosId(null); }
+    };
+    push();
+    const t = setInterval(push, 15000);
+    return () => { active = false; clearInterval(t); };
+  }, [sosId, myLoc?.lat, myLoc?.lng, driverLoc?.lat, driverLoc?.lng]);
   // Choosing a score and sending it are separate now: tapping a star used to submit on the spot,
   // so a thumb that landed on the wrong one was the rating that stood.
   async function rate() {
@@ -411,6 +439,36 @@ export default function LiveRideScreen() {
   // (driver → pickup); once the trip starts it becomes the journey (pickup → dest).
   // Centre on whatever the rider needs to see right now: the gap between them and the driver
   // while they wait, and the journey itself once they're aboard.
+  /** The fare is settled as far as this passenger is concerned — cash is the driver's move now. */
+  const settled = paid || awaitingCash;
+  /** A finished trip this passenger still owes money on. */
+  const owes = completed && !settled;
+
+  function leave() { router.replace('/(rider)/home' as any); }
+
+  /**
+   * Leaving with the fare still owed.
+   *
+   * <p>Not blocked outright — a dying phone or a card that keeps failing must not trap somebody on
+   * this screen — but it stops being a neutral "Done". Previously both this and the back chevron
+   * called {@link leave} unconditionally, so a passenger tapped a button that read as "finished",
+   * the driver was never credited, and there was no route back in. Now the amount is named and
+   * they are told where to settle it; Your rides lists the unpaid trip and comes back here.
+   */
+  function payLater() {
+    Alert.alert(
+      `GH₵ ${myFare} still to pay`,
+      'Your driver hasn’t been paid for this trip yet. You can settle it any time from Your rides — the trip stays there until you do.',
+      [
+        { text: 'Pay now', style: 'cancel' },
+        { text: 'Leave unpaid', style: 'destructive', onPress: leave },
+      ],
+    );
+  }
+
+  /** Every way off this screen goes through here, so none of them can skip an unpaid fare. */
+  function exit() { owes ? payLater() : leave(); }
+
   const center = beforePickup && driverLoc
     ? { lat: (driverLoc.lat + origin.lat) / 2, lng: (driverLoc.lng + origin.lng) / 2 }
     : { lat: (origin.lat + dest.lat) / 2, lng: (origin.lng + dest.lng) / 2 };
@@ -429,8 +487,8 @@ export default function LiveRideScreen() {
       <LeafletMap style={{ flex: 1 }} mode="view" center={center} zoom={13} markers={markers}
         driver={driverLoc} vehicleKind={vehicleKind} userLocation={myLoc} route={shownRoute} />
 
-      {/* Back */}
-      <TouchableOpacity onPress={() => router.replace('/(rider)/home' as any)} activeOpacity={0.85}
+      {/* Back — routed through exit() so it cannot bypass an unpaid fare either. */}
+      <TouchableOpacity onPress={exit} activeOpacity={0.85}
         style={{ position: 'absolute', top: insets.top + 8, left: 16, width: 40, height: 40, borderRadius: 20, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}>
         <Ionicons name="chevron-back" size={24} color={c.text} />
       </TouchableOpacity>
@@ -751,9 +809,12 @@ export default function LiveRideScreen() {
                 <Text style={{ color: c.primary, fontWeight: '800', fontSize: 14 }}>Submit rating</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={() => router.replace('/(rider)/home' as any)} activeOpacity={0.9}
-              style={{ marginTop: 16, backgroundColor: paid ? c.primary : c.surfaceAlt, borderRadius: 999, paddingVertical: 14, alignItems: 'center' }}>
-              <Text style={{ color: paid ? '#fff' : c.text, fontWeight: '800', fontSize: 15 }}>{paid ? 'Book another ride' : 'Done'}</Text>
+            {/* An owed fare gets an honest label, not "Done" — see payLater(). */}
+            <TouchableOpacity onPress={exit} activeOpacity={0.9}
+              style={{ marginTop: 16, backgroundColor: settled ? c.primary : 'transparent', borderWidth: settled ? 0 : 1, borderColor: c.border, borderRadius: 999, paddingVertical: 14, alignItems: 'center' }}>
+              <Text style={{ color: settled ? '#fff' : c.textMuted, fontWeight: '800', fontSize: 15 }}>
+                {settled ? 'Done' : 'I’ll pay later'}
+              </Text>
             </TouchableOpacity>
           </>
         )}
@@ -764,7 +825,7 @@ export default function LiveRideScreen() {
             <Text style={{ fontSize: 19, fontWeight: '800', color: c.text, marginTop: 10 }}>Trip cancelled</Text>
             <TouchableOpacity onPress={() => router.replace('/(rider)/home' as any)} activeOpacity={0.9}
               style={{ marginTop: 16, backgroundColor: c.primary, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 44 }}>
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Back to home</Text>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Done</Text>
             </TouchableOpacity>
           </View>
         )}

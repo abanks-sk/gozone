@@ -37,7 +37,7 @@ export function LegalScreen({ title, updated, intro, sections }: {
         ))}
 
         <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 26, lineHeight: 18 }}>
-          Questions? Contact us at legal@gozone.app. This is demo content for GoZone Inc.
+          Questions? Contact us at abankwa.ok@gmail.com. This is demo content for GoZone Inc.
         </Text>
       </ScrollView>
     </View>

@@ -1,5 +1,8 @@
 server:
-  port: 8083
+  # Railway (and most PaaS) inject PORT and route only to that port; a hardcoded
+  # 8083 would leave the service unreachable in production while working locally.
+  # The default keeps docker-compose and local runs exactly as they were.
+  port: ${PORT:8083}
   servlet:
     context-path: /food
   error:

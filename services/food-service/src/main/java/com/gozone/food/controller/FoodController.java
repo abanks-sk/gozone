@@ -27,9 +27,20 @@ public class FoodController {
 
     // ── Restaurants ───────────────────────────────────────────────────────────
 
+    /**
+     * Shops a customer can browse.
+     *
+     * <p>Coordinates are optional and, when given, keep the list to shops within reach and sort
+     * nearest first. Optional rather than required so an unlocated browse still works — but the
+     * app should always send them, because a customer in Kumasi being offered Accra restaurants
+     * is the difference between a shop list and a directory.
+     */
     @GetMapping("/restaurants")
-    public ResponseEntity<List<VendorResponse>> listRestaurants() {
-        return ResponseEntity.ok(foodService.listOpenRestaurants());
+    public ResponseEntity<List<VendorResponse>> listRestaurants(
+            @RequestParam(required = false) Double lat,
+            @RequestParam(required = false) Double lng,
+            @RequestParam(required = false) Double radiusKm) {
+        return ResponseEntity.ok(foodService.listOpenRestaurants(lat, lng, radiusKm));
     }
 
     @GetMapping("/restaurants/{id}/menu")
@@ -173,6 +184,25 @@ public class FoodController {
     public ResponseEntity<OrderResponse> confirmOrderCash(
             @PathVariable UUID id, @AuthenticationPrincipal String userId) {
         return ResponseEntity.ok(foodService.confirmOrderCash(id, userId));
+    }
+
+    /**
+     * Customer gives up waiting for a courier and collects the order themselves.
+     *
+     * <p>Offered by the app once {@code awaitingCourier} is set on the order. Refused (409) once a
+     * courier has actually taken the job — they may already be at the vendor.
+     */
+    /** Customer calls off their own order. 409 once a courier has collected it. */
+    @PostMapping("/orders/{id}/cancel")
+    public ResponseEntity<OrderResponse> cancelOrder(
+            @PathVariable UUID id, @AuthenticationPrincipal String customerId) {
+        return ResponseEntity.ok(foodService.cancelOrder(id, customerId));
+    }
+
+    @PostMapping("/orders/{id}/switch-to-pickup")
+    public ResponseEntity<OrderResponse> switchToPickup(
+            @PathVariable UUID id, @AuthenticationPrincipal String customerId) {
+        return ResponseEntity.ok(foodService.switchToPickup(id, customerId));
     }
 
     @GetMapping("/restaurants/{id}/awaiting-cash")

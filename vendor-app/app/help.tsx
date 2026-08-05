@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../src/theme/ThemeProvider';
 import { Screen, Card, Divider } from '../src/components/ui';
 
-const SUPPORT_EMAIL = 'vendors@gozone.app';
+const SUPPORT_EMAIL = 'abankwa.ok@gmail.com';
 const SUPPORT_PHONE = '+233302000000';
 
 const FAQS: { q: string; a: string }[] = [

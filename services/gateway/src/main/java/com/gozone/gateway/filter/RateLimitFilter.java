@@ -44,7 +44,10 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
         "/auth/register", "/auth/register-email",
         "/auth/login", "/auth/login-email", "/auth/login-email-password",
         "/auth/verify-otp", "/auth/admin/login", "/auth/google",
-        "/auth/me/phone", "/auth/me/email"
+        "/auth/me/phone", "/auth/me/email",
+        // Password reset belongs in the hard bucket on both counts: one end emails a code, the
+        // other accepts a code and sets a credential.
+        "/auth/forgot-password", "/auth/reset-password"
     );
 
     @Value("${app.ratelimit.enabled:true}")

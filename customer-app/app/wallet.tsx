@@ -209,16 +209,15 @@ export default function PaymentScreen() {
             );
           })}
           <Row style={{ gap: 8, alignItems: 'flex-start', paddingHorizontal: 4, paddingTop: 10 }}>
+            {/* One line, not three. The old copy explained per-transaction mobile-money
+                confirmation on every visit, and sold saving a card next to a method list you
+                cannot add a card to — an explanation of mechanics nobody asked about, attached to
+                an option that is not there. */}
             <Ionicons name="information-circle-outline" size={17} color={c.textMuted} style={{ marginTop: 1 }} />
             <Text style={{ fontSize: 12.5, color: c.textMuted, flex: 1, lineHeight: 18 }}>
-              Pay by card once and it appears here, ready to charge in one tap. Mobile money is
-              confirmed on Paystack each time — that is how the networks work, so there is nothing
-              to save.
+              Cards and mobile money are charged securely via Paystack.
             </Text>
           </Row>
-          <Text style={{ fontSize: 11.5, color: c.textMuted, paddingHorizontal: 4, marginTop: 2 }}>
-            Cards and mobile money are charged securely via Paystack.
-          </Text>
         </View>
 
         {/* Transactions */}

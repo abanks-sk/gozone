@@ -29,6 +29,13 @@ function VendorMenuScreenBoard() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  /**
+   * The item being edited, or null when the sheet is creating a new one.
+   *
+   * <p>Same form either way — the fields a dish has do not change depending on whether it already
+   * exists, and a second near-identical sheet is a second place for them to drift apart.
+   */
+  const [editItem, setEditItem] = useState<MenuItem | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
@@ -78,6 +85,25 @@ function VendorMenuScreenBoard() {
   }
   useEffect(() => { load(); }, [vendor?.id]);
 
+  /** Load an existing item into the sheet. Everything here is editable except its add-on groups. */
+  function openEdit(it: MenuItem) {
+    setEditItem(it);
+    setName(it.name);
+    setDescription(it.description ?? '');
+    setCategory(it.category ?? '');
+    setPrice(String(it.price));
+    setPrep(it.prepMinutes != null ? String(it.prepMinutes) : '');
+    setItemImage(it.imageUrl ?? '');
+    setGroups([]);
+    setAdding(true);
+  }
+
+  function closeSheet() {
+    setAdding(false); setEditItem(null);
+    setName(''); setDescription(''); setCategory(''); setPrice(''); setPrep('');
+    setGroups([]); setItemImage('');
+  }
+
   async function submitItem() {
     const p = parseFloat(price.replace(/[^0-9.]/g, ''));
     if (!name.trim()) return Alert.alert('Name needed', 'Enter an item name.');
@@ -97,6 +123,21 @@ function VendorMenuScreenBoard() {
       }));
     setBusy(true);
     try {
+      if (editItem) {
+        // Groups are left alone: this sheet does not show the item's existing ones, and sending
+        // an empty list would quietly delete every add-on the dish had.
+        await foodApi.updateMenuItem(editItem.id, {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          category: category.trim() || undefined,
+          price: Math.round(p * 100) / 100,
+          prepMinutes: parseInt(prep, 10) > 0 ? parseInt(prep, 10) : undefined,
+          imageUrl: itemImage || undefined,
+        });
+        closeSheet();
+        await load();
+        return;
+      }
       await foodApi.createMenuItem(vendor.id, {
         name: name.trim(), description: description.trim() || undefined,
         category: category.trim() || undefined, price: Math.round(p * 100) / 100,
@@ -105,11 +146,11 @@ function VendorMenuScreenBoard() {
         imageUrl: itemImage || undefined,
         groups: groupsPayload.length ? groupsPayload : undefined,
       });
-      setName(''); setDescription(''); setCategory(''); setPrice(''); setPrep(''); setGroups([]);
-      setItemImage(''); setAdding(false);
+      closeSheet();
       await load();
     } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.message ?? 'Could not add the item');
+      Alert.alert('Error', e?.response?.data?.message
+        ?? (editItem ? 'Could not save your changes' : 'Could not add the item'));
     } finally { setBusy(false); }
   }
 
@@ -153,7 +194,9 @@ function VendorMenuScreenBoard() {
 
         <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
           <Text style={{ fontSize: 27, fontWeight: '800', color: c.text, letterSpacing: -0.5 }}>{title}</Text>
-          <TouchableOpacity onPress={() => setAdding(true)} activeOpacity={0.85}
+          {/* Clears any item left over from an edit — otherwise "Add item" would silently
+              overwrite the last dish you edited. */}
+          <TouchableOpacity onPress={() => { setEditItem(null); setAdding(true); }} activeOpacity={0.85}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: c.primarySoft, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 }}>
             <Ionicons name="add" size={17} color={c.primary} />
             <Text style={{ fontSize: 13.5, fontWeight: '700', color: c.primary }}>Add item</Text>
@@ -224,6 +267,17 @@ function VendorMenuScreenBoard() {
                   <View style={{ alignItems: 'flex-end', gap: 10 }}>
                     <Switch value={on} onValueChange={(v) => toggleAvailable(it, v)}
                       trackColor={{ true: c.primary, false: c.border }} thumbColor="#fff" />
+                    {/* Gated on the shop being closed, like delete — the server answers 409 for
+                        any edit but `available` while you are open, and a button that always
+                        fails is worse than one that explains itself. This is also the only way
+                        to put a photo on a dish that was created without one. */}
+                    <TouchableOpacity
+                      onPress={() => shopOpen
+                        ? Alert.alert('Close the shop first', 'You can edit items when your shop is closed. While you’re open you can still mark something sold out.')
+                        : openEdit(it)}
+                      hitSlop={8}>
+                      <Ionicons name="create-outline" size={17} color={shopOpen ? c.textMuted : c.primary} />
+                    </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => shopOpen
                         ? Alert.alert('Close the shop first', 'You can remove items when your shop is closed. While you’re open you can still mark something sold out.')
@@ -242,12 +296,14 @@ function VendorMenuScreenBoard() {
       {/* Add item modal. A Modal is its own native view hierarchy, so the app-root
           KeyboardAvoider cannot reach it — and the add-on option fields sit right at the bottom
           of a long form, which is exactly where the keyboard lands. */}
-      <Modal visible={adding} transparent animationType="slide" onRequestClose={() => setAdding(false)}>
+      <Modal visible={adding} transparent animationType="slide" onRequestClose={closeSheet}>
         <KeyboardAvoider style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
           <View style={{ backgroundColor: c.bg, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingBottom: insets.bottom + 16, maxHeight: '90%' }}>
             <Row style={{ justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingBottom: 8 }}>
-              <Text style={{ fontSize: 19, fontWeight: '800', color: c.text }}>Add an item</Text>
-              <TouchableOpacity onPress={() => setAdding(false)} hitSlop={8}><Ionicons name="close" size={24} color={c.textMuted} /></TouchableOpacity>
+              <Text style={{ fontSize: 19, fontWeight: '800', color: c.text }}>
+                {editItem ? 'Edit item' : 'Add an item'}
+              </Text>
+              <TouchableOpacity onPress={closeSheet} hitSlop={8}><Ionicons name="close" size={24} color={c.textMuted} /></TouchableOpacity>
             </Row>
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 20, gap: 14, paddingBottom: 14 }}>
               <Field label="Item name" value={name} onChangeText={setName} placeholder="Jollof Rice" c={c} />

@@ -33,11 +33,24 @@ export default function RidesScreen() {
   const now = Date.now();
   const isUpcoming = (r: RideHistoryItem) =>
     ACTIVE.includes(r.status) || r.status === 'OPEN' || (!!r.scheduledAt && new Date(r.scheduledAt).getTime() > now);
-  const upcoming = rides.filter(isUpcoming);
-  const past = rides.filter((r) => !isUpcoming(r));
+  /**
+   * A finished trip whose fare never got paid.
+   *
+   * <p>These used to be indistinguishable from settled ones, which is what made walking away from
+   * the payment screen final: the money was owed, the driver was not credited, and the passenger
+   * had nowhere to go back to. They get their own section at the top because a debt you cannot
+   * find is one you cannot pay.
+   */
+  const isUnpaid = (r: RideHistoryItem) =>
+    r.status === 'COMPLETED' && !!r.tripId && r.paymentStatus === 'UNPAID';
+  const unpaid = rides.filter(isUnpaid);
+  const upcoming = rides.filter((r) => isUpcoming(r) && !isUnpaid(r));
+  const past = rides.filter((r) => !isUpcoming(r) && !isUnpaid(r));
 
   function open(r: RideHistoryItem) {
-    if (r.status === 'OPEN' || ACTIVE.includes(r.status)) {
+    // live.tsx loads the trip from the request and renders the completed state, payment panel
+    // included — so the same screen they left is the screen they come back to.
+    if (r.status === 'OPEN' || ACTIVE.includes(r.status) || isUnpaid(r)) {
       router.push(`/(rider)/live?requestId=${r.requestId}` as any);
     }
   }
@@ -57,9 +70,15 @@ export default function RidesScreen() {
 
         {loaded && rides.length === 0 && <Empty message="No rides yet — book your first trip!" />}
 
+        {unpaid.length > 0 && (
+          <>
+            <Text style={[section(c), { color: c.danger }]}>To pay</Text>
+            {unpaid.map((r) => <RideRow key={r.requestId} r={r} c={c} unpaid onPress={() => open(r)} />)}
+          </>
+        )}
         {upcoming.length > 0 && (
           <>
-            <Text style={section(c)}>Upcoming & active</Text>
+            <Text style={[section(c), { marginTop: unpaid.length ? 22 : 0 }]}>Upcoming & active</Text>
             {upcoming.map((r) => <RideRow key={r.requestId} r={r} c={c} onPress={() => open(r)} />)}
           </>
         )}
@@ -74,22 +93,24 @@ export default function RidesScreen() {
   );
 }
 
-function RideRow({ r, c, onPress }: { r: RideHistoryItem; c: any; onPress: () => void }) {
+function RideRow({ r, c, unpaid, onPress }: { r: RideHistoryItem; c: any; unpaid?: boolean; onPress: () => void }) {
   const scheduled = !!r.scheduledAt && new Date(r.scheduledAt).getTime() > Date.now();
   const when = scheduled ? `Scheduled · ${fmt(r.scheduledAt!)}` : fmt(r.createdAt);
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.85}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: c.surface, borderRadius: 18, borderWidth: 1, borderColor: c.border, padding: 14, marginBottom: 12 }}>
-      <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name={scheduled ? 'time' : 'car-sport'} size={20} color={c.primary} />
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: c.surface, borderRadius: 18, borderWidth: 1, borderColor: unpaid ? c.danger : c.border, padding: 14, marginBottom: 12 }}>
+      <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: unpaid ? `${c.danger}1A` : c.primarySoft, alignItems: 'center', justifyContent: 'center' }}>
+        <Ionicons name={unpaid ? 'alert-circle' : scheduled ? 'time' : 'car-sport'} size={20} color={unpaid ? c.danger : c.primary} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 15, fontWeight: '700', color: c.text }}>GoRide trip</Text>
-        <Text style={{ fontSize: 12.5, color: c.textMuted, marginTop: 2 }}>{when}</Text>
+        <Text style={{ fontSize: 12.5, color: unpaid ? c.danger : c.textMuted, marginTop: 2 }}>
+          {unpaid ? 'Tap to pay your driver' : when}
+        </Text>
       </View>
       <View style={{ alignItems: 'flex-end', gap: 4 }}>
         <Text style={{ fontSize: 15, fontWeight: '800', color: c.text }}>GH₵ {r.fare}</Text>
-        <Badge label={r.status.replace(/_/g, ' ')} color={statusColor(r.status, c)} />
+        <Badge label={unpaid ? 'Unpaid' : r.status.replace(/_/g, ' ')} color={unpaid ? c.danger : statusColor(r.status, c)} />
       </View>
     </TouchableOpacity>
   );

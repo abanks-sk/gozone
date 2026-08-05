@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.annotation.Transactional;
@@ -82,9 +83,46 @@ public class FoodService {
      */
     @Transactional(readOnly = true)
     public List<VendorResponse> listOpenRestaurants() {
-        return vendorRepo.findByStatusAndApprovalStatusOrderByNameAsc(Vendor.Status.OPEN, Vendor.Approval.APPROVED)
-            .stream().map(VendorResponse::from).toList();
+        return listOpenRestaurants(null, null, null);
     }
+
+    /**
+     * What a customer browses, near enough to be worth browsing.
+     *
+     * <p>Without a location this returns everything, which is what it always did — and why a
+     * customer in Kumasi was shown a list of Accra restaurants they could not order from. Given
+     * coordinates it keeps only what is within {@code radiusKm} and sorts nearest first, so the
+     * top of the list is the shop down the road rather than the one that happens to sort first
+     * alphabetically.
+     *
+     * <p>Haversine in Java rather than PostGIS: {@code food_db} has no PostGIS extension (only
+     * {@code ride_db} does), the vendor count is small, and adding the extension to satisfy one
+     * filter is a migration with far more blast radius than a distance calculation.
+     */
+    @Transactional(readOnly = true)
+    public List<VendorResponse> listOpenRestaurants(Double lat, Double lng, Double radiusKm) {
+        List<Vendor> open = vendorRepo.findByStatusAndApprovalStatusOrderByNameAsc(
+            Vendor.Status.OPEN, Vendor.Approval.APPROVED);
+        if (lat == null || lng == null) {
+            return open.stream().map(VendorResponse::from).toList();
+        }
+        double limit = radiusKm != null && radiusKm > 0 ? radiusKm : defaultBrowseRadiusKm;
+        record Near(Vendor v, double km) {}
+        return open.stream()
+            .map(v -> new Near(v, v.getLat() == null || v.getLng() == null
+                ? Double.MAX_VALUE
+                : haversineKm(lat, lng, v.getLat().doubleValue(), v.getLng().doubleValue())))
+            .filter(n -> n.km() <= limit)
+            .sorted(java.util.Comparator.comparingDouble(Near::km))
+            .map(n -> VendorResponse.from(n.v(), n.km()))
+            .toList();
+    }
+
+    /** How far a customer will plausibly travel for a shop — city-scale, not country-scale. */
+    @Value("${app.shop.browse-radius-km:25}")
+    private double defaultBrowseRadiusKm;
+
+    // Distance comes from the existing haversineKm below — the one the delivery fee already uses.
 
     // ── Admin: reviewing businesses ────────────────────────────────────────────
 
@@ -456,6 +494,11 @@ public class FoodService {
 
         Order order = new Order();
         order.setCustomerId(UUID.fromString(customerId));
+        // Stamp who this is now, so the vendor and the courier have a name to work with rather
+        // than a UUID. Fails soft to nulls — see AuthClient.identity.
+        AuthClient.Identity who = authClient.identity(UUID.fromString(customerId));
+        order.setCustomerName(who.name());
+        order.setCustomerPhone(who.phone());
         order.setRestaurant(restaurant);
         order.setMode(mode);
         order.setDeliveryAddr(req.getDeliveryAddr());
@@ -544,7 +587,9 @@ public class FoodService {
         Order order = orderRepo.findById(orderId)
             .orElseThrow(() -> new IllegalStateException("Order not found"));
         requireOrderParticipant(order, userId);
-        return OrderResponse.from(order);
+        // The tracking screen is where the "no courier — collect or cancel?" choice is offered,
+        // so this is the one read that has to know whether the search has gone stale.
+        return OrderResponse.from(order, courierSearchStale(order));
     }
 
     /** Allow only the order's customer, the vendor owner, or the assigned courier. */
@@ -563,7 +608,7 @@ public class FoodService {
     @Transactional(readOnly = true)
     public List<OrderResponse> myOrders(String customerId) {
         return orderRepo.findByCustomerIdOrderByCreatedAtDesc(UUID.fromString(customerId))
-            .stream().map(OrderResponse::from).toList();
+            .stream().map(o -> OrderResponse.from(o, courierSearchStale(o))).toList();
     }
 
     /** Restaurant dashboard: all active orders for the restaurant (owner only). */
@@ -752,12 +797,134 @@ public class FoodService {
             .map(OrderResponse::from).toList();
     }
 
+    // ── Timeouts ───────────────────────────────────────────────────────────────
+
+    /** How long a vendor has to confirm before the order is given up on. */
+    @Value("${app.orders.confirm-timeout-minutes:5}")
+    private int confirmTimeoutMinutes;
+
+    /** How long to look for a courier before offering the customer a way out. */
+    @Value("${app.orders.courier-timeout-minutes:2}")
+    private int courierTimeoutMinutes;
+
+    /**
+     * Cancel orders the vendor never confirmed.
+     *
+     * <p>An unconfirmed order used to sit on the customer's screen as "placed" indefinitely and on
+     * the vendor's board as live work nobody was doing. Only PLACED is swept: once a vendor has
+     * confirmed, the order is somebody's responsibility and a clock should not take it away from
+     * them mid-cook.
+     *
+     * <p>The reason is stored rather than left blank, because a cancellation with no explanation
+     * is indistinguishable from the app losing the order.
+     */
+    @Scheduled(fixedDelayString = "${app.orders.sweep-ms:30000}")
+    @Transactional
+    public void cancelUnconfirmedOrders() {
+        OffsetDateTime cutoff = OffsetDateTime.now().minusMinutes(confirmTimeoutMinutes);
+        for (Order o : orderRepo.findByStatusAndCreatedAtBefore(Order.Status.PLACED, cutoff)) {
+            o.setStatus(Order.Status.CANCELLED);
+            o.setCancelReason("The vendor was busy and couldn’t confirm your order in time.");
+            orderRepo.save(o);
+            log.info("[FOOD] order {} auto-cancelled — vendor did not confirm within {}m",
+                o.getId(), confirmTimeoutMinutes);
+            notifyClient.send(o.getCustomerId(), "Order cancelled",
+                o.getRestaurant().getName() + " couldn’t confirm your order in time. You haven’t been charged.");
+        }
+    }
+
+    /**
+     * Has this delivery been looking for a courier longer than we are willing to make someone wait?
+     *
+     * <p>Read by {@link OrderResponse}, not acted on by a sweep: nothing should be cancelled
+     * automatically here. The customer chooses between collecting it themselves and cancelling,
+     * and only they can make that call — the food may already be cooked.
+     */
+    private boolean courierSearchStale(Order o) {
+        if (o.getMode() != Order.Mode.DELIVERY) return false;
+        return deliveryRepo.findByOrderId(o.getId())
+            .filter(d -> d.getCourierId() == null)
+            .filter(d -> d.getAssignedAt() != null
+                && d.getAssignedAt().isBefore(OffsetDateTime.now().minusMinutes(courierTimeoutMinutes)))
+            .isPresent();
+    }
+
+    /**
+     * Customer gives up on a courier and collects the order themselves.
+     *
+     * <p>Only offered once the search has actually gone stale, and only while no courier has taken
+     * it — a courier already riding to the vendor must not have the job pulled from under them.
+     * The delivery fee is refunded to the total, because they are now doing that leg.
+     */
+    public OrderResponse switchToPickup(UUID orderId, String customerId) {
+        Order o = orderRepo.findById(orderId)
+            .orElseThrow(() -> new IllegalStateException("Order not found"));
+        if (!o.getCustomerId().equals(UUID.fromString(customerId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your order");
+        }
+        if (o.getMode() != Order.Mode.DELIVERY) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This order isn’t a delivery.");
+        }
+        Delivery d = deliveryRepo.findByOrderId(orderId).orElse(null);
+        if (d != null && d.getCourierId() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "A courier is already on the way with this order.");
+        }
+        o.setMode(Order.Mode.PICKUP);
+        // They are riding the last leg themselves, so the fee they paid for it comes off.
+        if (o.getDeliveryFee() != null && o.getDeliveryFee().signum() > 0) {
+            o.setTotal(o.getTotal().subtract(o.getDeliveryFee()));
+            o.setDeliveryFee(BigDecimal.ZERO);
+        }
+        orderRepo.save(o);
+        if (d != null) deliveryRepo.delete(d);
+        log.info("[FOOD] order {} switched to pickup — no courier found", orderId);
+        return OrderResponse.from(o, false);
+    }
+
+    /**
+     * The customer calls off their own order.
+     *
+     * <p>Allowed until a courier has physically taken it — after that the food is on the road and
+     * cancelling is a refund question, which is not built. No reason is recorded: unlike the
+     * timeout sweeps, the person reading the cancellation is the one who caused it.
+     */
+    public OrderResponse cancelOrder(UUID orderId, String customerId) {
+        Order o = orderRepo.findById(orderId)
+            .orElseThrow(() -> new IllegalStateException("Order not found"));
+        if (!o.getCustomerId().equals(UUID.fromString(customerId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not your order");
+        }
+        if (o.getStatus() == Order.Status.COMPLETED || o.getStatus() == Order.Status.CANCELLED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This order is already finished.");
+        }
+        Delivery d = deliveryRepo.findByOrderId(orderId).orElse(null);
+        if (d != null && d.getCourierId() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "A courier has already collected this order.");
+        }
+        o.setStatus(Order.Status.CANCELLED);
+        orderRepo.save(o);
+        if (d != null) deliveryRepo.delete(d);
+        log.info("[FOOD] order {} cancelled by customer", orderId);
+        notifyClient.send(o.getRestaurant().getOwnerId(), "Order cancelled",
+            "A customer cancelled their order.");
+        return OrderResponse.from(o);
+    }
+
     // ── Delivery courier (driver app) ──────────────────────────────────────────
 
-    /** Couriers see unassigned deliveries to pick up. */
+    /**
+     * Couriers see unassigned deliveries to pick up — excluding cancelled orders.
+     *
+     * <p>The exclusion is the fix for a job that kept coming back: a cancelled order's delivery
+     * row survives, and the old finder returned it, so the courier feed offered work that could
+     * never be completed. Accepting one would have been a wasted trip.
+     */
     @Transactional(readOnly = true)
     public List<DeliveryResponse> listAvailableDeliveries() {
-        return deliveryRepo.findByCourierIdIsNullOrderByAssignedAtDesc()
+        return deliveryRepo
+            .findByCourierIdIsNullAndOrderStatusNotOrderByAssignedAtDesc(Order.Status.CANCELLED)
             .stream().map(DeliveryResponse::from).toList();
     }
 

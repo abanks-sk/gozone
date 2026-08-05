@@ -178,7 +178,8 @@ public class WalletController {
             @RequestHeader(value = "X-Internal-Key", required = false) String key,
             @Valid @RequestBody SettleRideRequest req) {
         requireInternal(key);
-        walletService.settleRide(req.getTripId(), req.getDriverId(), req.getAgreedFare());
+        walletService.settleRide(req.getTripId(), req.getDriverId(), req.getAgreedFare(),
+            req.getCashCollected());
         return ResponseEntity.ok(Map.of("status", "settled", "pillar", "RIDE"));
     }
 

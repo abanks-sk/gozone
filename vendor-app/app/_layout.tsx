@@ -13,6 +13,7 @@ import { useBusiness } from '../src/store/businessStore';
 import { useProfileStore } from '../src/store/profileStore';
 import { usePayout } from '../src/store/payoutStore';
 import '../src/lib/webAlert'; // patches Alert.alert on web (no-op on native)
+import { hydrateApiBase } from '../src/lib/host';
 
 export default function RootLayout() {
   const hydrate = useAuthStore((s) => s.hydrate);
@@ -25,7 +26,12 @@ export default function RootLayout() {
   // Rehydrate stored tokens + vendor prefs on cold start. Routing is handled
   // declaratively by app/index.tsx (<Redirect>).
   useEffect(() => {
-    hydrate(); hydrateVendor(); hydrateSetup(); hydrateBusiness(); hydrateProfile(); hydratePayout();
+    // The backend address first. Everything below can fire a request, and the auth hydrate
+    // may immediately try a token refresh — both need to know where the server is. In a
+    // standalone build that address only exists in storage, so this must resolve first.
+    hydrateApiBase().then(() => {
+      hydrate(); hydrateVendor(); hydrateSetup(); hydrateBusiness(); hydrateProfile(); hydratePayout();
+    });
   }, []);
 
   return (
@@ -64,6 +70,7 @@ function ThemedStack() {
         >
           <Stack.Screen name="index" />
           <Stack.Screen name="welcome" />
+          <Stack.Screen name="server" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="account" />
@@ -77,6 +84,7 @@ function ThemedStack() {
           <Stack.Screen name="pick-location" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="auth/register" />
           <Stack.Screen name="auth/verify-otp" />
+          <Stack.Screen name="auth/forgot-password" />
           <Stack.Screen name="(vendor)" />
         </Stack>
       </KeyboardAvoider>

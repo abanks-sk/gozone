@@ -25,6 +25,19 @@ const LEGACY_KEY = 'recentPlaces';
 const keyFor = (id: string | null) => `recentPlaces:${id ?? 'anon'}`;
 
 /**
+ * Write this account's list, but only once we know whose it is.
+ *
+ * <p>With no owner the key falls back to `anon`, a bucket nothing reads after sign-in — so a
+ * search made before hydration finished was saved somewhere it could never be found again, which
+ * looks exactly like "my recents were cleared when I logged back in". Holding it in memory and
+ * skipping the write is the honest outcome: nothing is lost that was ever really stored.
+ */
+function persist(list: Place[]) {
+  if (!ownerId) return;
+  storage.set(keyFor(ownerId), JSON.stringify(list)).catch(() => {});
+}
+
+/**
  * Whose list is loaded. Held in the module rather than read from the auth store, because
  * `authStore → lib/session → recentsStore` already exists and importing back would close the loop.
  */
@@ -45,7 +58,7 @@ export const useRecents = create<RecentsState>((set, get) => ({
     const deduped = get().recents.filter((r) => !(r.label === p.label && r.sub === p.sub));
     const next = [p, ...deduped].slice(0, MAX);
     set({ recents: next });
-    storage.set(keyFor(ownerId), JSON.stringify(next)).catch(() => {});
+    persist(next);
   },
   /**
    * Replace the entry sitting at these coordinates.
@@ -67,7 +80,7 @@ export const useRecents = create<RecentsState>((set, get) => ({
       // rather than showing the same place twice.
       .filter((r, i, all) => i === all.findIndex((o) => o.label === r.label && o.sub === r.sub));
     set({ recents: next });
-    storage.set(keyFor(ownerId), JSON.stringify(next)).catch(() => {});
+    persist(next);
   },
   reset: async () => {
     // Clears the screen, not the record. This runs on logout and before every sign-in, so deleting

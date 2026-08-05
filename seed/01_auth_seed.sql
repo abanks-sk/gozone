@@ -6,16 +6,23 @@
 -- `app` places each account in one front-end: identity is unique per app, not platform-wide, so
 -- the conflict target is the pair. A courier belongs to the driver app — same app, parcel instead
 -- of passenger.
-INSERT INTO users (id, phone, app, role, status, created_at)
+-- Names are people, not roles. These used to read "Kwame Driver", "Adwoa Vendor", "Kojo Rider" —
+-- which is fine in a fixture and embarrassing in a demo, because every screen that now shows who
+-- someone is (vendor order boards, courier handovers, the SOS board) was announcing their job
+-- title. Mixed deliberately: Ghana's cities are not monocultural and a seed that pretends
+-- otherwise looks like a placeholder.
+INSERT INTO users (id, phone, app, role, status, name, created_at)
 VALUES
-  ('aaaaaaaa-0000-0000-0000-000000000001', '+233201000001', 'PASSENGER', 'RIDER',             'ACTIVE', NOW()),
-  ('aaaaaaaa-0000-0000-0000-000000000002', '+233201000002', 'DRIVER',    'DRIVER',            'ACTIVE', NOW()),
-  ('aaaaaaaa-0000-0000-0000-000000000003', '+233201000003', 'DRIVER',    'DRIVER',            'ACTIVE', NOW()),
-  ('aaaaaaaa-0000-0000-0000-000000000004', '+233201000004', 'VENDOR',    'RESTAURANT_OWNER',  'ACTIVE', NOW()),
-  ('aaaaaaaa-0000-0000-0000-000000000005', '+233201000005', 'DRIVER',    'COURIER',           'ACTIVE', NOW()),
-  ('aaaaaaaa-0000-0000-0000-000000000006', '+233201000006', 'ADMIN',     'ADMIN',             'ACTIVE', NOW()),
-  ('aaaaaaaa-0000-0000-0000-000000000007', '+233201000007', 'PASSENGER', 'RIDER',             'ACTIVE', NOW())
-ON CONFLICT (phone, app) DO NOTHING;
+  ('aaaaaaaa-0000-0000-0000-000000000001', '+233201000001', 'PASSENGER', 'RIDER',             'ACTIVE', 'Adwoa Boateng',   NOW()),
+  ('aaaaaaaa-0000-0000-0000-000000000002', '+233201000002', 'DRIVER',    'DRIVER',            'ACTIVE', 'Kwame Owusu',     NOW()),
+  ('aaaaaaaa-0000-0000-0000-000000000003', '+233201000003', 'DRIVER',    'DRIVER',            'ACTIVE', 'Ibrahim Yakubu',  NOW()),
+  ('aaaaaaaa-0000-0000-0000-000000000004', '+233201000004', 'VENDOR',    'RESTAURANT_OWNER',  'ACTIVE', 'Grace Amankwah',  NOW()),
+  ('aaaaaaaa-0000-0000-0000-000000000005', '+233201000005', 'DRIVER',    'COURIER',           'ACTIVE', 'Samuel Nartey',   NOW()),
+  ('aaaaaaaa-0000-0000-0000-000000000006', '+233201000006', 'ADMIN',     'ADMIN',             'ACTIVE', 'GoZone Admin',    NOW()),
+  ('aaaaaaaa-0000-0000-0000-000000000007', '+233201000007', 'PASSENGER', 'RIDER',             'ACTIVE', 'Lucia Fernandes', NOW())
+-- DO UPDATE, not DO NOTHING: re-running this on a stack that already has the old role-shaped
+-- names should fix them, without needing the database dropped to do it.
+ON CONFLICT (phone, app) DO UPDATE SET name = EXCLUDED.name;
 
 -- Pre-approve KYC for demo drivers.
 --

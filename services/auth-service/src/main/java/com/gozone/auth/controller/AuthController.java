@@ -50,6 +50,46 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("available", count > 0, "count", count));
     }
 
+    /**
+     * Internal: who is this user? Name and phone only.
+     *
+     * <p>Exists so ride-service and food-service can put a customer's name on a job. A courier
+     * handing over a parcel or a bag of food has to be able to say who they are looking for, and
+     * "order #c5c03bb5" is not a person. Deliberately minimal — the caller needs an identity to
+     * show a driver, not an account record — and internal-key gated, because a name-and-number
+     * lookup by user id is exactly the endpoint you do not want reachable from a phone.
+     */
+    @GetMapping("/internal/users/{id}")
+    public ResponseEntity<Map<String, Object>> internalUser(
+            @RequestHeader(value = "X-Internal-Key", required = false) String key,
+            @PathVariable UUID id) {
+        requireInternal(key);
+        return ResponseEntity.ok(authService.userIdentity(id));
+    }
+
+    // ── Forgotten password ──────────────────────────────────────────────────────
+
+    /**
+     * Ask for a reset code.
+     *
+     * <p>Answers 200 whether or not the email has an account — see {@code forgotPassword}. The
+     * response deliberately tells the caller nothing they did not already know.
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(@RequestBody Map<String, String> body) {
+        authService.forgotPassword(body.get("email"), body.get("app"));
+        return ResponseEntity.ok(Map.of("message",
+            "If that email has an account with a password, we've sent it a reset code."));
+    }
+
+    /** Set a new password using the emailed code. Revokes every existing session. */
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(@RequestBody Map<String, String> body) {
+        authService.resetPassword(body.get("email"), body.get("code"),
+            body.get("password"), body.get("app"));
+        return ResponseEntity.ok(Map.of("message", "Password updated. Please sign in."));
+    }
+
     @PostMapping("/register")
     public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest req) {
         return ResponseEntity.ok(authService.register(req));

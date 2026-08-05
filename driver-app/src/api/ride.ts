@@ -37,6 +37,8 @@ export interface TripPassenger {
   destLat: number;
   destLng: number;
   riderPhone: string | null;
+  /** Driver-only, same terms as the phone — how you identify somebody at a kerb. */
+  riderName: string | null;
   /**
    * When you confirmed they were in the car. Null while they're still a pickup to make — and
    * while they can still walk away from the fare.
@@ -96,6 +98,32 @@ export interface BidStatus {
   tripId: string | null;
 }
 
+/**
+ * One job in this driver's history.
+ *
+ * `cashToConfirm` is the field that matters: a passenger only sits at AWAITING when they chose
+ * cash, so it counts handovers this driver still has to acknowledge — and until they do, the
+ * customer is stuck watching "waiting for them to confirm".
+ */
+export interface DriverTripItem {
+  tripId: string;
+  requestId: string;
+  status: string;
+  /** The whole fare — on a shared trip, the sum of every passenger's share. */
+  fare: number;
+  kind: 'RIDE' | 'PARCEL';
+  paymentStatus: 'UNPAID' | 'AWAITING' | 'PAID';
+  paymentMethod: string | null;
+  cashToConfirm: number;
+  cashAmount: number;
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  completedAt: string | null;
+  createdAt: string;
+}
+
 export const rideApi = {
   createRequest: (body: {
     originLat: number; originLng: number;
@@ -126,6 +154,15 @@ export const rideApi = {
 
   getTrip: (tripId: string) =>
     api.get<Trip>(`/rides/trips/${tripId}`).then(r => r.data),
+
+  /**
+   * This driver's own job history.
+   *
+   * <p>The store only ever held the *active* trip, and it is wiped on logout and on every fresh
+   * OTP verify — so a trip left before its cash was confirmed became unreachable. The server knew
+   * about it all along; this is the route back.
+   */
+  myTrips: () => api.get<DriverTripItem[]>('/rides/driver/trips').then(r => r.data),
 
   /**
    * Confirm cash was collected. Name the passenger on a shared trip — two people owe two
@@ -169,11 +206,12 @@ export const rideApi = {
     api.post(`/rides/trips/${tripId}/rate`, { rateeId, score, comment }),
 
   /**
-   * Someone's rating. `average` is null until enough people have rated them — the app shows
-   * "New" rather than a number computed from one or two scores.
+   * Someone's rating. `average` is the real mean of every score they have been given, and is
+   * **0 when nobody has rated them** — never null. `count` is how many ratings that is, so a
+   * screen can distinguish "unrated" from "rated badly" if it needs to.
    */
   rating: (userId?: string) =>
-    api.get<{ userId: string; average: number | null; count: number }>(
+    api.get<{ userId: string; average: number; count: number }>(
       userId ? `/rides/ratings/${userId}` : '/rides/ratings/me').then((r) => r.data),
 
   sos: (tripId: string) =>

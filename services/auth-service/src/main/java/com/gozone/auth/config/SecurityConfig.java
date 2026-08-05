@@ -48,12 +48,18 @@ public class SecurityConfig {
                     "/register", "/login", "/register-email", "/login-email",
                     "/login-email-password",
                     "/verify-otp", "/refresh", "/admin/login", "/google",
+                    // Someone who cannot sign in cannot authenticate to ask for a reset — these
+                    // have to be reachable without a token, by definition.
+                    "/forgot-password", "/reset-password",
                     "/actuator/**", "/error",
                     // JWKS — the other services fetch their verification key from here, and they
                     // have no token to present when they do. A public key is safe to publish.
                     "/.well-known/jwks.json",
-                    // Internal service-to-service call, guarded by X-Internal-Key in the controller.
-                    "/delivery-riders/availability"
+                    // Internal service-to-service calls, guarded by X-Internal-Key in the
+                    // controller. The gateway does not route /internal/**, so these are only
+                    // reachable from inside the compose network in the first place.
+                    "/delivery-riders/availability",
+                    "/internal/users/**"
                 ).permitAll()
                 // Reading an upload is decided by the upload, not by the URL: vendor shop imagery
                 // is public, and a customer's <Image> on the web cannot attach a token. Letting the

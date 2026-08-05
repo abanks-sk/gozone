@@ -148,6 +148,44 @@ export default function OrderScreen() {
 
   // Choosing a score and sending it are separate now — see the note on the ride screens.
   const [rateSent, setRateSent] = useState(false);
+  /**
+   * Nobody took the delivery — the customer decides what happens next.
+   *
+   * Both of these can legitimately lose a race against a courier finally accepting the job, which
+   * the server answers with a 409. Showing that message is the right outcome: the food is on its
+   * way, which is what they wanted in the first place.
+   */
+  const [switching, setSwitching] = useState(false);
+
+  async function switchToPickup() {
+    setSwitching(true);
+    try {
+      setOrder(await shopApi.switchToPickup(orderId));
+      Alert.alert('Collect it yourself', 'Your order is now a pickup. Head to the vendor when it’s ready.');
+    } catch (e: any) {
+      Alert.alert('Couldn’t switch', e?.response?.data?.message ?? 'Please try again.');
+      await load();
+    } finally { setSwitching(false); }
+  }
+
+  function cancelForNoCourier() {
+    Alert.alert('Cancel this order?', 'We haven’t found a courier. You can cancel and order again later.', [
+      { text: 'Keep waiting', style: 'cancel' },
+      {
+        text: 'Cancel order',
+        style: 'destructive',
+        onPress: async () => {
+          setSwitching(true);
+          try { setOrder(await shopApi.cancelOrder(orderId)); }
+          catch (e: any) {
+            Alert.alert('Couldn’t cancel', e?.response?.data?.message ?? 'Please try again.');
+            await load();
+          } finally { setSwitching(false); }
+        },
+      },
+    ]);
+  }
+
   async function rate() {
     if (!myRating || rateSent) return;
     try { await shopApi.rateOrder(orderId, myRating); setRateSent(true); Alert.alert('Thanks for rating!'); } catch {}
@@ -275,7 +313,11 @@ export default function OrderScreen() {
             <View style={{ flex: 1, paddingRight: 12 }}>
               {etaText && !cancelled ? <Text style={{ fontSize: 12, fontWeight: '700', color: c.primary, textTransform: 'uppercase', letterSpacing: 0.6 }}>{etaText}</Text> : null}
               <Text style={{ fontSize: 23, fontWeight: '800', color: c.text, marginTop: 4 }}>{info.title}</Text>
-              <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 4, lineHeight: 20 }}>{info.sub}</Text>
+              {/* The server's reason when a timeout ended it. "This order was cancelled" with no
+                  explanation reads as the app having lost it. */}
+              <Text style={{ fontSize: 14, color: c.textMuted, marginTop: 4, lineHeight: 20 }}>
+                {(cancelled && order.cancelReason) ? order.cancelReason : info.sub}
+              </Text>
             </View>
             <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: cancelled ? `${c.danger}1A` : c.primarySoft, alignItems: 'center', justifyContent: 'center' }}>
               <Ionicons name={info.icon} size={28} color={cancelled ? c.danger : c.primary} />
@@ -290,6 +332,35 @@ export default function OrderScreen() {
             </Row>
           )}
         </Card>
+
+        {/* No courier is coming. Offered rather than imposed: the food may already be cooked, so
+            the choice between fetching it and giving up belongs to the customer, not to a sweep. */}
+        {order.awaitingCourier && !cancelled && (
+          <Card>
+            <Row style={{ gap: 10, alignItems: 'flex-start' }}>
+              <Ionicons name="alert-circle" size={20} color={c.warning} style={{ marginTop: 1 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15.5, fontWeight: '700', color: c.text }}>No courier yet</Text>
+                <Text style={{ fontSize: 13.5, color: c.textMuted, marginTop: 3, lineHeight: 19 }}>
+                  We haven’t found a courier for your order. You can collect it yourself
+                  {order.deliveryFee > 0 ? ` and get the GH₵ ${order.deliveryFee.toFixed(2)} delivery fee back` : ''}, or cancel.
+                </Text>
+              </View>
+            </Row>
+            <Row style={{ gap: 10, marginTop: 14 }}>
+              <TouchableOpacity onPress={switchToPickup} disabled={switching} activeOpacity={0.9}
+                style={{ flex: 1, backgroundColor: c.primary, borderRadius: 999, paddingVertical: 13, alignItems: 'center', opacity: switching ? 0.6 : 1 }}>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14.5 }}>
+                  {switching ? 'Switching…' : 'I’ll collect it'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={cancelForNoCourier} disabled={switching} activeOpacity={0.9}
+                style={{ flex: 1, borderRadius: 999, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: c.border }}>
+                <Text style={{ color: c.text, fontWeight: '800', fontSize: 14.5 }}>Cancel order</Text>
+              </TouchableOpacity>
+            </Row>
+          </Card>
+        )}
 
         {/* Courier — shown from READY, so the run to the restaurant is visible too, not just the
             leg to your door. `collected` is what splits those two phases. */}

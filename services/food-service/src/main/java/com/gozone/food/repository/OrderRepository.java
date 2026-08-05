@@ -10,6 +10,9 @@ import java.util.UUID;
 
 public interface OrderRepository extends JpaRepository<Order, UUID> {
     List<Order> findByCustomerIdOrderByCreatedAtDesc(UUID customerId);
+
+    /** Orders still sitting in a given state since before a cut-off — drives the timeout sweeps. */
+    List<Order> findByStatusAndCreatedAtBefore(Order.Status status, java.time.OffsetDateTime before);
     List<Order> findByRestaurantIdAndStatusNotOrderByCreatedAtDesc(UUID restaurantId, Order.Status status);
     List<Order> findByRestaurantIdAndPaymentStatusOrderByCreatedAtDesc(UUID restaurantId, Order.PaymentStatus paymentStatus);
 

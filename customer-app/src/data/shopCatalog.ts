@@ -69,14 +69,44 @@ export const ITEM_META: Record<string, ItemMeta> = {
   'Malt Drink': { image: img('malt,drink', 28), description: 'Refreshing non-alcoholic malt drink, served chilled.', addOns: [SIZE], modes: ALL, category: 'Drinks' },
 };
 
-export function itemMeta(name: string): ItemMeta {
-  return ITEM_META[name] ?? { image: img('food', 29), description: 'A delicious house favourite.', addOns: [], modes: ALL, category: 'More' };
+/**
+ * Stock imagery by vendor type, for anything this file has never heard of.
+ *
+ * A single 'food' fallback meant a pharmacy's paracetamol and a grocery's cooking oil both
+ * appeared as a photograph of a meal — every unknown item sharing one picture, and the wrong
+ * picture at that. Type is the only thing we reliably know about a vendor we did not seed.
+ */
+const TYPE_IMAGE: Record<string, string> = {
+  RESTAURANT:  img('food,meal', 90),
+  PHARMACY:    img('pharmacy,medicine', 91),
+  GROCERY:     img('groceries,supermarket', 92),
+  CONVENIENCE: img('convenience,store', 93),
+  OTHER:       img('shop,storefront', 94),
+};
+const TYPE_CUISINE: Record<string, string> = {
+  RESTAURANT: 'Local', PHARMACY: 'Pharmacy', GROCERY: 'Grocery',
+  CONVENIENCE: 'Convenience', OTHER: 'Shop',
+};
+
+export function itemMeta(name: string, vendorType?: string | null): ItemMeta {
+  const known = ITEM_META[name];
+  if (known) return known;
+  return {
+    image: TYPE_IMAGE[vendorType ?? 'RESTAURANT'] ?? TYPE_IMAGE.OTHER,
+    description: '', addOns: [], modes: ALL, category: 'More',
+  };
 }
 
-export function restaurantMeta(name: string): RestaurantMeta {
-  return RESTAURANT_META[name] ?? {
-    cuisine: 'Local', address: 'Accra', logoColor: '#2563EB',
-    banner: img('food', 30), categories: ['Local'], deliveryFee: 2.5,
+export function restaurantMeta(name: string, vendorType?: string | null): RestaurantMeta {
+  const known = RESTAURANT_META[name];
+  if (known) return known;
+  const type = vendorType ?? 'RESTAURANT';
+  return {
+    // Was hardcoded 'Accra', which is simply wrong for a Kumasi shop — and for any shop whose
+    // owner typed their own address. Blank lets the caller show the real one from the server.
+    cuisine: TYPE_CUISINE[type] ?? 'Shop', address: '', logoColor: '#2563EB',
+    banner: TYPE_IMAGE[type] ?? TYPE_IMAGE.OTHER,
+    categories: ['Local'], deliveryFee: 2.5,
   };
 }
 

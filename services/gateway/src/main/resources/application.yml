@@ -1,5 +1,8 @@
 server:
-  port: 8080
+  # Railway (and most PaaS) inject PORT and route only to that port; a hardcoded
+  # 8080 would leave the service unreachable in production while working locally.
+  # The default keeps docker-compose and local runs exactly as they were.
+  port: ${PORT:8080}
 
 spring:
   application:
@@ -83,7 +86,10 @@ app:
     # /auth/.well-known/jwks.json is here because a JWKS is public by definition — it carries
     # verification keys, which cannot sign. Services fetch it over the internal network, but
     # exposing it is standard and makes the key set inspectable from outside.
-    public-paths: /auth/google,/auth/register,/auth/register-email,/auth/login,/auth/login-email,/auth/login-email-password,/auth/verify-otp,/auth/refresh,/auth/admin/login,/auth/.well-known/,/wallet/mock-checkout,/actuator
+    # forgot-password / reset-password are here for the obvious reason: somebody who cannot sign
+    # in has no token to present, so requiring one would make the reset unreachable to exactly the
+    # people who need it.
+    public-paths: /auth/google,/auth/register,/auth/register-email,/auth/login,/auth/login-email,/auth/login-email-password,/auth/verify-otp,/auth/refresh,/auth/admin/login,/auth/forgot-password,/auth/reset-password,/auth/.well-known/,/wallet/mock-checkout,/actuator
 
 logging:
   level:

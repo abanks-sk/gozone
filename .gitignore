@@ -25,6 +25,8 @@ web-build/
 # Environment — never commit secrets
 .env
 .env.local
+# Backups of .env hold the same live credentials the original does.
+.env.bak*
 .env.*.local
 
 # Docker volumes

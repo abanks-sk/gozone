@@ -297,33 +297,25 @@ export default function RiderHomeScreen() {
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}>
           <View style={{ paddingHorizontal: 16, marginTop: 10 }}>
-            {recents.length > 0 ? (
-              <>
-                <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-                    Recent
-                  </Text>
-                  {/* Only the newest few fit here; the search screen lists everything this account
-                      has ever looked up. */}
-                  {recents.length > 5 && (
-                    <TouchableOpacity onPress={() => router.push('/search?next=request' as any)} activeOpacity={0.7}>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: c.primary }}>See all</Text>
-                    </TouchableOpacity>
-                  )}
-                </Row>
-                {recents.slice(0, 5).map((p, i, arr) => (
-                  <ListRow key={i} icon="time" title={p.label} subtitle={p.sub}
-                    onPress={() => chooseRecent(p)} last={i === arr.length - 1} />
-                ))}
-              </>
-            ) : (
-              <Row style={{ gap: 10, paddingVertical: 8 }}>
-                <Ionicons name="search" size={16} color={c.textMuted} />
-                <Text style={{ flex: 1, fontSize: 13.5, color: c.textMuted, lineHeight: 19 }}>
-                  Search for where you're going and we'll show you the fare before you book.
-                </Text>
-              </Row>
-            )}
+            {/* The heading stands on its own with nothing under it until there is something to
+                list — an empty section beats a placeholder telling you how to use a search bar
+                that is already on the screen. */}
+            <Row style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                Recent
+              </Text>
+              {/* Only the newest few fit here; the search screen lists everything this account
+                  has ever looked up. */}
+              {recents.length > 5 && (
+                <TouchableOpacity onPress={() => router.push('/search?next=request' as any)} activeOpacity={0.7}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: c.primary }}>See all</Text>
+                </TouchableOpacity>
+              )}
+            </Row>
+            {recents.slice(0, 5).map((p, i, arr) => (
+              <ListRow key={i} icon="time" title={p.label} subtitle={p.sub}
+                onPress={() => chooseRecent(p)} last={i === arr.length - 1} />
+            ))}
           </View>
         </ScrollView>
       </Animated.View>

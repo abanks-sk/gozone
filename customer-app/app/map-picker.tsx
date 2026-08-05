@@ -89,11 +89,13 @@ export default function MapPicker() {
   }
 
   /**
-   * Close the picker. When it was opened from the search / delivery-address
-   * screen (`via`), signal that screen to close itself too, so the user lands
-   * back on the composer with the field already filled — otherwise they're
-   * dropped on the search list where the only visible change is a new "Recent"
-   * row, and choosing on the map feels like it did nothing.
+   * Close the picker.
+   *
+   * <p>When it was opened from the search / delivery-address screen (`via`), tell that screen a
+   * place was chosen. It decides what to do with that: a destination in the request flow moves
+   * the user on, anything else leaves them on the search list with the field now filled. It used
+   * to close the search screen outright, which meant setting a pickup dumped you back on the home
+   * map with the other half of the trip still unset.
    */
   function close() {
     if (via) signalPicked();
@@ -166,9 +168,14 @@ export default function MapPicker() {
           <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 10 }}>
             Drag the map to move the pin to your exact spot.{userLoc ? ' The blue dot is where you are now.' : ''}
           </Text>
-          <TouchableOpacity onPress={confirm} activeOpacity={0.9}
-            style={{ marginTop: 12, backgroundColor: c.primary, borderRadius: 999, paddingVertical: 15, alignItems: 'center' }}>
-            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{confirmLabel}</Text>
+          {/* Not tappable until the address has resolved. Confirming mid-lookup committed
+              whatever placeholder was on screen, which is how a real address became "Pinned
+              location" — the pin was right, the name was the one thing still being fetched. */}
+          <TouchableOpacity onPress={confirm} activeOpacity={0.9} disabled={geocoding}
+            style={{ marginTop: 12, backgroundColor: geocoding ? c.surfaceAlt : c.primary, borderRadius: 999, paddingVertical: 15, alignItems: 'center' }}>
+            <Text style={{ color: geocoding ? c.textMuted : '#fff', fontWeight: '800', fontSize: 15 }}>
+              {geocoding ? 'Finding address…' : confirmLabel}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>

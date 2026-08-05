@@ -70,17 +70,17 @@ services:
       JWT_PREVIOUS_PUBLIC_KEYS: ${JWT_PREVIOUS_PUBLIC_KEYS:-}
       INTERNAL_KEY: ${INTERNAL_KEY:?INTERNAL_KEY must be set — copy .env.example to .env}
       SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:-}
-      MAIL_USERNAME: ${MAIL_USERNAME:-}
-      MAIL_APP_PASSWORD: ${MAIL_APP_PASSWORD:-}
       GOOGLE_CLIENT_IDS: ${GOOGLE_CLIENT_IDS:-}
       OTP_LOG_CODES: ${OTP_LOG_CODES:-true}
-      SMS_PROVIDER: ${SMS_PROVIDER:-africastalking}
-      AT_USERNAME: ${AT_USERNAME:-}
-      AT_API_KEY: ${AT_API_KEY:-}
-      AT_SENDER_ID: ${AT_SENDER_ID:-}
-      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
-      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
-      TWILIO_FROM: ${TWILIO_FROM:-}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_SENDER_EMAIL: ${BREVO_SENDER_EMAIL:-}
+      BREVO_SMS_SENDER: ${BREVO_SMS_SENDER:-GoZone}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-GoZone}
+      ARKESEL_API_KEY: ${ARKESEL_API_KEY:-}
+      ARKESEL_SENDER: ${ARKESEL_SENDER:-GoZone}
+      TERMII_API_KEY: ${TERMII_API_KEY:-}
+      TERMII_SENDER_ID: ${TERMII_SENDER_ID:-GoZone}
+      TERMII_CHANNEL: ${TERMII_CHANNEL:-generic}
       UPLOAD_DIR: /var/gozone/uploads
     volumes:
       # KYC documents live on a named volume, NOT in the container's own filesystem.
